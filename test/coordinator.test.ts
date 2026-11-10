@@ -98,8 +98,8 @@ test("hub is width-safe, updates on streamed state and closing does not cancel e
   const { coordinator } = await fixture(t);
   let renders = 0;
   let closed = false;
-  const hub = createHub(coordinator, { fg: (_color, text) => text },
-    { matches: (data, action) => data === "escape" && action === "tui.select.cancel" },
+  const hub = createHub(coordinator, { fg: (_color, text) => text, bg: (_color, text) => text },
+    { matches: (data, action) => data === "escape" && action === "tui.select.cancel", getKeys: () => ["escape"] },
     () => { renders++; }, () => { closed = true; });
   const progress = streamed(coordinator);
   await coordinator.start("中文 👩‍💻 \u001b]52;c;bad\u0007", 1000);
