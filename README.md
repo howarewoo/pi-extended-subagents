@@ -1,6 +1,6 @@
 # pi-extended-subagents
 
-Pi-native bounded batch, nested delegation and live-parent coordination for **Pi 1.5.2**. A model-callable `delegate_task` creates an actual SDK child using the parent's selected model and public provider/authentication API. OMP is a behavioral/UI reference, **not a port**. This working slice is not full OMP parity or a pi-subagents compatibility layer.
+Pi-native bounded batch, nested delegation and live-parent coordination for **Pi 1.5.2**. A model-callable `delegate_task` creates an actual SDK child using the parent's selected model by default and public provider/authentication API. OMP is a behavioral/UI reference, **not a port**. This working slice is not full OMP parity or a pi-subagents compatibility layer.
 
 - [Delegation contract](docs/delegation-contract.md): profiles, configuration, registry/events/control interfaces, authority and limitations.
 - [Verification and historical proof evidence](docs/verification.md).
@@ -18,7 +18,7 @@ npm run exercise
 npm pack --dry-run
 ```
 
-Load only the production extension with `pi -e /absolute/path/to/src/extension.ts`. Select a physical model using Pi's normal `/login` and `/model` setup. **Production delegation uses that provider and may incur charges.** It does not switch to a cheaper/different model or use scripted responses. Missing authentication, unsupported virtual routing, missing parent tools or forbidden resource grants fail visibly. Keep the required parent built-in tools active; custom overrides are deliberately unsupported rather than bypassed.
+Load only the production extension with `pi -e /absolute/path/to/src/extension.ts`. Select a physical model using Pi's normal `/login` and `/model` setup. **Production delegation uses that provider and may incur charges.** It does not automatically switch to a cheaper/different model or use scripted responses. Explicit operator-granted exact model/effort selection and one-way prewalk are available; see [advanced policies and capability boundaries](docs/advanced-policies.md). Missing authentication, unsupported virtual routing, missing parent tools or forbidden resource grants fail visibly. Keep the required parent built-in tools active; custom overrides are deliberately unsupported rather than bypassed.
 
 Ask the parent model, for example:
 
@@ -83,6 +83,10 @@ Schema-required children must call their child-local **`submit_result({value:...
 
 New completed prompts retain exact last-assistant text in `result.txt` and any accepted value in `structured.json` alongside their SDK transcript. Snapshot `outcome` and `artifacts` distinguish submission/validation, terminal status and available full paths. Previews explicitly truncate large fields; tool details retain full detached snapshots. Persistence failures are errors, never successful full-output claims. Failed/cancelled output may be retained as evidence, not success. Treat these sensitive files like transcripts; no external logging/upload or historical migration is performed.
 
+### Exact model/effort and prewalk (opt-in)
+
+Operator profile `models` grants exact `{provider,id,effort}` alternatives. Optional profile or task `model` selects one; an explicit task selection stays exact and suppresses inherited prewalk across renewal. Task `models` may only narrow the admitted allowlist. Project/request/ancestor/revival cannot mint or restore grants. Unsupported/unavailable models, scopes or efforts fail before dispatch without fallback/coercion. Operator `prewalk` grants a one-way same-session switch after the first completed builtin edit/write, not a repository scan. The inherited physical parent remains the ordinary default; no advisor/extra inference is enabled. Full configuration, exclusions and bounded investigation results: [advanced policy ledger](docs/advanced-policies.md).
+
 ### Shared-writer scope: model tools only
 
 The coordinator enforces one child writer against parent model-tool `bash`/`edit`/`write` and unknown tools, including in-flight parent mutations. Batch/root child writers queue and serialize; a conflicting parent model tool fails visibly. An already in-flight parent mutation rejects writer admission before any new launch. Read-only children may coexist within capacity. The implementation widget/overlay warns while a writer is active.
@@ -109,7 +113,7 @@ Nested delegation is **disabled by default**. For example, operator `"general":{
 
 Default per-task bounds are **10 minutes from admission**, **100 direct model-registry dispatches**, and **100 executable tool calls**. Optional request `limits` only narrows operator/project bounds. Limits cancel visibly with `limitReason`; deadlines initiate abort but **cannot force unabortable auth/provider/permission code to return**. Capacity and writer ownership remain held until real setup/tool drain. These are hard guards, not soft-yield prompts or provider-internal/token/cost precision promises. Full settings/ceilings and cancellation semantics: [delegation contract](docs/delegation-contract.md#capacity-and-bounded-execution).
 
-Skills use Pi's standard loader, without default discovery. A trusted project's `.pi/delegation.json` uses the same format but can **only narrow** the operator-resolved tools/skills; it cannot add grants. Untrusted project configuration is ignored. `extensions`, `mcp`, model overrides and other unsupported fields are rejected, not silently promised. See the [full contract](docs/delegation-contract.md).
+Skills use Pi's standard loader, without default discovery. A trusted project's `.pi/delegation.json` uses the same format but can **only narrow** the operator-resolved tools/skills; it cannot add grants. Untrusted project configuration is ignored. `extensions`, `mcp` and other unsupported fields are rejected, not silently promised. See the [full contract](docs/delegation-contract.md).
 
 ## Safe controlled walkthrough (no credentials/live provider)
 
@@ -152,4 +156,4 @@ delegation/<parent-session-id>/<task-id>/
 
 Old `extended-subagents-proof` data is left untouched and is not loaded or migrated. New artifacts may contain sensitive assignment, tool and model output; treat them like parent transcripts. There is no durable recovery, cross-parent revival or generalized artifact service. Within this live parent, completed generation snapshots and bounded message receipts are retained in memory; renewed generations use `<task-id>-g<generation>/` directories and never modify completed files. Parent shutdown/reload aborts, drains and disposes all children. SDK hosts must bind extensions and emit shutdown through the public lifecycle; bare `session.dispose()` is not a substitute for host shutdown dispatch. Abrupt process death cannot run cleanup hooks.
 
-Not implemented: cross-parent messaging or revival, automatic idle TTL/retained-session reuse, isolation/apply, advisor/prewalk/probes/speculation/workpool, executable extension/MCP grants, or the full roster/tree/transcript UI. No live provider inference, credential changes, global Pi installation/config changes or retained-data migration were performed during verification.
+Not implemented: cross-parent messaging or revival, automatic idle TTL/retained-session reuse, isolation/apply, advisor/probes/speculation/workpool, executable extension/MCP grants, or the full roster/tree/transcript UI. No live provider inference, credential changes, global Pi installation/config changes or retained-data migration were performed during verification.

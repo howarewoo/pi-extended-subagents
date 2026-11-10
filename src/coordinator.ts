@@ -2,14 +2,15 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  createAgentSession, createExtensionRuntime, SessionManager, SettingsManager,
+  createAgentSession, createExtensionRuntime, DefaultResourceLoader, SessionManager, SettingsManager,
   type AgentSession, type AgentSessionEvent, type ExtensionToolContext, type ResourceLoader, type Skill, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { resultValidator, submissionParameters, saveOutcomeArtifact, type StructuredOutcome } from "./outcomes.ts";
 import type { Validator } from "@earendil-works/pi-schema";
+import { allowsModel, sameSelection, validateModelSelection, type ModelSelection } from "./model-policy.ts";
 import { parentModelRuntime } from "./model-adapter.ts";
 import { DEFAULT_POLICY, narrowLimits, validatePolicy, type ExecutionLimits, type SchedulingPolicy } from "./scheduling.ts";
-import { intersectProfileGrants, isWriter, READ_TOOLS, type Profile, type CoordinationAction } from "./profiles.ts";
+import { resolveProfile, intersectProfileGrants, isWriter, READ_TOOLS, type Profile, type CoordinationAction } from "./profiles.ts";
 
 const MAX_MESSAGE_BYTES = 4096;
 const MAX_MAILBOX_MESSAGES = 64;
@@ -37,6 +38,7 @@ export type ChildSnapshot = Readonly<ChildRef & {
   result: string;
   model: { provider: string; id: string };
   effort: string | null;
+  prewalk?: { target: ModelSelection; status: "armed" | "handed-off" | "suppressed-exact" | "no-op" };
   telemetry: { requests: number | null; tokens: ReturnType<AgentSession["getSessionStats"]>["tokens"] | null; cost: number | null; context: ReturnType<AgentSession["getContextUsage"]> | null };
   outcome?: StructuredOutcome;
   artifacts?: { text?: string; structured?: string; error?: string };
@@ -45,9 +47,15 @@ export type ChildSnapshot = Readonly<ChildRef & {
   disposed: boolean;
 }>;
 export type RegistryEvent = Readonly<{ type: "changed" | "sdk"; child: ChildSnapshot; event?: AgentSessionEvent }>;
-export type StartTask = { resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; coordinationTools?: (actor: ChildRef) => ToolDefinition[]; nestedTool?: (parent: ChildRef) => ToolDefinition };
+export type StartTask = { model?: ModelSelection; resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; coordinationTools?: (actor: ChildRef) => ToolDefinition[]; nestedTool?: (parent: ChildRef) => ToolDefinition };
 type ChildSelection = Pick<ExtensionToolContext, "model" | "modelRegistry" | "scopedModels" | "thinkingLevel" | "cwd">;
 type Entry = { validator?: Validator; input: StartTask; selection: ChildSelection; done: Promise<void>; finish: () => void; timer?: ReturnType<typeof setTimeout>; spawned: number; state: ChildSnapshot; setup?: Promise<void>; run?: Promise<void>; session?: AgentSession; unsubscribe?: () => void; cancelled: boolean; callerId: string };
+
+function admittedModel(entry: Entry, selection: ModelSelection): boolean {
+  return entry.input.profile.models === undefined
+    ? sameSelection(selection, { ...entry.state.model, effort: entry.state.effort as ModelSelection["effort"] })
+    : allowsModel(entry.input.profile, selection);
+}
 
 export function childResources(prompt: string, skills: Skill[] = []): ResourceLoader {
   const extensions = { extensions: [], errors: [], runtime: createExtensionRuntime() };
@@ -127,12 +135,23 @@ export class DelegationCoordinator {
     const selection = { model: input.context.model, modelRegistry: input.context.modelRegistry,
       scopedModels: input.context.scopedModels, thinkingLevel: input.context.thinkingLevel, cwd: input.context.cwd };
     if (!selection.model) throw new Error("A selected parent model is required");
+    const requested = input.model ?? input.profile.model;
+    const parentState = input.parent ? this.entry(input.parent).state : undefined;
+    const effective: ModelSelection = requested ?? { ...(parentState?.model ?? { provider: selection.model.provider, id: selection.model.id }), effort: (parentState?.effort as ModelSelection["effort"] | undefined) ?? selection.thinkingLevel ?? "off" };
+    if ((requested && !input.profile.models?.some(item => sameSelection(item, requested))) || !allowsModel(input.profile, effective)) throw new Error("Model selection denied by effective profile grants");
+    selection.model = validateModelSelection(selection, effective);
+    selection.thinkingLevel = effective.effort;
+    if (input.profile.prewalk && !input.model) {
+      if (!input.profile.models?.some(item => sameSelection(item, input.profile.prewalk!))) throw new Error("Prewalk target requires an exact model grant");
+      validateModelSelection(selection, input.profile.prewalk);
+    }
     for (const name of input.profile.tools) if (!input.context.tools.some(tool => tool.name === name)) throw new Error(`Parent tool grant unavailable: ${name}`);
     const writer = this.writer ? this.entries.get(this.writer) : undefined;
     if (isWriter(input.profile) && [...this.parentMutations].some(id => !writer || !id.startsWith(writer.callerId + "/"))) throw new Error("Shared checkout writer conflict: in-flight parent mutation");
     if (input.parent) {
       const parent = this.entry(input.parent);
       if (parent.cancelled || parent.state.disposed) throw new Error("Delegating parent is no longer active");
+      if (!admittedModel(parent, effective) || input.profile.models?.some(model => !admittedModel(parent, model)) || (input.profile.prewalk && !input.model && !admittedModel(parent, input.profile.prewalk))) throw new Error("Descendant cannot broaden ancestor model grants");
       if (!parent.input.profile.spawn?.includes(input.profile.name)) throw new Error("Ancestor spawn role denied");
       if (parent.state.depth >= Math.min(this.policy.depth, parent.state.limits.depth)) throw new Error("Delegation depth limit");
       if (input.profile.tools.some(tool => !parent.input.profile.tools.includes(tool)) || input.profile.skills.some(skill => !parent.input.profile.skills.includes(skill)) || input.profile.spawn?.some(role => !parent.input.profile.spawn?.includes(role)) || input.profile.coordination?.some(action => !parent.input.profile.coordination?.includes(action))) throw new Error("Descendant cannot broaden ancestor grants");
@@ -152,6 +171,7 @@ export class DelegationCoordinator {
       if (this.key(previous.input.parent) !== this.key(inputs[0].parent)) throw new Error("Follow-up must retain its exact original parent generation");
       if (previous.state.generation >= MAX_GENERATIONS) throw new Error("Generation retention limit");
       const profile = inputs[0].profile;
+      if ((previous.input.profile.models !== undefined && profile.models === undefined) || profile.models?.some(model => !previous.input.profile.models?.some(grant => sameSelection(model, grant)))) throw new Error("Follow-up cannot broaden previous model grants");
       if (profile.name !== previous.input.profile.name || profile.tools.some(tool => !previous.input.profile.tools.includes(tool)) || profile.skills.some(skill => !previous.input.profile.skills.includes(skill)) || profile.spawn?.some(role => !previous.input.profile.spawn?.includes(role)) || profile.coordination?.some(action => !previous.input.profile.coordination?.includes(action))) throw new Error("Follow-up cannot broaden previous grants");
     }
     if (!inputs.length || inputs.length > this.policy.batch) throw new Error("Batch size limit");
@@ -196,6 +216,7 @@ export class DelegationCoordinator {
         outcome: validators[index] ? { validation: "awaiting", attempts: 0, errors: [], finalized: false } : undefined,
         assignment: input.assignment, activity: "Queued for capacity / writer admission", progress: "", result: "", disposed: false,
         model: { provider: selection.model!.provider, id: selection.model!.id }, effort: selection.thinkingLevel ?? null,
+        prewalk: input.profile.prewalk ? { target: input.profile.prewalk, status: input.model ? "suppressed-exact" : sameSelection(input.profile.prewalk, { provider: selection.model!.provider, id: selection.model!.id, effort: selection.thinkingLevel! }) ? "no-op" : "armed" } : undefined,
         telemetry: { requests: null, tokens: null, cost: null, context: null },
       } };
       return entry;
@@ -227,8 +248,11 @@ export class DelegationCoordinator {
     const previous = this.entry(ref);
     this.renewalParent(ref);
     const profile = intersectProfileGrants(input.profile, previous.input.profile);
-    return this.admit([{ ...input, profile, skills: input.skills.filter(skill => profile.skills.includes(skill.filePath)), resultSchema: input.resultSchema === undefined ? previous.input.resultSchema : input.resultSchema,
+    const retained = previous.state.prewalk && ["handed-off", "no-op"].includes(previous.state.prewalk.status) ? previous.state.prewalk.target : previous.input.model;
+    const next = this.admit([{ ...input, model: retained ?? input.model, profile, skills: input.skills.filter(skill => profile.skills.includes(skill.filePath)), resultSchema: input.resultSchema === undefined ? previous.input.resultSchema : input.resultSchema,
       limits: narrowLimits(previous.state.limits, input.limits ?? {}) }], ref)[0];
+    if (previous.state.prewalk && previous.state.prewalk.status !== "armed") this.update(this.entry(next), { prewalk: previous.state.prewalk });
+    return next;
   }
   private pump(): void {
     if (this.closing) return;
@@ -257,11 +281,50 @@ export class DelegationCoordinator {
       await mkdir(taskDir); // exclusive ownership: never reuse an existing task record
       const agentDir = join(taskDir, "agent");
       await mkdir(agentDir);
+      const target = entry.state.prewalk?.status === "armed" ? validateModelSelection(input.context, entry.state.prewalk.target) : undefined;
+      let policyError: string | undefined;
+      const effective = (): ModelSelection => ({ ...entry.state.model, effort: entry.state.effort as ModelSelection["effort"] });
+      const revalidate = async (selected: ModelSelection, requirePrewalk: boolean) => {
+        let current: Entry | undefined = entry;
+        while (current) {
+          const policy = (await resolveProfile(current.input.profile.name, input.context.cwd, input.context.isProjectTrusted())).profile;
+          if ((current.input.profile.models !== undefined && policy.models === undefined) || !allowsModel(policy, selected) || !admittedModel(current, selected)) throw new Error("Current or admitted model policy denied selection");
+          if (current === entry && requirePrewalk && (!policy.prewalk || !sameSelection(policy.prewalk, entry.state.prewalk!.target))) throw new Error("Current prewalk grant revoked");
+          current = current.input.parent ? this.entry(current.input.parent) : undefined;
+        }
+        validateModelSelection(input.context, selected);
+      };
       const runtime = await parentModelRuntime(selection, agentDir, () => {
+        if (policyError) throw new Error(policyError);
+        validateModelSelection(input.context, effective());
         if (entry.cancelled || this.closing) throw new Error("Delegation cancelled");
         if ((entry.state.telemetry.requests ?? 0) >= entry.state.limits.requests) { this.limit(entry, "requests"); throw new Error("Direct request limit"); }
         this.update(entry, { telemetry: { ...entry.state.telemetry, requests: (entry.state.telemetry.requests ?? 0) + 1 } });
-      });
+      }, target ? [target] : []);
+      const resources = childResources(input.profile.prompt + (target ? "\nPrewalk: investigate and plan using only granted context/tools. After the first completed edit or write the same conversation switches once to the explicitly granted implementation target; all normal budgets still apply." : "") + `\nYour delegation identity is ${entry.state.id} generation ${entry.state.generation}; parent ${entry.state.parentId}. Coordination, if granted, is limited to family identities explicitly supplied to you.` + (entry.validator ? "\nThis assignment requires a structured result. Call submit_result with the actual value; final prose is not a submission." : ""), input.skills);
+      const loader = new DefaultResourceLoader({ cwd: selection.cwd, agentDir, settingsManager: SettingsManager.inMemory(), noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+        extensionFactories: [pi => {
+          pi.on("turn_start", async () => {
+            try {
+              await revalidate(effective(), entry.state.prewalk?.status === "armed");
+            } catch (error) { policyError = String(error); }
+          });
+          pi.on("turn_end", async event => {
+            if (!entry.cancelled && !this.closing && entry.state.prewalk?.status === "armed" && event.toolResults.some(result => (result.toolName === "edit" || result.toolName === "write") && input.profile.tools.includes(result.toolName))) {
+              try {
+                const next = entry.state.prewalk.target;
+                await revalidate(next, true);
+                if (entry.cancelled || this.closing) return;
+                await entry.session!.setModel(target!);
+                entry.session!.setThinkingLevel(next.effort);
+                if (entry.session!.thinkingLevel !== next.effort) throw new Error("SDK coerced prewalk effort");
+                this.update(entry, { model: { provider: next.provider, id: next.id }, effort: next.effort, prewalk: { target: next, status: "handed-off" } });
+              } catch (error) { policyError = String(error); }
+            }
+          });
+        }] });
+      await loader.reload();
+      resources.getExtensions = () => loader.getExtensions();
       const tools: ToolDefinition[] = input.profile.tools.map(name => {
         const tool = input.context.tools.find(tool => tool.name === name)!;
         return { name, label: name, description: tool.description, parameters: tool.parameters,
@@ -308,12 +371,13 @@ export class DelegationCoordinator {
       }
       const { session, modelFallbackMessage } = await createAgentSession({
         cwd: selection.cwd, agentDir, modelRuntime: runtime, model: selection.model,
-        thinkingLevel: selection.thinkingLevel, scopedModels: [{ model: selection.model!, thinkingLevel: selection.thinkingLevel }],
-        resourceLoader: childResources(input.profile.prompt + `\nYour delegation identity is ${entry.state.id} generation ${entry.state.generation}; parent ${entry.state.parentId}. Coordination, if granted, is limited to family identities explicitly supplied to you.` + (entry.validator ? "\nThis assignment requires a structured result. Call submit_result with the actual value; final prose is not a submission." : ""), input.skills), tools: tools.map(tool => tool.name), customTools: tools,
+        thinkingLevel: selection.thinkingLevel, scopedModels: [{ model: selection.model!, thinkingLevel: selection.thinkingLevel }, ...(target ? [{ model: target, thinkingLevel: input.profile.prewalk!.effort }] : [])],
+        resourceLoader: resources, tools: tools.map(tool => tool.name), customTools: tools,
         settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
         sessionManager: SessionManager.create(selection.cwd, join(taskDir, "transcripts")),
       });
       entry.session = session;
+      if (session.thinkingLevel !== selection.thinkingLevel) throw new Error("SDK did not preserve selected effort");
       if (modelFallbackMessage || session.model?.id !== selection.model?.id || session.model?.provider !== selection.model?.provider) throw new Error("SDK did not preserve selected model");
       let markStarted!: () => void;
       const started = new Promise<void>(resolve => { markStarted = resolve; });

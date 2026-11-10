@@ -235,12 +235,11 @@ test("concurrent real root revive calls admit only one fresh generation and reva
   assert.equal(f.events.filter(event => event.child.id === first.id && event.child.generation === 2 && event.child.disposed).length, 1);
   await control(f, { action: "park", target: second });
   t.mock.method(ModelRegistry.prototype, "hasConfiguredAuth", () => false);
-  const accepted = await control(f, { action: "revive", target: second, assignment: "auth unavailable" });
-  assert.equal(accepted.isError, false, "identity admission precedes asynchronous public auth/provider setup");
-  const third = await final(f, { id: first.id, generation: 3 });
-  assert.equal(third.status, "failed");
-  assert.match(third.error!, /provider|auth/i);
-  assert.equal(third.telemetry.requests, null);
+  const before = f.events.length;
+  const denied = await control(f, { action: "revive", target: second, assignment: "auth unavailable" });
+  assert.equal(denied.isError, true, "known unavailable model/auth fails synchronous policy preflight");
+  assert.match(JSON.stringify(denied), /unavailable|auth/i);
+  assert.equal(f.events.length, before, "no successor identity/setup/dispatch on denied renewal");
 });
 
 test("bounded mailbox/input/retention with actual running SDK recipient", async t => {

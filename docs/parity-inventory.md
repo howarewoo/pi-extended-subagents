@@ -1,5 +1,9 @@
 # Subagent parity inventory and adapter feasibility
 
+## Current Slice 7 advanced capability status
+
+The [advanced policy ledger](advanced-policies.md) supersedes historical investigation-only claims for exact physical model/reasoning selection and the bounded builtin one-way prewalk subset. It also records the precise parked advisor contract and bounded probe/speculation/worker/resource/history findings. Ordinary defaults remain unchanged; advisor, executable inheritance and extra calls remain off. The original pinned source/test inventory below is historical traceability, not a claim that those host features are implemented.
+
 For implementers deciding the next bounded group. This is an investigation contract, **not a replacement implementation or a port**. OMP is a behavioral/UI reference. All OMP links below are pinned to **`eda28eff97cf7a352fd3057a03581be1686dbc7a`** in [can1357/oh-my-pi](https://github.com/can1357/oh-my-pi/tree/eda28eff97cf7a352fd3057a03581be1686dbc7a). Pi feasibility applies to the published **1.5.2** public SDK, extensions, and TUI APIs, not to OMP's similarly named classes.
 
 ## Current core and scheduling disposition

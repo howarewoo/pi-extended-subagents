@@ -9,6 +9,7 @@ function safe(text: string): string {
 function childPresentation(child: ChildSnapshot | undefined, presence?: string) {
   return {
     status: child ? `${child.status}${presence ? ` · ${presence} · g${child.generation}` : ""}` : "not-started",
+    policy: child ? safe(`${child.model.provider}/${child.model.id} · ${child.effort ?? "unknown effort"} · prewalk ${child.prewalk?.status ?? "off"} · advisor unavailable`) : "",
     writerWarning: child?.writerLease ? "Model-tool writer only: no conflicting manual !/!! or external edits" : "",
     activity: safe(child?.error || (!child?.disposed ? child?.activity || child?.progress : child?.result) || child?.progress ||
       (child ? "Waiting for streamed activity" : "Ask the model to use delegate_task with an explicit profile")),
@@ -33,6 +34,7 @@ export function createChildWidget(snapshot: () => ChildSnapshot | undefined, the
       return [
         theme.fg(child.color, heading),
         theme.fg("muted", latestActivity(child.activity, width)),
+        ...(child.policy ? [theme.fg("muted", child.policy)] : []),
         ...(child.writerWarning ? [theme.fg("warning", child.writerWarning)] : []),
       ].map(line => truncateToWidth(line, Math.max(0, width)));
     },
@@ -79,7 +81,7 @@ export function createHub(
       const hint = theme.fg("muted", `${closeKeys}: close${width >= 48 ? " · child continues" : ""}`);
       const status = row(theme.fg(child.color, `child: ${child.status}`));
       const activity = row(latestActivity(child.activity, innerWidth - 2));
-      const body = height >= 7 ? [row(""), status, activity, row(theme.fg("warning", child.writerWarning)), row(hint)]
+      const body = height >= 7 ? [row(theme.fg("muted", child.policy)), status, activity, row(theme.fg("warning", child.writerWarning)), row(hint)]
         : height >= 5 ? [status, activity, row(hint)]
         : height >= 4 ? [status, row(hint)] : [status];
       return [top, ...body, bottom];

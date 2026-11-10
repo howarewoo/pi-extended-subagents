@@ -2,12 +2,14 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir, loadSkills, type Skill } from "@earendil-works/pi-coding-agent";
 
+import { narrowModelPolicy, allowsModel, sameSelection, type ModelPolicy } from "./model-policy.ts";
+
 export const READ_TOOLS = ["read", "grep", "find", "ls"] as const;
 export const WRITE_TOOLS = [...READ_TOOLS, "write", "edit", "bash"] as const;
 export type BuiltinTool = typeof WRITE_TOOLS[number];
 export const COORDINATION_ACTIONS = ["message", "inbox", "wait"] as const;
 export type CoordinationAction = typeof COORDINATION_ACTIONS[number];
-export type Profile = Readonly<{ name: string; description: string; prompt: string; tools: readonly BuiltinTool[]; skills: readonly string[]; spawn?: readonly string[]; coordination?: readonly CoordinationAction[] }>;
+export type Profile = Readonly<ModelPolicy & { name: string; description: string; prompt: string; tools: readonly BuiltinTool[]; skills: readonly string[]; spawn?: readonly string[]; coordination?: readonly CoordinationAction[] }>;
 const bundled: Record<string, Profile> = {
   general: { name: "general", description: "General read-only delegation", prompt: "Complete the assigned analysis and report the evidence and limitations.", tools: READ_TOOLS, skills: [] },
   scout: { name: "scout", description: "Explore and locate evidence", prompt: "Explore the assignment using read-only tools. Report precise source locations and findings.", tools: READ_TOOLS, skills: [] },
@@ -32,7 +34,7 @@ function strings(value: unknown, field: string): string[] {
 function specialize(base: Profile, value: unknown, operator: boolean): Profile {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid profile ${base.name}`);
   const input = value as Record<string, unknown>;
-  for (const key of Object.keys(input)) if (!["description", "prompt", "tools", "skills", "spawn", "coordination"].includes(key)) throw new Error(`Unsupported profile field: ${key}`);
+  for (const key of Object.keys(input)) if (!["description", "prompt", "tools", "skills", "spawn", "coordination", "models", "model", "prewalk"].includes(key)) throw new Error(`Unsupported profile field: ${key}`);
   const tools = input.tools === undefined ? [...base.tools] : strings(input.tools, "tools");
   if (tools.some(tool => !base.tools.includes(tool as BuiltinTool))) throw new Error(`Profile ${base.name} cannot broaden tool grants`);
   const skills = input.skills === undefined ? [...base.skills] : strings(input.skills, "skills");
@@ -42,7 +44,7 @@ function specialize(base: Profile, value: unknown, operator: boolean): Profile {
   if (spawn.some(name => !Object.hasOwn(bundled, name) || (!operator && !base.spawn?.includes(name)))) throw new Error("Cannot mint spawn grants");
   const coordination = input.coordination === undefined ? [...(base.coordination ?? [])] : strings(input.coordination, "coordination");
   if (coordination.some(action => !COORDINATION_ACTIONS.includes(action as CoordinationAction) || (!operator && !base.coordination?.includes(action as CoordinationAction)))) throw new Error("Cannot mint coordination grants");
-  return { ...base, coordination: coordination as CoordinationAction[], spawn, description: input.description as string ?? base.description, prompt: input.prompt as string ?? base.prompt, tools: tools as BuiltinTool[], skills };
+  return { ...base, ...narrowModelPolicy(base, input, operator), coordination: coordination as CoordinationAction[], spawn, description: input.description as string ?? base.description, prompt: input.prompt as string ?? base.prompt, tools: tools as BuiltinTool[], skills };
 }
 
 /** Operator config can grant exact skill paths; trusted project config can only narrow those grants. */
@@ -68,7 +70,8 @@ export function bundledProfiles(): Profile[] { return structuredClone(Object.val
 
 /** Keep current definitions/prompts but intersect executable grants with an admitted ceiling. */
 export function intersectProfileGrants(profile: Profile, maximum: Profile): Profile {
-  return { ...profile, tools: profile.tools.filter(tool => maximum.tools.includes(tool)),
+  return { ...profile, models: maximum.models === undefined ? undefined : (profile.models ?? []).filter(selection => allowsModel(maximum, selection)),
+    prewalk: profile.prewalk && maximum.prewalk && sameSelection(profile.prewalk, maximum.prewalk) ? profile.prewalk : undefined, tools: profile.tools.filter(tool => maximum.tools.includes(tool)),
     skills: profile.skills.filter(skill => maximum.skills.includes(skill)),
     spawn: profile.spawn?.filter(role => maximum.spawn?.includes(role)),
     coordination: profile.coordination?.filter(action => maximum.coordination?.includes(action)) };

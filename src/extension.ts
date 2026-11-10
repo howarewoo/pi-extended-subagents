@@ -1,3 +1,4 @@
+import { EFFORTS, sameSelection } from "./model-policy.ts";
 import { clippedText } from "./outcomes.ts";
 import { readTaskInput } from "./task-input.ts";
 import { join } from "node:path";
@@ -63,7 +64,8 @@ export default function delegation(pi: ExtensionAPI) {
   };
   const role = Type.Union([Type.Literal("general"), Type.Literal("scout"), Type.Literal("review"), Type.Literal("implementation")]);
   const limits = Type.Object({ depth: Type.Optional(Type.Integer({ minimum: 0 })), spawns: Type.Optional(Type.Integer({ minimum: 0 })), deadlineMs: Type.Optional(Type.Integer({ minimum: 1 })), requests: Type.Optional(Type.Integer({ minimum: 1 })), tools: Type.Optional(Type.Integer({ minimum: 1 })) }, { additionalProperties: false });
-  const assignment = { assignment: Type.Optional(Type.String({ minLength: 1 })), taskFile: Type.Optional(Type.String({ minLength: 1 })), resultSchema: Type.Optional(Type.Unknown()), profile: role, spawn: Type.Optional(Type.Array(role)), coordination: Type.Optional(Type.Array(Type.Union(COORDINATION_ACTIONS.map(action => Type.Literal(action))))), limits: Type.Optional(limits) };
+  const modelSelection = Type.Object({ provider: Type.String({ minLength: 1 }), id: Type.String({ minLength: 1 }), effort: Type.Union(EFFORTS.map(level => Type.Literal(level))) }, { additionalProperties: false });
+  const assignment = { models: Type.Optional(Type.Array(modelSelection, { maxItems: 64 })), model: Type.Optional(modelSelection), assignment: Type.Optional(Type.String({ minLength: 1 })), taskFile: Type.Optional(Type.String({ minLength: 1 })), resultSchema: Type.Optional(Type.Unknown()), profile: role, spawn: Type.Optional(Type.Array(role)), coordination: Type.Optional(Type.Array(Type.Union(COORDINATION_ACTIONS.map(action => Type.Literal(action))))), limits: Type.Optional(limits) };
   const item = Type.Object(assignment, { additionalProperties: false });
   const parameters = Type.Union([
     Type.Object({ ...assignment, background: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
@@ -71,7 +73,7 @@ export default function delegation(pi: ExtensionAPI) {
   ]);
   const taskTool = (parent?: ChildRef, rootContext?: ExtensionToolContext, rootCallerId?: string): ToolDefinition<typeof parameters> => ({
     name: "delegate_task", label: "Delegate task", exposure: "model-only",
-    description: "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model. Bounded FIFO capacity; implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits; background delivers one final batch message. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
+    description: "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model by default. Optional exact model {provider,id,effort} requires an operator profile models grant and stays exact, suppressing inherited role prewalk; models may only narrow that grant list. No aliases/fallback/coercion. Configured role-default prewalk switches once after first edit/write, not a repository scan. Advisor/probes/speculation/workers/history/executable resource inheritance remain unavailable. Bounded FIFO capacity; implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits; background delivers one final batch message. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
     parameters,
     async execute(callerId, args, signal, onUpdate, localContext) {
       const ctx = rootContext ?? localContext;
@@ -92,13 +94,17 @@ export default function delegation(pi: ExtensionAPI) {
           if (task.coordination.some(action => !profile.coordination?.includes(action))) throw new Error("Request cannot mint coordination grants");
           profile = { ...profile, coordination: task.coordination };
         }
+        if (task.models) {
+          if (task.models.some(selection => !profile.models?.some(grant => sameSelection(grant, selection)))) throw new Error("Request cannot mint model grants");
+          profile = { ...profile, models: task.models };
+        }
         assertTools(profile.tools);
         let text = task.assignment;
         if (task.taskFile !== undefined) {
           assertTools(["read"]);
           text = await readTaskInput(task.taskFile, ctx, signal, parent ? () => owner.taskInputRead(parent) : undefined);
         }
-        inputs.push({ assignment: text!, resultSchema: task.resultSchema, profile, skills, context: ctx, callerId: rootCallerId ?? callerId, parent, limits: task.limits,
+        inputs.push({ model: task.model, assignment: text!, resultSchema: task.resultSchema, profile, skills, context: ctx, callerId: rootCallerId ?? callerId, parent, limits: task.limits,
           coordinationTools: actor => [coordinationTool(owner, actor)],
           nestedTool: (ref: ChildRef) => taskTool(ref, ctx, rootCallerId ?? callerId) });
       }
