@@ -45,11 +45,13 @@ export type ChildSnapshot = Readonly<ChildRef & {
   error?: string;
   transcript?: string;
   disposed: boolean;
+  createdAt: number;
+  endedAt: number | null;
 }>;
 export type RegistryEvent = Readonly<{ type: "changed" | "sdk"; child: ChildSnapshot; event?: AgentSessionEvent }>;
 export type StartTask = { model?: ModelSelection; resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; coordinationTools?: (actor: ChildRef) => ToolDefinition[]; nestedTool?: (parent: ChildRef) => ToolDefinition };
 type ChildSelection = Pick<ExtensionToolContext, "model" | "modelRegistry" | "scopedModels" | "thinkingLevel" | "cwd">;
-type Entry = { validator?: Validator; input: StartTask; selection: ChildSelection; done: Promise<void>; finish: () => void; timer?: ReturnType<typeof setTimeout>; spawned: number; state: ChildSnapshot; setup?: Promise<void>; run?: Promise<void>; session?: AgentSession; unsubscribe?: () => void; cancelled: boolean; callerId: string };
+type Entry = { validator?: Validator; input: StartTask; selection: ChildSelection; done: Promise<void>; finish: () => void; timer?: ReturnType<typeof setTimeout>; spawned: number; state: ChildSnapshot; finalizedMessages?: AgentSession["messages"]; setup?: Promise<void>; run?: Promise<void>; session?: AgentSession; unsubscribe?: () => void; cancelled: boolean; callerId: string };
 
 function admittedModel(entry: Entry, selection: ModelSelection): boolean {
   return entry.input.profile.models === undefined
@@ -75,17 +77,17 @@ export function childResources(prompt: string, skills: Skill[] = []): ResourceLo
 export class DelegationCoordinator {
   private entries = new Map<string, Entry>();
   private queue = new Set<Entry>();
-  private history = new Map<string, ChildSnapshot>();
+  private history = new Map<string, { state: ChildSnapshot; messages: AgentSession["messages"] }>();
   private presence = new Map<string, "active" | "idle" | "parked" | "stopped">();
   private coordinationListeners = new Set<() => void>();
-  private messages: DelegationMessage[] = [];
+  private coordinationMessages: DelegationMessage[] = [];
   private mailboxes = new Map<string, DelegationMessage[]>();
   private waits = new Map<string, Set<string>>();
   private waiterCount = 0;
   private notifyCoordination(): void { for (const listener of this.coordinationListeners) listener(); }
   agents() { return this.list().map(state => ({ id: state.id, generation: state.generation, presence: this.presence.get(state.id) })); }
   generations(id: string): ChildSnapshot[] {
-    return [...this.history.values(), ...this.list()].filter(state => state.id === id).map(state => structuredClone(state));
+    return [...this.history.values()].map(record => record.state).concat(this.list()).filter(state => state.id === id).map(state => structuredClone(state));
   }
   private listeners = new Set<(event: RegistryEvent) => void>();
   private parentMutations = new Set<string>();
@@ -101,7 +103,7 @@ export class DelegationCoordinator {
   snapshot(ref?: ChildRef): ChildSnapshot | undefined {
     if (ref) {
       const historical = this.history.get(this.key(ref));
-      if (historical) return structuredClone(historical);
+      if (historical) return structuredClone(historical.state);
     }
     const entry = ref ? this.entry(ref) : [...this.entries.values()].at(-1);
     return entry && structuredClone(entry.state);
@@ -212,7 +214,7 @@ export class DelegationCoordinator {
       const entry: Entry = { validator: validators[index], input, selection, done, finish, spawned: previous?.spawned ?? 0, cancelled: false, callerId: input.callerId, state: {
         id: previous?.state.id ?? randomUUID(), generation: (previous?.state.generation ?? 0) + 1, parentGeneration: input.parent?.generation, parentId: input.parent?.id ?? this.parentId,
         depth: input.parent ? this.entry(input.parent).state.depth + 1 : 1,
-        status: "queued", writerLease: false, limits: limits[index], toolCalls: 0, profile: input.profile.name,
+        createdAt: Date.now(), endedAt: null, status: "queued", writerLease: false, limits: limits[index], toolCalls: 0, profile: input.profile.name,
         outcome: validators[index] ? { validation: "awaiting", attempts: 0, errors: [], finalized: false } : undefined,
         assignment: input.assignment, activity: "Queued for capacity / writer admission", progress: "", result: "", disposed: false,
         model: { provider: selection.model!.provider, id: selection.model!.id }, effort: selection.thinkingLevel ?? null,
@@ -222,7 +224,7 @@ export class DelegationCoordinator {
       return entry;
     });
     for (const [parent, count] of parents) parent.spawned += count;
-    if (previous) this.history.set(this.key(previous.state), structuredClone(previous.state));
+    if (previous) this.history.set(this.key(previous.state), { state: structuredClone(previous.state), messages: previous.finalizedMessages ?? [] });
     for (const entry of entries) { this.entries.set(entry.state.id, entry); this.queue.add(entry); this.presence.set(entry.state.id, "active"); }
     for (const entry of entries) {
       entry.timer = setTimeout(() => { this.limit(entry, "deadline"); }, entry.state.limits.deadlineMs);
@@ -390,7 +392,7 @@ export class DelegationCoordinator {
         }
         if (event.type === "message_end" && event.message.role === "user") {
           const text = typeof event.message.content === "string" ? event.message.content : event.message.content.filter(block => block.type === "text").map(block => block.text).join("");
-          for (const message of this.messages) if (message.recipient !== "root" && this.key(message.recipient) === this.key(entry.state) && text === `Delegation message ${message.id} from ${message.sender === "root" ? "root" : this.key(message.sender)}: ${message.text}`) message.status = "delivered";
+          for (const message of this.coordinationMessages) if (message.recipient !== "root" && this.key(message.recipient) === this.key(entry.state) && text === `Delegation message ${message.id} from ${message.sender === "root" ? "root" : this.key(message.sender)}: ${message.text}`) message.status = "delivered";
           this.notifyCoordination();
         }
         if (event.type === "tool_execution_start") patch.activity = `Tool: ${event.toolName}`;
@@ -447,13 +449,14 @@ export class DelegationCoordinator {
     if (entry.state.disposed) return;
     this.queue.delete(entry);
     clearTimeout(entry.timer);
+    entry.finalizedMessages = structuredClone(entry.session?.messages ?? []);
     entry.unsubscribe?.(); entry.session?.dispose();
     // Retain immutable evidence, not the disposed SDK session graph, while idle/parked.
     entry.unsubscribe = undefined; entry.session = undefined;
     if (this.writer === entry.state.id) this.writer = undefined;
     this.closeDescendantPresence(entry);
     this.presence.set(entry.state.id, entry.cancelled || this.closing ? "stopped" : "idle");
-    this.update(entry, { disposed: true, writerLease: false, outcome: entry.state.outcome ? { ...entry.state.outcome, finalized: true } : undefined });
+    this.update(entry, { disposed: true, endedAt: Date.now(), writerLease: false, outcome: entry.state.outcome ? { ...entry.state.outcome, finalized: true } : undefined });
     entry.finish();
     this.pump();
   }
@@ -488,8 +491,8 @@ export class DelegationCoordinator {
     if (!target && mode !== "inbox") throw new Error("Root accepts inbox messages only");
     const key = this.key(target);
     const mailbox = this.mailboxes.get(key) ?? [];
-    if (mailbox.length >= MAX_MAILBOX_MESSAGES || this.messages.length >= MAX_RETAINED_MESSAGES) throw new Error("Parent message retention/mailbox limit");
-    this.messages.push(record); mailbox.push(record); this.mailboxes.set(key, mailbox);
+    if (mailbox.length >= MAX_MAILBOX_MESSAGES || this.coordinationMessages.length >= MAX_RETAINED_MESSAGES) throw new Error("Parent message retention/mailbox limit");
+    this.coordinationMessages.push(record); mailbox.push(record); this.mailboxes.set(key, mailbox);
     this.notifyCoordination();
     if (mode !== "inbox") {
       try {
@@ -514,7 +517,7 @@ export class DelegationCoordinator {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_WAIT_MS) throw new Error("Wait timeout must be 1–60000ms");
     if (this.waiterCount >= MAX_WAITERS) throw new Error("Parent waiter limit");
     if (target && messageId) throw new Error("Wait selects either an outcome or message receipt");
-    const receipt = messageId ? this.messages.find(message => message.id === messageId) : undefined;
+    const receipt = messageId ? this.coordinationMessages.find(message => message.id === messageId) : undefined;
     if (messageId && (!receipt || (this.key(receipt.sender === "root" ? undefined : receipt.sender) !== this.key(actor) && this.key(receipt.recipient === "root" ? undefined : receipt.recipient) !== this.key(actor)))) throw new Error("Unknown or foreign message receipt");
     const destination = target ? this.target(sender, target) : undefined;
     const pendingReceipt = receipt && !["delivered", "handled", "error", "not-running"].includes(receipt.status);
@@ -612,6 +615,13 @@ export class DelegationCoordinator {
     this.dispose(entry);
   }
   async wait(ref: ChildRef): Promise<ChildSnapshot> { const entry = this.entry(ref); await entry.done; return structuredClone(entry.state); }
+  /** Detached public SDK transcript for one admitted generation; no replay or arbitrary file access. */
+  messages(ref: ChildRef): AgentSession["messages"] {
+    const historical = this.history.get(this.key(ref));
+    if (historical) return structuredClone(historical.messages);
+    const entry = this.entry(ref);
+    return structuredClone(entry.session?.messages ?? entry.finalizedMessages ?? []);
+  }
   reopenTranscript(ref: ChildRef) { const path = this.snapshot(ref)?.transcript; if (!path) throw new Error("No transcript yet"); return SessionManager.open(path).buildSessionContext(); }
   shutdown(): Promise<void> {
     this.closing = true;

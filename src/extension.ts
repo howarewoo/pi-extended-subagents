@@ -1,3 +1,4 @@
+import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { EFFORTS, sameSelection } from "./model-policy.ts";
 import { clippedText } from "./outcomes.ts";
 import { readTaskInput } from "./task-input.ts";
@@ -7,7 +8,7 @@ import { truncateHead, type ExtensionToolContext, type ToolDefinition, type Exte
 import { resolveScheduling } from "./scheduling.ts";
 import { DelegationCoordinator, type ChildRef, type ChildSnapshot, type StartTask } from "./coordinator.ts";
 import { READ_TOOLS, resolveProfile, bundledProfiles, COORDINATION_ACTIONS, intersectProfileGrants } from "./profiles.ts";
-import { createChildWidget, createHub } from "./hub.ts";
+import { createChildWidget, createHub, safe, taskCard } from "./hub.ts";
 
 export default function delegation(pi: ExtensionAPI) {
   let coordinator: DelegationCoordinator;
@@ -38,7 +39,7 @@ export default function delegation(pi: ExtensionAPI) {
     if (ctx.mode !== "tui") return;
     ctx.ui.setWidget("delegation", (tui, theme) => {
       renderWidget = () => tui.requestRender();
-      return createChildWidget(() => coordinator.snapshot(), theme, () => coordinator.agents().at(-1)?.presence);
+      return createChildWidget(() => coordinator.list(), theme, () => tui.terminal.rows);
     }, { placement: "aboveEditor" });
   });
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -75,6 +76,22 @@ export default function delegation(pi: ExtensionAPI) {
     name: "delegate_task", label: "Delegate task", exposure: "model-only",
     description: "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model by default. Optional exact model {provider,id,effort} requires an operator profile models grant and stays exact, suppressing inherited role prewalk; models may only narrow that grant list. No aliases/fallback/coercion. Configured role-default prewalk switches once after first edit/write, not a repository scan. Advisor/probes/speculation/workers/history/executable resource inheritance remain unavailable. Bounded FIFO capacity; implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits; background delivers one final batch message. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
     parameters,
+    renderCall(args, theme) {
+      return { render: width => [theme.fg("toolTitle", `Delegate · ${"tasks" in args ? `batch ${args.tasks?.length ?? 0}` : safe(args.profile ?? "profile pending")} · ${args.background ? "background" : "foreground"}`),
+        safe("tasks" in args ? "Ordered batch · expand results for each identity" : args.assignment ?? args.taskFile ?? "Receiving assignment…").replaceAll("\n", " ")].map(line => truncateToWidth(line, Math.max(0, width))), invalidate() {} };
+    },
+    renderResult(result, options, theme) {
+      const stored = result.details as ChildSnapshot | { children: ChildSnapshot[] } | undefined;
+      const children = stored && "children" in stored ? stored.children : stored && "id" in stored ? [stored] : [];
+      return { render(width) {
+        const lines = children.length ? children.flatMap(snapshot => {
+          let child = snapshot;
+          try { child = coordinator?.snapshot(snapshot) ?? snapshot; } catch { /* delivered snapshots survive runtime replacement */ }
+          return taskCard(child, options.expanded);
+        }) : [safe(result.content.filter(block => block.type === "text").map(block => block.text).join("\n"))];
+        return new Text(lines.map(line => theme.fg("text", line)).join("\n"), 0, 0).render(width);
+      }, invalidate() {} };
+    },
     async execute(callerId, args, signal, onUpdate, localContext) {
       const ctx = rootContext ?? localContext;
       const owner = coordinator;
@@ -192,7 +209,7 @@ export default function delegation(pi: ExtensionAPI) {
     const [id, generation, ...text] = args.trim().split(/\s+/);
     await coordinator.steer(ref(`${id} ${generation}`), text.join(" "));
   } });
-  pi.registerCommand("task-hub", { description: "Observe the latest registry entry (TUI only)", handler: async (_args, ctx) => {
+  pi.registerCommand("task-hub", { description: "Fleet roster, generation history, transcripts and pinned controls (TUI only)", handler: async (_args, ctx) => {
     if (ctx.mode !== "tui") return;
     await ctx.ui.custom<void>((tui, theme, keys, done) => createHub(coordinator, theme, keys, () => tui.requestRender(), () => done(),
       () => Math.max(1, Math.floor(tui.terminal.rows * 0.9))), { overlay: true, overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" } });

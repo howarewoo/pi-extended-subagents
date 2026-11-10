@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { fixture, eventually } from "./fixtures.ts";
+import { taskCard, createChildWidget } from "../src/hub.ts";
 import type { ChildSnapshot } from "../src/coordinator.ts";
 
 const text = (context: Parameters<import("@earendil-works/pi-ai").FauxResponseFactory>[0]) => {
@@ -163,10 +164,16 @@ test("parent cancellation drains the actual nested tree before finalizing the an
   await writeFile(join(f.root, "operator", "delegation.json"), JSON.stringify({ general: { spawn: ["general"] } }));
   const child = await f.launch("child");
   await eventually(() => f.events.some(event => event.child.depth === 2 && event.child.status === "running"));
+  const nested = f.events.filter(event => event.child.depth === 2).at(-1)!.child;
+  assert.equal(nested.parentGeneration, child.generation);
+  assert.match(taskCard(nested).join("\n"), new RegExp(`Parent ${child.id} #${child.generation} · depth 2`));
   await f.session.prompt(`/task-stop ${child.id} ${child.generation}`);
   const disposed = f.events.filter(event => event.child.disposed).map(event => event.child);
   assert.deepEqual(disposed.map(state => state.depth), [2, 1]);
   assert.ok(disposed.every(state => state.status === "cancelled"));
+  const widget = createChildWidget(() => disposed, {fg: (_color, text) => text});
+  assert.match(widget.render(180).join("\n"), /cancelled 2/);
+  assert.ok(disposed.every(state => state.endedAt! >= state.createdAt));
   assert.equal(disposed[0].parentId, child.id);
   for (const state of disposed) assert.match(await readFile(state.transcript!, "utf8"), /"stopReason":"aborted"/);
 });
