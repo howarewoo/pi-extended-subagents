@@ -56,7 +56,7 @@ Inside Pi, use these slash commands (do not enter a normal model prompt):
 /proof-hub
 ```
 
-The **Subagent proof** widget is visible above the editor even before a child starts. It keeps the running and final child status discoverable after the Hub closes. The Hub uses the same snapshot, with a themed border/title, padded solid background and close hint drawn from Pi's configured keys. **Enter or Escape closes only the view** and returns control to Pi's editor; it does not stop the child. While it is still running, try:
+The **Subagent proof** widget is visible above the editor even before a child starts. It keeps the running and final child status discoverable after the Hub closes. The Hub uses the same snapshot, with a themed border/title, padded opaque neutral background and close hint drawn from Pi's configured keys. The surface keeps the active theme's panel lightness but removes its tint, including in custom themes; foreground/status colors remain theme-provided. **Enter or Escape closes only the view** and returns control to Pi's editor; it does not stop the child. While it is still running, try:
 
 ```text
 /proof-steer report this queued instruction next
@@ -68,6 +68,8 @@ The **Subagent proof** widget is visible above the editor even before a child st
 Steering is queued after the current assistant turn; it is not an immediate interrupt. A short child may finish before you steer; “No running proof child” is expected then. For a fresh proof, create a new parent runtime/session. `/proof-result` appends the snapshot to the parent transcript without requesting a model turn. `/proof-hub` is TUI-only, explicitly guarded in RPC/print/JSON modes.
 
 This path was exercised through **real interactive Pi PTY output**: persistent widget, running/completed/cancelled state, Hub frame/background, Escape/Enter return to editor, queued steering, cancellation/result, resize from 100×30 to 40×16, and live dark-to-light theme selection. Captured ANSI/text was inspected; this is not a screenshot or a claim of human visual/display-level contrast or glyph-quality testing. See [verification](docs/verification.md#interactive-terminal-repair-evidence).
+
+Changes to a locally loaded checkout take effect on your next Pi reload; this extension does not trigger a reload itself.
 
 ### Optional installation into your Pi
 
