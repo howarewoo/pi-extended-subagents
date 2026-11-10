@@ -32,7 +32,7 @@ The native tool input is:
 
 One call accepts one assignment. `general`, `scout` and `review` grant only `read`, `grep`, `find`, `ls`. `implementation` additionally grants `write`, `edit`, `bash` and reserves the exclusive **model-tool-mediated** shared-checkout writer. `/task-profiles` lists bundled definitions. The checkout is shared by default; there is **no filesystem isolation or OS sandbox**. Read-only profiles cannot run unrestricted shell. Tool calls run through the parent's public dispatcher, retaining validation and permission hooks.
 
-Foreground returns final state/text once. With `background:true`, the tool returns `{id,generation,status}` and delivers one final custom message to the parent when the child finishes. It does not create a detached process or survive parent reload. Use the returned identity for controls:
+Foreground returns final state/text once. With `background:true`, the tool returns identity/status (and stores a snapshot in tool details) and delivers one final custom message to the parent when the child finishes. It does not create a detached process or survive parent reload. Use the returned identity for controls:
 
 ```text
 /task-profiles
@@ -43,7 +43,17 @@ Foreground returns final state/text once. With `background:true`, the tool retur
 /task-hub
 ```
 
-Steering queues after the current assistant/tool turn. Stop aborts and drains work, preserving its transcript. `/task-hub` observes the **latest task only**, is TUI-only and closes with configured Enter/Escape keys. Closing the view never stops execution. The compact widget retains that latest task's real state/activity; `/task-status` lists all entries. The existing opaque neutral, theme-adaptive surface is retained. This is not the planned roster/tree/transcript Hub.
+Steering queues after the current assistant/tool turn. Stop aborts and drains work, preserving its transcript. Native task call/result cards show the actual identity, profile, selected model, lifecycle and preview, with a full transcript reference. The persistent **FLEET** widget counts all tasks in this parent runtime, including settled/failed/cancelled tasks, with a bounded active-assignment preview and actual writer-lease warning. At narrow widths its counts use `run` (running), `done` (settled), `fail` (failed) and `cancel` (cancelled).
+
+### Observe and control the fleet
+
+`/task-hub` is TUI-only. The roster groups the current children under their real parent session; nesting is not implemented. Selection remains on the same identity as other tasks stream or finish. It provides:
+
+- **Inspector:** identity/generation, profile, physical model/effort, elapsed admission-to-disposal time, resource lifetime, direct requests/tokens/cost/context, assignment, activity, result/error and transcript path. Unknown metrics explicitly say `unavailable`; SDK-reported zero remains zero. No subtree totals or provider-internal request/billing accuracy is claimed.
+- **Transcript:** full SDK user/assistant/thinking/tool text, not only the latest 4KB progress tail. **Tools:** actual call IDs, arguments, result text/errors and live tool updates observed while the Hub is open. Binary images and opaque signatures/tool metadata are not rendered; the retained JSONL is the full-data reference. Views are read-only and sanitize terminal control/bidi sequences.
+- **Controls:** arrows select an agent; **Tab** cycles Inspector → Transcript → Tools; **PageUp/PageDown** scroll the selected view, **Home/End** jump. **/** opens a roster text/status/profile filter (Enter applies; empty clears). **s** opens selected-child steering, Enter sends. **x** opens stop confirmation; only **y** stops and drains. Escape cancels an input/confirmation without acting.
+
+Configured Enter/Escape keys close in browsing mode. Viewing, selecting, filtering and closing never launch/restart/cancel work or prompt the parent model. The editor regains focus after closing. Closing/reloading removes view subscriptions independently of coordinator lifetime. The panel remains opaque, neutral and theme-adaptive, including deliberately tinted themes. In very small terminals content/hints are clipped rather than expanding without bound.
 
 ### Shared-writer scope: model tools only
 
@@ -108,4 +118,4 @@ delegation/<parent-session-id>/<task-id>/
 
 Old `extended-subagents-proof` data is left untouched and is not loaded or migrated. New artifacts may contain sensitive assignment, tool and model output; treat them like parent transcripts. There is no retention, recovery, cross-parent revival or generalized artifact service. Parent shutdown/reload aborts, drains and disposes all children. SDK hosts must bind extensions and emit shutdown through the public lifecycle; bare `session.dispose()` is not a substitute for host shutdown dispatch. Abrupt process death cannot run cleanup hooks.
 
-Not implemented: batch queue/scheduling, nested tasks/depth scheduling, structured yield, peer messaging/wait, parking/revival, isolation/apply, advisor/prewalk/probes/speculation/workpool, executable extension/MCP grants, or the full roster/tree/transcript UI. No live provider inference, credential changes, global Pi installation/config changes or retained-data migration were performed during verification.
+Not implemented: batch queue/scheduling, nested tasks/depth scheduling, structured yield, peer messaging/wait, parking/revival, isolation/apply, advisor/prewalk/probes/speculation/workpool, executable extension/MCP grants. No live provider inference, credential changes, global Pi installation/config changes or retained-data migration were performed during verification.

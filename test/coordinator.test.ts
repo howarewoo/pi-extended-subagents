@@ -25,6 +25,13 @@ test("SDK selected parent provider streams, steers, settles and reopens transcri
   assert.equal(state.model.provider, model.getModel().provider);
   assert.equal(state.telemetry.requests, 2);
   assert.ok(state.telemetry.tokens);
+  assert.ok(state.createdAt <= state.endedAt!);
+  assert.equal(state.writerLease, false);
+  const messages = coordinator.messages(ref);
+  assert.match(JSON.stringify(messages), /queued steering/);
+  messages.length = 0;
+  assert.ok(coordinator.messages(ref).length > 0, "observer messages are detached");
+  assert.throws(() => coordinator.messages({...ref, generation: 999}), /stale/);
   const reopened = coordinator.reopenTranscript(ref);
   assert.deepEqual(getCurrentTools(reopened.messages).map(tool => tool.name).sort(), ["find", "grep", "ls", "read"]);
   assert.ok(!JSON.stringify(reopened).includes("AMBIENT_CONTEXT_MUST_NOT_APPEAR"));

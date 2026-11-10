@@ -53,7 +53,7 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
     },
   };
   await session.bindExtensions({ mode: "tui", uiContext: ui });
-  assert.match(widget!.render(80).join("\n"), /not-started/);
+  assert.match(widget!.render(80).join("\n"), /FLEET 0/g);
   const panelLevels: number[] = [];
   for (const name of ["dark", "light", "tinted-custom"] as const) {
     if (name !== "tinted-custom") initTheme(name, false);
@@ -97,7 +97,7 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
   assert.deepEqual(calls, [true, false, true]);
   assert.notEqual(widget, oldWidget);
   assert.equal(model.state.callCount, callsBeforeStop, "reload makes no inference request");
-  assert.match(widget!.render(80).join("\n"), /not-started/);
+  assert.match(widget!.render(80).join("\n"), /FLEET 0/g);
   const afterReload = renders;
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(renders, afterReload, "old child no longer drives the replacement widget");

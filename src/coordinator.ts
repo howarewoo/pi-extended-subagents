@@ -23,6 +23,9 @@ export type ChildSnapshot = Readonly<ChildRef & {
   error?: string;
   transcript?: string;
   disposed: boolean;
+  createdAt: number;
+  endedAt: number | null;
+  writerLease: boolean;
 }>;
 export type RegistryEvent = Readonly<{ type: "changed" | "sdk"; child: ChildSnapshot; event?: AgentSessionEvent }>;
 export type StartTask = { assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; callerId: string };
@@ -92,6 +95,7 @@ export class DelegationCoordinator {
     const id = randomUUID();
     const entry: Entry = { cancelled: false, callerId: input.callerId, state: {
       id, generation: 1, parentId: this.parentId, status: "setup", profile: input.profile.name,
+      createdAt: Date.now(), endedAt: null, writerLease: writer,
       assignment: input.assignment, activity: "Preparing SDK child", progress: "", result: "", disposed: false,
       model: { provider: selection.model.provider, id: selection.model.id }, effort: selection.thinkingLevel ?? null,
       telemetry: { requests: null, tokens: null, cost: null, context: null },
@@ -172,7 +176,7 @@ export class DelegationCoordinator {
     if (entry.state.disposed) return;
     entry.unsubscribe?.(); entry.session?.dispose();
     if (this.writer === entry.state.id) this.writer = undefined;
-    this.update(entry, { disposed: true });
+    this.update(entry, { disposed: true, endedAt: Date.now(), writerLease: false });
   }
   async steer(ref: ChildRef, text: string): Promise<"queued" | "handled"> {
     const entry = this.entry(ref);
@@ -191,6 +195,11 @@ export class DelegationCoordinator {
     this.dispose(entry);
   }
   async wait(ref: ChildRef): Promise<ChildSnapshot> { const entry = this.entry(ref); await entry.setup; await entry.run; return this.snapshot(ref)!; }
+  /** Detached finalized public SDK messages. No replay or execution authority. */
+  messages(ref: ChildRef): AgentSession["messages"] {
+    const entry = this.entry(ref);
+    return structuredClone(entry.session?.messages ?? []);
+  }
   reopenTranscript(ref: ChildRef) { const path = this.entry(ref).state.transcript; if (!path) throw new Error("No transcript yet"); return SessionManager.open(path).buildSessionContext(); }
   shutdown(): Promise<void> {
     this.closing = true;

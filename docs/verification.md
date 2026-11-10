@@ -1,5 +1,61 @@
 # Delegation verification
 
+## Slice 2 selected-control target correction
+
+Coordinator source/evidence reconciliation identified a control-target race: a roster filter can remove the selected task while steering input or stop confirmation is open, causing ordinary selection fallback to another child. The Hub now captures only the original `{id,generation}` when entering either interaction, displays that target above the inspector/input, validates the pinned identity through the public coordinator snapshot before dispatch, and visibly refuses a no-longer-running or stale target. Submission, cancellation and view disposal clear the pinned interaction target. Ordinary roster fallback remains unchanged and cannot retarget an accepted control.
+
+`test/hub.test.ts` adds separate steering and stop regressions with two matching running tasks: A settles and disappears from a `running` filter, selection falls back to B, but the action checks A #7 and refuses without dispatching to either child. Both regressions also replace A's generation and prove the original generation is validated, never silently upgraded; cancellation clears the target and the next interaction captures its own identity. Existing real coordinator stale-generation tests remain in the full suite.
+
+Refreshed validation: focused Hub tests **7/7**, full native suite **31/31** (~7.6s), typecheck, SDK exercise, package dry run and diff hygiene passed; index remains empty. Corrected source manifest digest: **`25e5b75c56a471a8bc0cc936135ad1d747b85084ef46c325d1d2e432ef342b61`**, using `shasum -a 256 src/*.ts test/*.test.ts examples/*.ts | shasum -a 256`.
+
+The existing one-off isolated PTY invocation was run against the corrected source without modifying or replaying retained captures. It exited **0** and emitted the pinned full UUID/generation, `Stop target? y confirms`, and `Stopped and drained`. Fresh controlled-only evidence is outside the checkout at `/var/folders/66/4pymg4057h1_23h33fx62j8r0000gn/T/fleet-evidence-sr71u2ga/`. Its subsequent fixed-position steering attempt selected a non-running child and correctly displayed `Controls unavailable: select a running task`; it is not claimed as new successful steering or filtered-target-race PTY evidence. The target-change race and both stale-generation cases are covered by deterministic component regressions. Earlier successful steering/navigation/theme/resize evidence below applies to its recorded source and remains useful for unaffected behavior, not proof of this correction. No live inference, new verifier, tool installation or scope expansion was introduced.
+
+Normal coordinator source/evidence reconciliation is the review process here; this correction adds no independent-review gate or reviewer requirement. This section supersedes the earlier 29-test/source-digest record for the affected source. No staging, commits or publication were performed.
+
+## Slice 2 fleet observability evidence
+
+Implemented in the isolated `feat/agent-observability` workspace on base `5211269a9803fd5fcd0ed02fadec82fb790dcce8`, Pi 1.5.2 / Node 24.21.0. This section supersedes the latest-only UI descriptions in historical sections below; those older captures are not Slice 2 acceptance.
+
+### Product and authoritative seams
+
+- Replaced the latest-only widget/overlay with bounded all-entry FLEET counts/active previews and a real parent/child roster, stable selected-agent Inspector, full Transcript and Tools views, roster search, paging, selected steering and confirmed stop. The panel preserves neutral zero-chroma OKLCH background solving and restores it after truncation resets. Narrow layouts retain separate navigation/action/close hints.
+- Native Pi `renderCall`/`renderResult` cards use actual invocation args, delivered snapshot details and matching live registry state. Errors before admission retain the real tool error text. Foreground/background delivery and direct usage semantics are unchanged; no child tool-result `usage` is also billed to the parent.
+- Coordinator additions are only admission/disposal timestamps, actual writer-lease observation and detached finalized public SDK messages. UI streaming/tool projections exist only while the Hub is open. No timer service, scheduler, new execution registry, event/log persistence, historical migration, grant or routing policy was added. Downstream meanings are in [delegation-contract.md](delegation-contract.md#storage-and-downstream-seams).
+
+### Automated evidence
+
+`npm ci --ignore-scripts` installed the workspace lockfile locally (125 packages; 0 audit vulnerabilities); no dependency/lockfile or global configuration changes. Native Node tests now pass **29/29**, no failed/skipped/cancelled tests (~7.7s). All 25 existing tests remain meaningful; replaced latest-only UI assertions were updated rather than keeping a parallel demo path.
+
+- `test/hub.test.ts`: fleet lifecycle counts/actual lease versus profile, bounded widget/panel geometry, 0–80-column and 1–24-row surfaces, dark/light/tinted background regression, Unicode width/control/bidi sanitization, selected identity/generation, selection stability during new completions, search, tabs, transcript end access beyond 4KB, no navigation-induced control invocation, steer, explicit y-only stop, unsubscribe, card and actual-message projections.
+- `test/widget-lifecycle.test.ts`: real loaded extension/SDK streaming, widget repaint, cancellation retention, reload replacement and no stale observer updates; real native dark/light and deliberately pink custom palette styles remain achromatic and opaque.
+- `test/observability.test.ts`: actual parent model tool launches two independent readers, one implementation writer and a controlled failure. Real tools/storage/events, 3 settlements/1 failure, lease/timestamps, all four native result identities, full 600-line assistant/tool transcripts, explicit no duplicate usage. Uses the same opt-in controlled response factory as the interactive exercise.
+- `test/coordinator.test.ts`: detached finalized SDK messages remain available after disposal, cannot mutate authoritative messages, and reject stale generations. Existing permission/resource/writer/lifetime/once-only tests are preserved.
+
+Final commands: `npm test`, `npm run typecheck`, `npm run exercise`, `npm pack --dry-run`, `git diff --check` passed; `git diff --cached --name-only` was empty. Package dry run contains the declared 12 production source/docs/README/notices/manifest files, not tests, controlled examples, dependencies or captures. Impeccable mechanical detector (`detect --json src/hub.ts src/extension.ts`) returned `[]`; that web-oriented detector is not terminal contrast acceptance.
+
+Tested source manifest digest: **`6e700d9a51b631ce20109f123af3ce9800dbde00af18d5bee7f18cb605da6f97`**, computed by `shasum -a 256 src/*.ts test/*.test.ts examples/*.ts | shasum -a 256`. Documentation-only verification record updates do not change that source digest.
+
+### Fresh isolated interactive Pi evidence
+
+A one-off Python stdlib PTY invocation used the actual Pi CLI, production extension and opt-in `examples/controlled-fleet.ts` (not in the package manifest), fresh temporary HOME/agent/cwd/session roots, a minimal environment without provider credentials, offline mode and ambient extensions/MCP/skills/themes/context discovery disabled. The controlled writer created only `fleet-output.txt` in that throwaway cwd. All task-owned processes exited and the temporary work/session root was removed. No live/paid inference, credential/config edits, installed-checkout edits or external captures of real work occurred.
+
+Observed on the final UI source:
+
+- 100×30 dark: FLEET 4; native call/result identity/model/transcript cards; real roster with concurrent readers/writer and failed child; Inspector direct metrics/activity; Transcript paging; Tools arguments and actual read payload.
+- Selected **x → y** emitted `Stopping and draining…` then `Stopped and drained`; selected **s → text → Enter** emitted `Steering queued`. Selection and ordinary navigation did not require a model prompt. These controls used the existing public coordinator methods, not synthetic UI state.
+- Escape returned focus to the editor (subsequent `/fleet-theme light` and `/task-hub` executed). Light panel emitted neutral RGB 229/229/229 versus dark 55/55/55; component tests separately establish zero-chroma behavior for deliberately pink custom themes.
+- Resize 100×30 → 40×16 retained frame, selected identity, bounded viewport and separate readable navigation/action/close hint rows. Enter closed and returned editor focus; reopening and applying `Failure` search selected the actual failed child. `/reload` drained/reset runtime and reopened an empty Hub. Final CLI exit **0**.
+
+Sanitized ANSI/cursor-separated row fragments are retained outside the checkout for coordinator review at `/var/folders/66/4pymg4057h1_23h33fx62j8r0000gn/T/fleet-evidence-q64ygxgd/` (`01-dark-hub`, `02-transcript-scroll`, `03-tools`, `04-stop`, `05-steer`, `06-escape-focus`, `07-light`, `08-narrow`, `09-enter-focus`, `10-filter-failed`, `11-reload-empty`, `complete`; `.ansi` and `.rows.txt`). These contain only controlled example text and temporary identifiers. The one-off invocation script is `/tmp/fleet-pty.py`; it is not a new repository verifier framework. Rows are emitted fragments, **not a reconstructed terminal screenshot**.
+
+Bounded diagnosis: an early new fixture keyed only on the last tool result and re-launched its scripted parent scenario after background completion messages; it was corrected to recognize existing delegate results. Transient diagnostic output was removed. A first stop attempt arrived after the selected scenario had moved on; extending the controlled stream made stop/steer observable. One intermediate capture script hit an exit-observation race after the PTY closed; the final run recorded exit 0. No production execution/grant policy changes were made to accommodate these fixture issues.
+
+### Acceptance boundaries and simplification
+
+No human screenshot, visual contrast/glyph judgment, live-provider reliability/billing or cross-terminal comprehensive acceptance is claimed. The roster is root plus direct children only; system prompt internals, binary images, opaque signatures and arbitrary tool metadata are intentionally not displayed. The full SDK JSONL reference is available for those data. Search filters real roster text, not all transcript history. Large transcript rendering currently projects the selected SDK messages on render; there is no long-lived general log cache, and no performance claim for arbitrarily large histories. Elapsed values refresh on actual render/events rather than a timer.
+
+One scoped necessity/simplification pass removed the replaced latest-entry path, unnecessary disk fallback in the live message accessor and redundant UI state; retained one registry and bounded ephemeral in-flight projections. All changed paths implement the admitted observer slice or its native tests/docs/example. Normal coordinator source/evidence reconciliation remains; this does not introduce an independent-review gate or require another reviewer. No files were staged/committed/pushed and write ownership is relinquished in the final handoff.
+
 ## Slice 1 current evidence
 
 Source: isolated `feat/delegation-core` worktree based on `0cf7bf92a4a9ae952ac023070cb0d45ed089a261`, Pi **1.5.2**, Node **24.21.0**. Production fake-provider execution is removed. The current interface is [delegation-contract.md](delegation-contract.md); historical proof commands below describe only the base implementation.
