@@ -2,18 +2,24 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createChildWidget, createHub } from "../src/hub.ts";
 import { ProofCoordinator, type ChildSnapshot } from "../src/coordinator.ts";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { backgroundAnsi, oklchColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
+import type { ThemeStyle } from "@earendil-works/pi-coding-agent";
 
 const keys = { matches: (data: string, action: string) => data === "escape" && action === "tui.select.cancel",
   getKeys: () => ["escape" as const] };
 const theme = { fg: (_color: string, text: string) => text,
-  bg: (color: string, text: string) => { assert.equal(color, "customMessageBg"); return `\x1b[48;5;17m${text}\x1b[49m`; } };
+  colors: { customMessageBg: oklchColor(0.3, 0.1, 330) },
+  style: (text: string, { bg }: ThemeStyle) => {
+    assert.ok(bg && typeof bg !== "string", "panel must supply a concrete neutral color");
+    return styleText(text, { bg }, "truecolor");
+  } };
 
 test("hub frames, pads and paints every cell, adapts to tiny geometry and invalidates theme output", () => {
   const coordinator = new ProofCoordinator("unused-render-only");
   let rows = 24;
-  let palette = 17;
-  const hub = createHub(coordinator, { ...theme, bg: (_color, text) => `\x1b[48;5;${palette}m${text}\x1b[49m` },
+  const palette = { ...theme, colors: { ...theme.colors } };
+  const darkBg = backgroundAnsi(oklchColor(0.3, 0, 0), "truecolor");
+  const hub = createHub(coordinator, palette,
     keys, () => {}, () => {}, () => rows);
   try {
     for (const width of [0, 1, 2, 3, 4, 8, 20, 40, 80]) {
@@ -21,7 +27,7 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
         const rendered = hub.render(width);
         assert.ok(rendered.length <= rows);
         assert.ok(rendered.every(line => visibleWidth(line) === width));
-        assert.ok(rendered.every(line => line.startsWith("\x1b[48;5;17m") && line.endsWith("\x1b[49m")));
+        assert.ok(rendered.every(line => line.startsWith(darkBg) && line.endsWith("\x1b[49m")));
         if (width >= 4 && rows >= 3) {
           assert.match(rendered[0], /╭.*╮/);
           assert.match(rendered.at(-1)!, /╰.*╯/);
@@ -32,9 +38,10 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
     rows = 24;
     assert.match(hub.render(80).join("\n"), /Agent Hub · controlled proof/);
     assert.match(hub.render(80).join("\n"), /escape\/escape: close · child continues/);
-    palette = 18;
+    palette.colors.customMessageBg = oklchColor(0.9, 0.1, 330);
     hub.invalidate();
-    assert.ok(hub.render(80).every(line => line.startsWith("\x1b[48;5;18m")));
+    const lightBg = backgroundAnsi(oklchColor(0.9, 0, 0), "truecolor");
+    assert.ok(hub.render(80).every(line => line.startsWith(lightBg)));
   } finally { hub.dispose(); }
 });
 

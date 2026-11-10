@@ -1,4 +1,4 @@
-import { sliceByColumn, truncateToWidth, visibleWidth, type Component, type KeybindingsManager } from "@earendil-works/pi-tui";
+import { colorToOklch, oklchColor, sliceByColumn, truncateToWidth, visibleWidth, type Component, type KeybindingsManager } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ChildSnapshot, ProofCoordinator } from "./coordinator.ts";
 
@@ -41,7 +41,7 @@ export function createChildWidget(snapshot: () => ChildSnapshot | undefined, the
 /** Observation only: disposing this view never touches child execution. */
 export function createHub(
   coordinator: ProofCoordinator,
-  theme: Pick<Theme, "fg" | "bg">,
+  theme: Pick<Theme, "fg" | "style"> & { colors: Pick<Theme["colors"], "customMessageBg"> },
   keybindings: Pick<KeybindingsManager, "matches" | "getKeys">,
   requestRender: () => void,
   done: () => void,
@@ -53,10 +53,14 @@ export function createHub(
       width = Math.max(0, width);
       const child = childPresentation(coordinator.snapshot());
       const height = Math.max(1, Math.min(7, availableRows()));
+      // Keep the theme's panel lightness, but remove its tint even for custom palettes.
+      const panelBg = oklchColor(colorToOklch(theme.colors.customMessageBg).l, 0, 0);
       const paint = (text: string) => {
         const clipped = truncateToWidth(text, width);
         // Paint every cell, including padding/borders, so the underlying chat cannot bleed through.
-        return theme.bg("customMessageBg", clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped))));
+        const padded = clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
+        // Pi truncation inserts full resets; reapply the surface after each one.
+        return padded.split("\x1b[0m").map(part => theme.style(part, { bg: panelBg })).join("\x1b[0m");
       };
       if (width < 4 || height < 3) return [paint(theme.fg(child.color, child.status))];
       const innerWidth = width - 2;

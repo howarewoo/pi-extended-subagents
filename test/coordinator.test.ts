@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProofCoordinator, proofResources } from "../src/coordinator.ts";
 import { createHub } from "../src/hub.ts";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { oklchColor, visibleWidth } from "@earendil-works/pi-tui";
 import { AgentSession, createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { fauxProvider, getCurrentTools, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import extension from "../src/extension.ts";
@@ -98,7 +98,7 @@ test("hub is width-safe, updates on streamed state and closing does not cancel e
   const { coordinator } = await fixture(t);
   let renders = 0;
   let closed = false;
-  const hub = createHub(coordinator, { fg: (_color, text) => text, bg: (_color, text) => text },
+  const hub = createHub(coordinator, { fg: (_color, text) => text, style: text => text, colors: { customMessageBg: oklchColor(0.3, 0, 0) } },
     { matches: (data, action) => data === "escape" && action === "tui.select.cancel", getKeys: () => ["escape"] },
     () => { renders++; }, () => { closed = true; });
   const progress = streamed(coordinator);
