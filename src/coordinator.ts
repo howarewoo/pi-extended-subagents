@@ -9,11 +9,21 @@ import { resultValidator, submissionParameters, saveOutcomeArtifact, type Struct
 import type { Validator } from "@earendil-works/pi-schema";
 import { parentModelRuntime } from "./model-adapter.ts";
 import { DEFAULT_POLICY, narrowLimits, validatePolicy, type ExecutionLimits, type SchedulingPolicy } from "./scheduling.ts";
-import { isWriter, READ_TOOLS, type Profile } from "./profiles.ts";
+import { intersectProfileGrants, isWriter, READ_TOOLS, type Profile, type CoordinationAction } from "./profiles.ts";
 
+const MAX_MESSAGE_BYTES = 4096;
+const MAX_MAILBOX_MESSAGES = 64;
+const MAX_RETAINED_MESSAGES = 512;
+const MAX_WAITERS = 64;
+const MAX_WAIT_MS = 60000;
+const MAX_GENERATIONS = 64;
+
+export type DelegationMessage = { id: string; sender: ChildRef | "root"; recipient: ChildRef | "root"; text: string; mode: "inbox" | "steer" | "followUp"; status: "accepted" | "queued" | "handled" | "delivered" | "not-running" | "error"; error?: string };
+export type CoordinationWait = { status: "timeout" | "cancelled" | "shutdown" } | { status: "messages"; messages: DelegationMessage[] } | { status: "message"; message: DelegationMessage } | { status: "outcome"; outcome: Pick<ChildSnapshot, "id" | "generation" | "status" | "limitReason"> };
 export type ChildRef = Readonly<{ id: string; generation: number }>;
 export type ChildSnapshot = Readonly<ChildRef & {
   parentId: string;
+  parentGeneration?: number;
   depth: number;
   writerLease: boolean;
   limits: ExecutionLimits;
@@ -35,7 +45,7 @@ export type ChildSnapshot = Readonly<ChildRef & {
   disposed: boolean;
 }>;
 export type RegistryEvent = Readonly<{ type: "changed" | "sdk"; child: ChildSnapshot; event?: AgentSessionEvent }>;
-export type StartTask = { resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; nestedTool?: (parent: ChildRef) => ToolDefinition };
+export type StartTask = { resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; coordinationTools?: (actor: ChildRef) => ToolDefinition[]; nestedTool?: (parent: ChildRef) => ToolDefinition };
 type ChildSelection = Pick<ExtensionToolContext, "model" | "modelRegistry" | "scopedModels" | "thinkingLevel" | "cwd">;
 type Entry = { validator?: Validator; input: StartTask; selection: ChildSelection; done: Promise<void>; finish: () => void; timer?: ReturnType<typeof setTimeout>; spawned: number; state: ChildSnapshot; setup?: Promise<void>; run?: Promise<void>; session?: AgentSession; unsubscribe?: () => void; cancelled: boolean; callerId: string };
 
@@ -56,6 +66,18 @@ export function childResources(prompt: string, skills: Skill[] = []): ResourceLo
 /** Authoritative parent-lifetime registry. IDs are never reused; controls require their generation. */
 export class DelegationCoordinator {
   private entries = new Map<string, Entry>();
+  private history = new Map<string, ChildSnapshot>();
+  private presence = new Map<string, "active" | "idle" | "parked" | "stopped">();
+  private coordinationListeners = new Set<() => void>();
+  private messages: DelegationMessage[] = [];
+  private mailboxes = new Map<string, DelegationMessage[]>();
+  private waits = new Map<string, Set<string>>();
+  private waiterCount = 0;
+  private notifyCoordination(): void { for (const listener of this.coordinationListeners) listener(); }
+  agents() { return this.list().map(state => ({ id: state.id, generation: state.generation, presence: this.presence.get(state.id) })); }
+  generations(id: string): ChildSnapshot[] {
+    return [...this.history.values(), ...this.list()].filter(state => state.id === id).map(state => structuredClone(state));
+  }
   private listeners = new Set<(event: RegistryEvent) => void>();
   private parentMutations = new Set<string>();
   private writer?: string;
@@ -68,6 +90,10 @@ export class DelegationCoordinator {
   configure(policy: SchedulingPolicy): void { this.policy = validatePolicy(policy); this.pump(); }
   list(): ChildSnapshot[] { return [...this.entries.values()].map(entry => structuredClone(entry.state)); }
   snapshot(ref?: ChildRef): ChildSnapshot | undefined {
+    if (ref) {
+      const historical = this.history.get(this.key(ref));
+      if (historical) return structuredClone(historical);
+    }
     const entry = ref ? this.entry(ref) : [...this.entries.values()].at(-1);
     return entry && structuredClone(entry.state);
   }
@@ -79,6 +105,7 @@ export class DelegationCoordinator {
   subscribe(listener: (event: RegistryEvent) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private update(entry: Entry, patch: Partial<ChildSnapshot>, event?: AgentSessionEvent): void {
     entry.state = { ...entry.state, ...patch };
+    this.notifyCoordination();
     for (const listener of this.listeners) {
       // Observers must never own execution or turn a successful run into failure.
       try { listener({ type: event ? "sdk" : "changed", child: structuredClone(entry.state), event }); } catch { /* observer isolated */ }
@@ -86,7 +113,7 @@ export class DelegationCoordinator {
   }
   /** Reserve at preflight, release on every finalized call (including blocked calls). */
   parentToolStart(id: string, name: string, readOnly = READ_TOOLS.includes(name as typeof READ_TOOLS[number])): void {
-    if (readOnly || name === "delegate_task") return;
+    if (readOnly || name === "delegate_task" || name === "delegate_coordinate") return;
     const child = this.writer ? this.entries.get(this.writer) : undefined;
     if (this.writer && (!child || !id.startsWith(child.callerId + "/"))) throw new Error(`Shared checkout writer is held by ${this.writer}; stop or wait for that task`);
     this.parentMutations.add(id);
@@ -107,7 +134,7 @@ export class DelegationCoordinator {
       if (parent.cancelled || parent.state.disposed) throw new Error("Delegating parent is no longer active");
       if (!parent.input.profile.spawn?.includes(input.profile.name)) throw new Error("Ancestor spawn role denied");
       if (parent.state.depth >= Math.min(this.policy.depth, parent.state.limits.depth)) throw new Error("Delegation depth limit");
-      if (input.profile.tools.some(tool => !parent.input.profile.tools.includes(tool)) || input.profile.skills.some(skill => !parent.input.profile.skills.includes(skill)) || input.profile.spawn?.some(role => !parent.input.profile.spawn?.includes(role))) throw new Error("Descendant cannot broaden ancestor grants");
+      if (input.profile.tools.some(tool => !parent.input.profile.tools.includes(tool)) || input.profile.skills.some(skill => !parent.input.profile.skills.includes(skill)) || input.profile.spawn?.some(role => !parent.input.profile.spawn?.includes(role)) || input.profile.coordination?.some(action => !parent.input.profile.coordination?.includes(action))) throw new Error("Descendant cannot broaden ancestor grants");
       let ancestor: Entry | undefined = parent;
       while (ancestor) {
         if (isWriter(input.profile) && isWriter(ancestor.input.profile)) throw new Error("Nested writer under writer ancestor is unsupported");
@@ -117,7 +144,15 @@ export class DelegationCoordinator {
     return selection;
   }
   /** Whole-batch synchronous validation precedes registry insertion, disk setup or dispatch. */
-  admit(inputs: StartTask[]): ChildRef[] {
+  admit(inputs: StartTask[], replacement?: ChildRef): ChildRef[] {
+    const previous = replacement ? this.entry(replacement) : undefined;
+    if (previous) {
+      if (inputs.length !== 1 || !previous.state.disposed || !["idle", "parked"].includes(this.presence.get(previous.state.id) ?? "")) throw new Error("Assignment is not idle or parked");
+      if (this.key(previous.input.parent) !== this.key(inputs[0].parent)) throw new Error("Follow-up must retain its exact original parent generation");
+      if (previous.state.generation >= MAX_GENERATIONS) throw new Error("Generation retention limit");
+      const profile = inputs[0].profile;
+      if (profile.name !== previous.input.profile.name || profile.tools.some(tool => !previous.input.profile.tools.includes(tool)) || profile.skills.some(skill => !previous.input.profile.skills.includes(skill)) || profile.spawn?.some(role => !previous.input.profile.spawn?.includes(role)) || profile.coordination?.some(action => !previous.input.profile.coordination?.includes(action))) throw new Error("Follow-up cannot broaden previous grants");
+    }
     if (!inputs.length || inputs.length > this.policy.batch) throw new Error("Batch size limit");
     const selections = inputs.map(input => this.validate(input));
     const validators = inputs.map(input => input.resultSchema === undefined ? undefined : resultValidator(input.resultSchema));
@@ -153,8 +188,8 @@ export class DelegationCoordinator {
       const selection = selections[index];
       let finish!: () => void;
       const done = new Promise<void>(resolve => { finish = resolve; });
-      const entry: Entry = { validator: validators[index], input, selection, done, finish, spawned: 0, cancelled: false, callerId: input.callerId, state: {
-        id: randomUUID(), generation: 1, parentId: input.parent?.id ?? this.parentId,
+      const entry: Entry = { validator: validators[index], input, selection, done, finish, spawned: previous?.spawned ?? 0, cancelled: false, callerId: input.callerId, state: {
+        id: previous?.state.id ?? randomUUID(), generation: (previous?.state.generation ?? 0) + 1, parentGeneration: input.parent?.generation, parentId: input.parent?.id ?? this.parentId,
         depth: input.parent ? this.entry(input.parent).state.depth + 1 : 1,
         status: "queued", writerLease: false, limits: limits[index], toolCalls: 0, profile: input.profile.name,
         outcome: validators[index] ? { validation: "awaiting", attempts: 0, errors: [], finalized: false } : undefined,
@@ -165,7 +200,8 @@ export class DelegationCoordinator {
       return entry;
     });
     for (const [parent, count] of parents) parent.spawned += count;
-    for (const entry of entries) this.entries.set(entry.state.id, entry);
+    if (previous) this.history.set(this.key(previous.state), structuredClone(previous.state));
+    for (const entry of entries) { this.entries.set(entry.state.id, entry); this.presence.set(entry.state.id, "active"); }
     for (const entry of entries) {
       entry.timer = setTimeout(() => { this.limit(entry, "deadline"); }, entry.state.limits.deadlineMs);
     }
@@ -177,6 +213,21 @@ export class DelegationCoordinator {
     const [ref] = this.admit([input]);
     await this.entry(ref).setup;
     return ref;
+  }
+  renewalParent(ref: ChildRef): ChildRef | undefined {
+    const parent = this.entry(ref).input.parent;
+    if (parent) {
+      const entry = this.entry(parent);
+      if (entry.cancelled || entry.state.disposed || entry.state.status !== "running") throw new Error("Original parent generation is no longer active");
+    }
+    return parent && { id: parent.id, generation: parent.generation };
+  }
+  renew(ref: ChildRef, input: StartTask): ChildRef {
+    const previous = this.entry(ref);
+    this.renewalParent(ref);
+    const profile = intersectProfileGrants(input.profile, previous.input.profile);
+    return this.admit([{ ...input, profile, skills: input.skills.filter(skill => profile.skills.includes(skill.filePath)), resultSchema: input.resultSchema === undefined ? previous.input.resultSchema : input.resultSchema,
+      limits: narrowLimits(previous.state.limits, input.limits ?? {}) }], ref)[0];
   }
   private pump(): void {
     if (this.closing) return;
@@ -200,7 +251,7 @@ export class DelegationCoordinator {
   private async create(entry: Entry, input: StartTask, selection: ChildSelection): Promise<void> {
     try {
       await mkdir(this.root, { recursive: true });
-      const taskDir = join(this.root, entry.state.id);
+      const taskDir = join(this.root, entry.state.generation === 1 ? entry.state.id : `${entry.state.id}-g${entry.state.generation}`);
       await mkdir(taskDir); // exclusive ownership: never reuse an existing task record
       const agentDir = join(taskDir, "agent");
       await mkdir(agentDir);
@@ -242,6 +293,7 @@ export class DelegationCoordinator {
         };
         tools.push(submission);
       }
+      if (input.profile.coordination?.length && input.coordinationTools) tools.push(...input.coordinationTools({ id: entry.state.id, generation: entry.state.generation }));
       if (input.profile.spawn?.length && input.nestedTool) tools.push(input.nestedTool(entry.state));
       for (const tool of tools) {
         const execute = tool.execute;
@@ -255,9 +307,9 @@ export class DelegationCoordinator {
       const { session, modelFallbackMessage } = await createAgentSession({
         cwd: selection.cwd, agentDir, modelRuntime: runtime, model: selection.model,
         thinkingLevel: selection.thinkingLevel, scopedModels: [{ model: selection.model!, thinkingLevel: selection.thinkingLevel }],
-        resourceLoader: childResources(input.profile.prompt + (entry.validator ? "\nThis assignment requires a structured result. Call submit_result with the actual value; final prose is not a submission." : ""), input.skills), tools: tools.map(tool => tool.name), customTools: tools,
+        resourceLoader: childResources(input.profile.prompt + `\nYour delegation identity is ${entry.state.id} generation ${entry.state.generation}; parent ${entry.state.parentId}. Coordination, if granted, is limited to family identities explicitly supplied to you.` + (entry.validator ? "\nThis assignment requires a structured result. Call submit_result with the actual value; final prose is not a submission." : ""), input.skills), tools: tools.map(tool => tool.name), customTools: tools,
         settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
-        sessionManager: SessionManager.create(selection.cwd, join(this.root, entry.state.id, "transcripts")),
+        sessionManager: SessionManager.create(selection.cwd, join(taskDir, "transcripts")),
       });
       entry.session = session;
       if (modelFallbackMessage || session.model?.id !== selection.model?.id || session.model?.provider !== selection.model?.provider) throw new Error("SDK did not preserve selected model");
@@ -269,6 +321,11 @@ export class DelegationCoordinator {
         if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
           patch.progress = (entry.state.progress + event.assistantMessageEvent.delta).slice(-4096);
           patch.activity = patch.progress;
+        }
+        if (event.type === "message_end" && event.message.role === "user") {
+          const text = typeof event.message.content === "string" ? event.message.content : event.message.content.filter(block => block.type === "text").map(block => block.text).join("");
+          for (const message of this.messages) if (message.recipient !== "root" && this.key(message.recipient) === this.key(entry.state) && text === `Delegation message ${message.id} from ${message.sender === "root" ? "root" : this.key(message.sender)}: ${message.text}`) message.status = "delivered";
+          this.notifyCoordination();
         }
         if (event.type === "tool_execution_start") patch.activity = `Tool: ${event.toolName}`;
         if (event.type === "message_end" && event.message.role === "assistant") {
@@ -315,14 +372,141 @@ export class DelegationCoordinator {
       throw error;
     }
   }
+  private closeDescendantPresence(entry: Entry): void {
+    for (const child of this.entries.values()) if (child.state.parentId === entry.state.id && child.state.parentGeneration === entry.state.generation) {
+      this.presence.set(child.state.id, "stopped"); this.closeDescendantPresence(child);
+    }
+  }
   private dispose(entry: Entry): void {
     if (entry.state.disposed) return;
     clearTimeout(entry.timer);
     entry.unsubscribe?.(); entry.session?.dispose();
+    // Retain immutable evidence, not the disposed SDK session graph, while idle/parked.
+    entry.unsubscribe = undefined; entry.session = undefined;
     if (this.writer === entry.state.id) this.writer = undefined;
+    this.closeDescendantPresence(entry);
+    this.presence.set(entry.state.id, entry.cancelled || this.closing ? "stopped" : "idle");
     this.update(entry, { disposed: true, writerLease: false, outcome: entry.state.outcome ? { ...entry.state.outcome, finalized: true } : undefined });
     entry.finish();
     this.pump();
+  }
+  private key(ref?: ChildRef): string { return ref ? `${ref.id}/${ref.generation}` : "root"; }
+  private actor(ref: ChildRef | undefined, action: CoordinationAction): Entry | undefined {
+    if (this.closing) throw new Error("Parent shut down");
+    if (!ref) return;
+    const actor = this.entry(ref);
+    if (actor.cancelled || actor.state.disposed || actor.state.status !== "running") throw new Error("Sender is no longer running");
+    if (!actor.input.profile.coordination?.includes(action)) throw new Error(`Coordination action denied: ${action}`);
+    return actor;
+  }
+  private target(actor: Entry | undefined, ref: ChildRef): Entry {
+    const target = this.entry(ref);
+    // A selected action grants family addressing, never transcript/resource access.
+    if (actor && target !== actor && !(target.state.parentId === actor.state.id && target.state.parentGeneration === actor.state.generation) && !(actor.state.parentId === target.state.id && actor.state.parentGeneration === target.state.generation) && !(actor.state.parentId === target.state.parentId && actor.state.parentGeneration === target.state.parentGeneration)) throw new Error("Coordination target outside granted family");
+    return target;
+  }
+  inbox(actor?: ChildRef): DelegationMessage[] {
+    this.actor(actor, "inbox");
+    return this.takeInbox(actor);
+  }
+  async message(actor: ChildRef | undefined, target: ChildRef | undefined, text: string, mode: "inbox" | "steer" | "followUp" = "inbox"): Promise<DelegationMessage> {
+    const sender = this.actor(actor, "message");
+    if (typeof text !== "string" || !text.trim() || Buffer.byteLength(text) > MAX_MESSAGE_BYTES) throw new Error("Message requires 1–4096 UTF-8 bytes");
+    if (!target && !sender) throw new Error("Root cannot message itself");
+    const recipient = target ? this.target(sender, target) : undefined;
+    if (!target && sender?.state.parentId !== this.parentId) throw new Error("Only direct children may message root");
+    if (target && actor && this.key(target) === this.key(actor)) throw new Error("Self messaging denied");
+    const record: DelegationMessage = { id: randomUUID(), sender: actor ? { ...actor } : "root", recipient: target ? { ...target } : "root", text, mode, status: "accepted" };
+    if (recipient && (recipient.cancelled || recipient.state.disposed || recipient.state.status !== "running")) return { ...record, status: "not-running" };
+    if (!target && mode !== "inbox") throw new Error("Root accepts inbox messages only");
+    const key = this.key(target);
+    const mailbox = this.mailboxes.get(key) ?? [];
+    if (mailbox.length >= MAX_MAILBOX_MESSAGES || this.messages.length >= MAX_RETAINED_MESSAGES) throw new Error("Parent message retention/mailbox limit");
+    this.messages.push(record); mailbox.push(record); this.mailboxes.set(key, mailbox);
+    this.notifyCoordination();
+    if (mode !== "inbox") {
+      try {
+        const content = `Delegation message ${record.id} from ${this.key(actor)}: ${text}`;
+        const disposition = await recipient!.session![mode](content);
+        // The captured recipient/session is never looked up again by ID.
+        if (record.status !== "delivered") record.status = disposition === "queued" ? "queued" : "handled";
+      } catch (error) { record.status = "error"; record.error = String(error); }
+      this.notifyCoordination();
+    }
+    return structuredClone(record);
+  }
+  park(ref: ChildRef): void {
+    if (this.closing) throw new Error("Parent shut down");
+    const entry = this.entry(ref);
+    this.renewalParent(ref);
+    if (!entry.state.disposed || this.presence.get(ref.id) !== "idle") throw new Error("Park requires a disposed idle assignment; stop active work explicitly");
+    this.presence.set(ref.id, "parked"); this.update(entry, {});
+  }
+  async coordinateWait(actor: ChildRef | undefined, target: ChildRef | undefined, timeoutMs: number, signal?: AbortSignal, messageId?: string): Promise<CoordinationWait> {
+    const sender = this.actor(actor, "wait");
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_WAIT_MS) throw new Error("Wait timeout must be 1–60000ms");
+    if (this.waiterCount >= MAX_WAITERS) throw new Error("Parent waiter limit");
+    if (target && messageId) throw new Error("Wait selects either an outcome or message receipt");
+    const receipt = messageId ? this.messages.find(message => message.id === messageId) : undefined;
+    if (messageId && (!receipt || (this.key(receipt.sender === "root" ? undefined : receipt.sender) !== this.key(actor) && this.key(receipt.recipient === "root" ? undefined : receipt.recipient) !== this.key(actor)))) throw new Error("Unknown or foreign message receipt");
+    const destination = target ? this.target(sender, target) : undefined;
+    const pendingReceipt = receipt && !["delivered", "handled", "error", "not-running"].includes(receipt.status);
+    if (sender && pendingReceipt && receipt.recipient === "root") throw new Error("Waiting for a pending root receipt with a retained permit is unsupported");
+    const recipientRef = receipt?.recipient === "root" ? undefined : receipt?.recipient;
+    const receiptEntry = recipientRef ? this.entries.get(recipientRef.id) : undefined;
+    const dependency = destination ?? (pendingReceipt && receiptEntry?.state.generation === recipientRef?.generation ? receiptEntry : undefined);
+    const sourceKey = this.key(actor), targetKey = dependency ? this.key(dependency.state) : this.key(target);
+    if (sender && dependency) {
+      if (sender === dependency) throw new Error("Self wait denied");
+      let ancestor: Entry | undefined = sender;
+      while (ancestor) { if (ancestor === dependency) throw new Error("Ancestor wait would deadlock"); ancestor = this.entries.get(ancestor.state.parentId); }
+      if (dependency.state.status === "queued") throw new Error("Wait on queued work with retained permit is unsupported");
+      const reaches = (key: string, seen = new Set<string>()): boolean => {
+        if (key === sourceKey) return true;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        const children = [...this.entries.values()].filter(entry => !entry.state.disposed && entry.state.parentGeneration !== undefined && `${entry.state.parentId}/${entry.state.parentGeneration}` === key).map(entry => this.key(entry.state));
+        return [...(this.waits.get(key) ?? []), ...children].some(next => reaches(next, seen));
+      };
+      if (reaches(targetKey)) throw new Error("Coordination wait cycle");
+    }
+    const edges = this.waits.get(sourceKey) ?? new Set<string>();
+    if (dependency && edges.has(targetKey)) throw new Error("Duplicate active wait");
+    if (dependency) { edges.add(targetKey); this.waits.set(sourceKey, edges); }
+    this.waiterCount++;
+    return new Promise<CoordinationWait>(resolve => {
+      let finished = false;
+      const finish = (value: CoordinationWait) => {
+        if (finished) return;
+        finished = true; clearTimeout(timer); this.coordinationListeners.delete(check); signal?.removeEventListener("abort", abort);
+        if (dependency) { edges.delete(targetKey); if (!edges.size) this.waits.delete(sourceKey); }
+        this.waiterCount--; resolve(value);
+      };
+      const check = () => {
+        if (this.closing) return finish({ status: "shutdown" });
+        if (sender && (sender.cancelled || sender.state.disposed || this.entries.get(sender.state.id) !== sender)) return finish({ status: "cancelled" });
+        if (receipt) {
+          if (["delivered", "handled", "error", "not-running"].includes(receipt.status)) return finish({ status: "message", message: structuredClone(receipt) });
+          if (receipt.recipient !== "root") {
+            const recipient = this.entries.get(receipt.recipient.id);
+            if (!recipient || recipient.state.generation !== receipt.recipient.generation || recipient.state.disposed || recipient.cancelled) return finish({ status: "message", message: { ...structuredClone(receipt), status: "not-running" } });
+          }
+        } else if (destination) {
+          if (destination.state.disposed) return finish({ status: "outcome", outcome: { id: destination.state.id, generation: destination.state.generation, status: destination.state.status, limitReason: destination.state.limitReason } });
+        } else if ((this.mailboxes.get(sourceKey)?.length ?? 0) > 0) return finish({ status: "messages", messages: this.takeInbox(actor) });
+      };
+      const abort = () => finish({ status: "cancelled" });
+      const timer = setTimeout(() => finish({ status: "timeout" }), timeoutMs);
+      this.coordinationListeners.add(check); signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort(); else check();
+    });
+  }
+  private takeInbox(actor?: ChildRef): DelegationMessage[] {
+    const key = this.key(actor), messages = this.mailboxes.get(key) ?? [];
+    this.mailboxes.delete(key);
+    for (const message of messages) if (message.mode === "inbox") message.status = "delivered";
+    this.notifyCoordination();
+    return structuredClone(messages);
   }
   taskInputRead(ref: ChildRef): void {
     const entry = this.entry(ref);
@@ -336,7 +520,7 @@ export class DelegationCoordinator {
     if (entry.state.status !== "running" || entry.cancelled) throw new Error("No running child");
     return entry.session!.steer(text);
   }
-  private children(entry: Entry): Entry[] { return [...this.entries.values()].filter(child => child.state.parentId === entry.state.id && !child.state.disposed); }
+  private children(entry: Entry): Entry[] { return [...this.entries.values()].filter(child => child.state.parentId === entry.state.id && child.state.parentGeneration === entry.state.generation && !child.state.disposed); }
   async stopMany(refs: readonly ChildRef[]): Promise<void> {
     const entries = refs.map(ref => this.entry(ref));
     // Mark the whole cancellation set before any disposal can dequeue a sibling.
@@ -345,6 +529,9 @@ export class DelegationCoordinator {
   }
   async stop(ref: ChildRef): Promise<void> {
     const entry = this.entry(ref);
+    this.presence.set(entry.state.id, "stopped");
+    this.closeDescendantPresence(entry);
+    this.notifyCoordination();
     if (entry.state.disposed) return;
     entry.cancelled = true;
     if (entry.state.status === "queued") { this.update(entry, { status: "cancelled", activity: "Cancelled before setup" }); this.dispose(entry); return; }
@@ -357,10 +544,11 @@ export class DelegationCoordinator {
     await entry.run;
     this.dispose(entry);
   }
-  async wait(ref: ChildRef): Promise<ChildSnapshot> { const entry = this.entry(ref); await entry.done; return this.snapshot(ref)!; }
-  reopenTranscript(ref: ChildRef) { const path = this.entry(ref).state.transcript; if (!path) throw new Error("No transcript yet"); return SessionManager.open(path).buildSessionContext(); }
+  async wait(ref: ChildRef): Promise<ChildSnapshot> { const entry = this.entry(ref); await entry.done; return structuredClone(entry.state); }
+  reopenTranscript(ref: ChildRef) { const path = this.snapshot(ref)?.transcript; if (!path) throw new Error("No transcript yet"); return SessionManager.open(path).buildSessionContext(); }
   shutdown(): Promise<void> {
     this.closing = true;
+    this.notifyCoordination();
     this.shutdownPromise ??= (async () => { await Promise.all(this.list().map(ref => this.stop(ref))); this.listeners.clear(); })();
     return this.shutdownPromise;
   }

@@ -6,9 +6,9 @@ function safe(text: string): string {
   return text.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, " ");
 }
 
-function childPresentation(child: ChildSnapshot | undefined) {
+function childPresentation(child: ChildSnapshot | undefined, presence?: string) {
   return {
-    status: child?.status ?? "not-started",
+    status: child ? `${child.status}${presence ? ` · ${presence} · g${child.generation}` : ""}` : "not-started",
     writerWarning: child?.writerLease ? "Model-tool writer only: no conflicting manual !/!! or external edits" : "",
     activity: safe(child?.error || (!child?.disposed ? child?.activity || child?.progress : child?.result) || child?.progress ||
       (child ? "Waiting for streamed activity" : "Ask the model to use delegate_task with an explicit profile")),
@@ -25,10 +25,10 @@ function latestActivity(text: string, width: number): string {
 }
 
 /** Main-screen discovery and final state do not depend on an open Hub. */
-export function createChildWidget(snapshot: () => ChildSnapshot | undefined, theme: Pick<Theme, "fg">): Component {
+export function createChildWidget(snapshot: () => ChildSnapshot | undefined, theme: Pick<Theme, "fg">, presence?: () => string | undefined): Component {
   return {
     render(width) {
-      const child = childPresentation(snapshot());
+      const child = childPresentation(snapshot(), presence?.());
       const heading = width < 40 ? `${child.status} · subagent` : `Delegation · ${child.status}  /task-hub`;
       return [
         theme.fg(child.color, heading),
@@ -53,7 +53,7 @@ export function createHub(
   return {
     render(width) {
       width = Math.max(0, width);
-      const child = childPresentation(coordinator.snapshot());
+      const child = childPresentation(coordinator.snapshot(), coordinator.agents().at(-1)?.presence);
       const height = Math.max(1, Math.min(7, availableRows()));
       // Keep the theme's panel lightness, but remove its tint even for custom palettes.
       const panelBg = oklchColor(colorToOklch(theme.colors.customMessageBg).l, 0, 0);

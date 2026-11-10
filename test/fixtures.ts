@@ -48,7 +48,7 @@ export async function fixture(t: TestContext, options: { speed?: number; tokenSi
     extensionFactories: [extension, observer, ...(options.extra ? [options.extra] : [])] });
   await loader.reload();
   const { session } = await createAgentSession({ cwd: root, agentDir: join(root, "agent"), modelRuntime: runtime, model: model.getModel(),
-    resourceLoader: loader, tools: ["read", "grep", "find", "ls", "edit", "write", "bash", "capture_context", "delegate_task"],
+    resourceLoader: loader, tools: ["read", "grep", "find", "ls", "edit", "write", "bash", "capture_context", "delegate_task", "delegate_coordinate"],
     settingsManager: settings, sessionManager: SessionManager.create(root, join(root, "parent")) });
   t.after(async () => {
     try { await coordinator.shutdown(); await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); }

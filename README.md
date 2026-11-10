@@ -1,6 +1,6 @@
 # pi-extended-subagents
 
-Pi-native bounded batch and nested delegation for **Pi 1.5.2**. A model-callable `delegate_task` creates an actual SDK child using the parent's selected model and public provider/authentication API. OMP is a behavioral/UI reference, **not a port**. This working slice is not full OMP parity or a pi-subagents compatibility layer.
+Pi-native bounded batch, nested delegation and live-parent coordination for **Pi 1.5.2**. A model-callable `delegate_task` creates an actual SDK child using the parent's selected model and public provider/authentication API. OMP is a behavioral/UI reference, **not a port**. This working slice is not full OMP parity or a pi-subagents compatibility layer.
 
 - [Delegation contract](docs/delegation-contract.md): profiles, configuration, registry/events/control interfaces, authority and limitations.
 - [Verification and historical proof evidence](docs/verification.md).
@@ -50,6 +50,24 @@ Foreground returns final state/text once. With `background:true`, the tool retur
 ```
 
 Steering queues after the current assistant/tool turn. Stop aborts and drains work, preserving its transcript. `/task-hub` observes the **latest task only**, is TUI-only and closes with configured Enter/Escape keys. Closing the view never stops execution. The compact widget retains that latest task's real state/activity; `/task-status` lists all entries. The existing opaque neutral, theme-adaptive surface is retained. This is not the planned roster/tree/transcript Hub.
+
+### Coordinate and assign follow-up work
+
+Enable `delegate_coordinate` alongside `delegate_task` in an explicit tool allowlist. Root model controls use pinned `{id,generation}` references:
+
+```json
+{"action":"message","target":{"id":"<task-id>","generation":1},"text":"Check the shutdown path too","mode":"steer"}
+{"action":"wait","target":{"id":"<task-id>","generation":1},"timeoutMs":30000}
+{"action":"followup","target":{"id":"<task-id>","generation":1},"assignment":"Now review the cancellation path"}
+```
+
+These are separate calls to `delegate_coordinate`. `message` accepts `inbox` (default), `steer` or `followUp`. Accepted/queued is **not acknowledgment**; delivered means recipient transcript or inbox-tool visibility, never proof the model read/understood it. `wait` selects one outcome, a known `messageId` receipt, or (with neither) the caller's own inbox. Every wait needs a 1–60000ms timeout and retains real capacity. Root can read its inbox with `{"action":"inbox"}`. Child messages to root do not automatically trigger a parent turn.
+
+Child coordination is **off by default**. Only operator profile config may grant selected `"coordination":["message","inbox","wait"]` actions; project/request arrays may only narrow them. Granted children address only supplied identities of their exact parent generation, direct children or siblings, not arbitrary registry peers or transcripts. Only direct children may omit `target` to message root. Sender identity is bound to the originating tool closure, never accepted from model input.
+
+Completion disposes the SDK session, permit and writer lease; presence becomes **idle**, independently of the immutable assignment outcome. Root `park` marks a disposed idle identity **parked**, without retaining a live session or writer. `followup` requires idle; `revive` requires parked. Both immediately acknowledge a fresh admitted generation (then use `wait`/`status`), re-resolve current grants/model/auth, and create a new session/transcript/artifact directory. They do **not** replay old history/tools: supply relevant context explicitly in the new assignment. The prior schema requirement is retained unless a new supported schema is supplied, with a fresh required submission. Old controls cannot retarget the new generation. `stop` closes presence, including idle/parked identities.
+
+A descendant can be renewed only while its **exact original parent UUID+generation** is still active and authorized, with immediate capacity and remaining parent lifetime spawn budget. Expired-parent revival rejects; delegate a new identity through an authorized live parent instead. This is in-memory, current-parent reassignment, **not restart recovery**. See the [coordination reference](docs/delegation-contract.md#live-parent-messaging-waits-and-presence) for bounds and terminal states.
 
 ### File instructions, validated results and full output
 
@@ -132,6 +150,6 @@ delegation/<parent-session-id>/<task-id>/
   structured.json            # accepted JSON value, if supplied (when referenced)
 ```
 
-Old `extended-subagents-proof` data is left untouched and is not loaded or migrated. New artifacts may contain sensitive assignment, tool and model output; treat them like parent transcripts. There is no retention, recovery, cross-parent revival or generalized artifact service. Parent shutdown/reload aborts, drains and disposes all children. SDK hosts must bind extensions and emit shutdown through the public lifecycle; bare `session.dispose()` is not a substitute for host shutdown dispatch. Abrupt process death cannot run cleanup hooks.
+Old `extended-subagents-proof` data is left untouched and is not loaded or migrated. New artifacts may contain sensitive assignment, tool and model output; treat them like parent transcripts. There is no durable recovery, cross-parent revival or generalized artifact service. Within this live parent, completed generation snapshots and bounded message receipts are retained in memory; renewed generations use `<task-id>-g<generation>/` directories and never modify completed files. Parent shutdown/reload aborts, drains and disposes all children. SDK hosts must bind extensions and emit shutdown through the public lifecycle; bare `session.dispose()` is not a substitute for host shutdown dispatch. Abrupt process death cannot run cleanup hooks.
 
-Not implemented: peer messaging/wait, parking/revival, isolation/apply, advisor/prewalk/probes/speculation/workpool, executable extension/MCP grants, or the full roster/tree/transcript UI. No live provider inference, credential changes, global Pi installation/config changes or retained-data migration were performed during verification.
+Not implemented: cross-parent messaging or revival, automatic idle TTL/retained-session reuse, isolation/apply, advisor/prewalk/probes/speculation/workpool, executable extension/MCP grants, or the full roster/tree/transcript UI. No live provider inference, credential changes, global Pi installation/config changes or retained-data migration were performed during verification.

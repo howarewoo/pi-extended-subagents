@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { truncateHead, type ExtensionToolContext, type ToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveScheduling } from "./scheduling.ts";
 import { DelegationCoordinator, type ChildRef, type ChildSnapshot, type StartTask } from "./coordinator.ts";
-import { READ_TOOLS, resolveProfile, bundledProfiles } from "./profiles.ts";
+import { READ_TOOLS, resolveProfile, bundledProfiles, COORDINATION_ACTIONS, intersectProfileGrants } from "./profiles.ts";
 import { createChildWidget, createHub } from "./hub.ts";
 
 export default function delegation(pi: ExtensionAPI) {
@@ -37,7 +37,7 @@ export default function delegation(pi: ExtensionAPI) {
     if (ctx.mode !== "tui") return;
     ctx.ui.setWidget("delegation", (tui, theme) => {
       renderWidget = () => tui.requestRender();
-      return createChildWidget(() => coordinator.snapshot(), theme);
+      return createChildWidget(() => coordinator.snapshot(), theme, () => coordinator.agents().at(-1)?.presence);
     }, { placement: "aboveEditor" });
   });
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -63,7 +63,7 @@ export default function delegation(pi: ExtensionAPI) {
   };
   const role = Type.Union([Type.Literal("general"), Type.Literal("scout"), Type.Literal("review"), Type.Literal("implementation")]);
   const limits = Type.Object({ depth: Type.Optional(Type.Integer({ minimum: 0 })), spawns: Type.Optional(Type.Integer({ minimum: 0 })), deadlineMs: Type.Optional(Type.Integer({ minimum: 1 })), requests: Type.Optional(Type.Integer({ minimum: 1 })), tools: Type.Optional(Type.Integer({ minimum: 1 })) }, { additionalProperties: false });
-  const assignment = { assignment: Type.Optional(Type.String({ minLength: 1 })), taskFile: Type.Optional(Type.String({ minLength: 1 })), resultSchema: Type.Optional(Type.Unknown()), profile: role, spawn: Type.Optional(Type.Array(role)), limits: Type.Optional(limits) };
+  const assignment = { assignment: Type.Optional(Type.String({ minLength: 1 })), taskFile: Type.Optional(Type.String({ minLength: 1 })), resultSchema: Type.Optional(Type.Unknown()), profile: role, spawn: Type.Optional(Type.Array(role)), coordination: Type.Optional(Type.Array(Type.Union(COORDINATION_ACTIONS.map(action => Type.Literal(action))))), limits: Type.Optional(limits) };
   const item = Type.Object(assignment, { additionalProperties: false });
   const parameters = Type.Union([
     Type.Object({ ...assignment, background: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
@@ -88,6 +88,10 @@ export default function delegation(pi: ExtensionAPI) {
           if (task.spawn.some(role => !profile.spawn?.includes(role))) throw new Error("Request cannot mint spawn grants");
           profile = { ...profile, spawn: task.spawn };
         }
+        if (task.coordination) {
+          if (task.coordination.some(action => !profile.coordination?.includes(action))) throw new Error("Request cannot mint coordination grants");
+          profile = { ...profile, coordination: task.coordination };
+        }
         assertTools(profile.tools);
         let text = task.assignment;
         if (task.taskFile !== undefined) {
@@ -95,6 +99,7 @@ export default function delegation(pi: ExtensionAPI) {
           text = await readTaskInput(task.taskFile, ctx, signal, parent ? () => owner.taskInputRead(parent) : undefined);
         }
         inputs.push({ assignment: text!, resultSchema: task.resultSchema, profile, skills, context: ctx, callerId: rootCallerId ?? callerId, parent, limits: task.limits,
+          coordinationTools: actor => [coordinationTool(owner, actor)],
           nestedTool: (ref: ChildRef) => taskTool(ref, ctx, rootCallerId ?? callerId) });
       }
       signal?.throwIfAborted();
@@ -121,6 +126,58 @@ export default function delegation(pi: ExtensionAPI) {
       finally { unsubscribe(); signal?.removeEventListener("abort", abort); }
     },
   });
+  const identity = Type.Object({ id: Type.String({ minLength: 1 }), generation: Type.Integer({ minimum: 1 }) }, { additionalProperties: false });
+  const coordinationParameters = Type.Union([
+    Type.Object({ action: Type.Literal("message"), target: Type.Optional(identity), text: Type.String({ minLength: 1, maxLength: 4096 }), mode: Type.Optional(Type.Union([Type.Literal("inbox"), Type.Literal("steer"), Type.Literal("followUp")])) }, { additionalProperties: false }),
+    Type.Object({ action: Type.Literal("inbox") }, { additionalProperties: false }),
+    Type.Object({ action: Type.Literal("wait"), target: Type.Optional(identity), messageId: Type.Optional(Type.String({ minLength: 1 })), timeoutMs: Type.Integer({ minimum: 1, maximum: 60000 }) }, { additionalProperties: false }),
+    Type.Object({ action: Type.Union([Type.Literal("park"), Type.Literal("stop"), Type.Literal("status")]), target: identity }, { additionalProperties: false }),
+    Type.Object({ action: Type.Union([Type.Literal("followup"), Type.Literal("revive")]), target: identity, assignment: Type.String({ minLength: 1 }), resultSchema: Type.Optional(Type.Unknown()) }, { additionalProperties: false }),
+  ]);
+  const coordinationTool = (owner?: DelegationCoordinator, actor?: ChildRef): ToolDefinition<typeof coordinationParameters> => ({
+    name: "delegate_coordinate", label: "Coordinate delegation", exposure: "model-only",
+    description: "Live-parent identity-pinned coordination. message targets a running family agent (omit target for root inbox, direct children only); inbox reads own bounded mailbox; wait targets an outcome or own inbox with required 1–60000ms timeout, retaining capacity. No transcript access. Child actions require explicit operator grants. Root additionally has status/stop/park and idle followup/parked revive. Followup/revive create a fresh generation/session with current model/auth and narrowed current grants, no old tool replay or historical recovery. Message accepted/queued is NOT model acknowledgment; delivered means transcript/inbox visibility only. 4096-byte messages, 64 mailbox/waiters, 512 messages and 64 generations per live parent.",
+    parameters: coordinationParameters,
+    async execute(callerId, args, signal, _update, ctx) {
+      const registry = owner ?? coordinator;
+      signal?.throwIfAborted();
+      let value: unknown;
+      if (args.action === "message") value = await registry.message(actor, args.target, args.text, args.mode);
+      else if (args.action === "inbox") value = registry.inbox(actor);
+      else if (args.action === "wait") value = await registry.coordinateWait(actor, args.target, args.timeoutMs, signal, args.messageId);
+      else {
+        if (actor) throw new Error("Root-only coordination action");
+        if (args.action === "stop") { await registry.stop(args.target); value = registry.snapshot(args.target); }
+        else if (args.action === "park") { registry.park(args.target); value = registry.agents(); }
+        else if (args.action === "status") value = { snapshot: registry.snapshot(args.target), generations: registry.generations(args.target.id), agents: registry.agents() };
+        else if (args.action === "followup" || args.action === "revive") {
+          const presence = registry.agents().find(state => state.id === args.target.id && state.generation === args.target.generation)?.presence;
+          if (presence !== (args.action === "revive" ? "parked" : "idle")) throw new Error("Followup requires idle; revive requires parked current identity");
+          const state = registry.snapshot(args.target)!;
+          const parent = registry.renewalParent(args.target);
+          registry.configure(await resolveScheduling(ctx.cwd, ctx.isProjectTrusted()));
+          let { profile, skills } = await resolveProfile(state.profile, ctx.cwd, ctx.isProjectTrusted());
+          let ancestor = parent;
+          let descendantRole = state.profile;
+          while (ancestor) {
+            const original = registry.snapshot(ancestor)!;
+            const current = (await resolveProfile(original.profile, ctx.cwd, ctx.isProjectTrusted())).profile;
+            if (!current.spawn?.includes(descendantRole)) throw new Error("Current ancestor spawn role denied");
+            profile = intersectProfileGrants(profile, current);
+            descendantRole = original.profile;
+            ancestor = original.parentGeneration === undefined ? undefined : { id: original.parentId, generation: original.parentGeneration };
+          }
+          assertTools(profile.tools);
+          signal?.throwIfAborted();
+          const next = registry.renew(args.target, { assignment: args.assignment, resultSchema: args.resultSchema, profile, skills, context: ctx, callerId, parent,
+            coordinationTools: ref => [coordinationTool(registry, ref)], nestedTool: ref => taskTool(ref, ctx, callerId) });
+          value = registry.snapshot(next);
+        }
+      }
+      return { content: [{ type: "text", text: preview(value) }], details: value };
+    },
+  });
+  pi.registerTool(coordinationTool());
   pi.registerTool(taskTool());
   pi.registerCommand("task-profiles", { description: "List bundled profiles and capability availability", handler: async () => show(bundledProfiles()) });
   pi.registerCommand("task-status", { description: "List delegation identities, states and final results", handler: async args => show(args.trim() ? coordinator.snapshot(ref(args)) : coordinator.list()) });
