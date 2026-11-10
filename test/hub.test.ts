@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { createChildWidget, createHub, taskCard, transcriptLines, safe } from "../src/hub.ts";
 import { DelegationCoordinator, type ChildRef, type ChildSnapshot } from "../src/coordinator.ts";
 import { backgroundAnsi, oklchColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ThemeStyle } from "@earendil-works/pi-coding-agent";
 
 const keys = { matches: (data: string, action: string) => data === "escape" && action === "tui.select.cancel",
@@ -102,16 +103,17 @@ test("Hub selection survives streaming/new completion; search, tabs, full transc
   hub.handleInput!("\x1b[B"); assert.match(output(), /> └ second/);
   children = [...children, snapshot("new", {status: "settled", disposed: true})];
   listener!({type: "changed", child: children[2]}); assert.match(output(), /> └ second/);
-  assert.match(output(), /Direct requests unavailable/);
-  hub.handleInput!("\t"); assert.match(output(), /FULL LINE 0/);
+  assert.doesNotMatch(output(), /Direct requests/);
+  assert.match(output(), /FULL LINE 0/);
   hub.handleInput!("\x1b[6~"); assert.doesNotMatch(output(), /FULL LINE 0 /);
   hub.handleInput!("\x1b[F"); assert.match(output(), /FULL LINE 99/);
+  hub.handleInput!("\t"); hub.handleInput!("\x1b[F"); assert.match(output(), /Direct requests unavailable/);
   hub.handleInput!("\t"); assert.match(output(), /TOOLS/);
-  hub.handleInput!("s"); hub.handleInput!("new direction"); hub.handleInput!("\r");
+  hub.handleInput!("s"); hub.handleInput!("new direction"); assert.match(output(), /Target: second #7/); hub.handleInput!("\r");
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls[0], ["second", 7, "new direction"]);
   hub.handleInput!("x"); hub.handleInput!("\r"); assert.equal(calls.length, 1, "Enter never confirms stop");
-  hub.handleInput!("\x1b"); hub.handleInput!("x"); hub.handleInput!("y");
+  hub.handleInput!("\x1b"); hub.handleInput!("x"); assert.match(output(), /Target: second #7/); hub.handleInput!("y");
   await new Promise(resolve => setImmediate(resolve)); assert.deepEqual(calls[1], ["second", 7, "stop"]);
   hub.handleInput!("/"); hub.handleInput!("first"); hub.handleInput!("\r"); assert.match(output(), /> └ first/); assert.doesNotMatch(output(), /└ second/);
   hub.handleInput!("\r"); hub.handleInput!("\x1b"); assert.equal(closed, 2);
@@ -183,11 +185,188 @@ for (const action of ["steer", "stop", "message"] as const) {
       assert.match(render(), /Unknown or stale delegation identity/);
 
       children[0] = {...children[0], generation: 7};
+      begin(); children[0] = {...children[0], status: "draining"};
+      await submit();
+      assert.deepEqual(dispatches, [], "a target that starts draining during input refuses every action");
+      assert.match(render(), /no action sent/);
+      hub.handleInput!("/"); hub.handleInput!("\x15"); hub.handleInput!("draining"); hub.handleInput!("\r");
+      hub.handleInput!(action === "steer" ? "s" : action === "message" ? "m" : "x");
+      assert.match(render(), /Controls unavailable/, "already draining targets cannot open controls");
+      children[0] = {...children[0], status: "running"};
+      hub.handleInput!("/"); hub.handleInput!("\x15"); hub.handleInput!("running"); hub.handleInput!("\r");
+      hub.handleInput!("\x1b[A");
       begin(); hub.handleInput!("\x1b");
       assert.doesNotMatch(render(), /Target:/, "cancel clears pinned target");
       hub.handleInput!("\x1b[B");
       hub.handleInput!(action === "steer" ? "s" : action === "message" ? "m" : "x");
       assert.match(render(), /Target: B #9/, "next interaction captures its own target");
     } finally { hub.dispose(); }
+  });
+}
+
+test("Hub opens with agents on the left and the selected full thread on the right; narrow fallback preserves reading", t => {
+  const coordinator = new DelegationCoordinator("unused", "root");
+  const children = Array.from({length: 12}, (_, index) => snapshot(`agent-${index}`, {assignment: `Assignment ${index} 中文 👩‍💻`}));
+  t.mock.method(coordinator, "list", () => children);
+  t.mock.method(coordinator, "messages", (ref: ChildRef) => [{role: "user", timestamp: 1, content: Array.from({length: 90}, (_, index) => `${ref.id} THREAD LINE ${index} 中文`).join("\n")}]);
+  let rows = 27;
+  const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {}, () => rows);
+  const render = (width = 90) => hub.render(width).map(stripAnsi);
+  try {
+    const wide = render();
+    const adjacent = wide.find(line => line.includes("AGENTS") && line.includes("agent-0"));
+    assert.ok(adjacent, "selection heading and selected identity must share the same physical row");
+    assert.ok(wide.some(line => line.includes("> └ agent-0") && line.includes("THREAD")), "left roster and right view must be adjacent");
+    assert.match(wide.join("\n"), /agent-0 THREAD LINE 0/);
+    assert.doesNotMatch(wide.join("\n"), /Direct tokens|Limits \{|Prewalk/);
+    assert.ok(wide.every(line => visibleWidth(line) === 90));
+    const left = wide.slice(1, -1).map(line => line.split("│")[1]);
+    hub.handleInput!("\x1b[6~");
+    assert.match(render().join("\n"), /agent-0 THREAD LINE/);
+    assert.deepEqual(render().slice(1, -1).map(line => line.split("│")[1]), left, "thread scrolling must not scroll the roster");
+    for (let index = 0; index < 10; index++) hub.handleInput!("\x1b[B");
+    assert.match(render().join("\n"), /> └ agent-10 #1/);
+    assert.match(render().join("\n"), /agent-10 THREAD LINE 0/);
+    rows = 14;
+    const narrow = render(36);
+    assert.ok(narrow.every(line => visibleWidth(line) === 36));
+    assert.ok(narrow.length <= rows);
+    assert.match(narrow.join("\n"), /> └ agent-10 #1/);
+    assert.match(narrow.join("\n"), /THREAD LINE 0/);
+    assert.doesNotMatch(narrow.join("\n"), /AGENTS/);
+  } finally {hub.dispose();}
+});
+
+test("Hub full thread preserves role/thinking/tool/error text, isolates ANSI and holds reading position through streamed deltas", t => {
+  const coordinator = new DelegationCoordinator("unused", "root");
+  const child = snapshot("content");
+  let listener!: Parameters<DelegationCoordinator["subscribe"]>[0];
+  t.mock.method(coordinator, "subscribe", (callback: Parameters<DelegationCoordinator["subscribe"]>[0]) => { listener = callback; return () => {}; });
+  t.mock.method(coordinator, "list", () => [child]);
+  let messages: ReturnType<DelegationCoordinator["messages"]> = [{role: "user", timestamp: 1,
+    content: Array.from({length: 60}, (_, index) => `USER_BODY${index} 正文👩‍💻\x1b[91m\x1b]52;c;SECRET\x07\u202e`).join("\n")}];
+  t.mock.method(coordinator, "messages", () => messages);
+  const palette = {...theme, fg: (_color: string, text: string) => `\x1b[32m${text}\x1b[0m`};
+  let rows = 27;
+  const hub = createHub(coordinator, palette, effectiveKeys, () => {}, () => {}, () => rows);
+  const render = (width = 90) => hub.render(width);
+  const plain = () => render().map(stripAnsi);
+  try {
+    render(); hub.handleInput!("\x1b[6~");
+    const before = plain().filter(line => line.includes("USER_BODY"));
+    const partial = fauxAssistantMessage("STREAMING_SENTINEL");
+    listener({type: "sdk", child, event: {type: "message_update", message: partial,
+      assistantMessageEvent: {type: "text_delta", contentIndex: 0, delta: "STREAMING_SENTINEL", partial}}});
+    assert.deepEqual(plain().filter(line => line.includes("USER_BODY")), before, "appending a stream must not jump the reading position");
+    hub.handleInput!("\x1b[F"); assert.match(plain().join("\n"), /STREAMING_SENTINEL/);
+    const assistant = fauxAssistantMessage([
+      {type: "thinking", thinking: "THINKING_SENTINEL", thinkingSignature: "SIGNATURE_SECRET"},
+      {type: "text", text: "ASSISTANT_SENTINEL\n" + "正文👩‍💻".repeat(60)},
+      fauxToolCall("read", {path: "visible.ts"}),
+    ]);
+    messages = [...messages, assistant, {role: "toolResult", toolCallId: "read-call", toolName: "read", isError: true, timestamp: 2,
+      content: [{type: "text", text: "RESULT_END\x1b[91m"}, {type: "image", data: "IMAGE_BASE64_SECRET", mimeType: "image/png"}], details: {private: "TOOL_DETAILS_SECRET"}},
+      {...fauxAssistantMessage("FINAL_SENTINEL"), errorMessage: "ERROR_SENTINEL"}];
+    listener({type: "sdk", child, event: {type: "message_end", message: partial}});
+    hub.handleInput!("\x1b[H");
+    const pages: string[] = [];
+    for (let page = 0; page < 12; page++) { pages.push(plain().join("\n")); hub.handleInput!("\x1b[6~"); }
+    const full = pages.join("\n");
+    for (const content of ["[user]", "[assistant]", "THINKING_SENTINEL", "ASSISTANT_SENTINEL", "visible.ts", "ERROR", "RESULT_END", "payload omitted", "FINAL_SENTINEL", "ERROR_SENTINEL"]) assert.ok(full.includes(content), content);
+    assert.doesNotMatch(full, /SIGNATURE_SECRET|TOOL_DETAILS_SECRET|IMAGE_BASE64_SECRET|SECRET|\u202e/);
+    for (const width of [0, 1, 3, 8, 36, 40, 75, 76, 90, 200]) for (rows of [1, 4, 8, 14, 27]) {
+      const lines = render(width);
+      assert.ok(lines.length <= rows);
+      for (const line of lines) {
+        assert.equal(visibleWidth(line), width, `${width} columns, ${rows} rows`);
+        assert.doesNotMatch(line, /\x1b\[91m|\x1b\]52|\u202e|\x1b\[0m(?!\x1b\[48;)/);
+      }
+    }
+  } finally {hub.dispose();}
+});
+
+test("Hub empty, filtered, queued/setup and terminal threads explain unavailable transcript without allocating work", t => {
+  const coordinator = new DelegationCoordinator("unused", "root");
+  let children: ChildSnapshot[] = [];
+  t.mock.method(coordinator, "list", () => children);
+  t.mock.method(coordinator, "messages", () => []);
+  const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {});
+  const output = () => stripAnsi(hub.render(90).join("\n"));
+  try {
+    assert.match(output(), /No tasks/);
+    for (const status of ["queued", "setup", "draining", "settled", "failed", "cancelled"] as const) {
+      children = [snapshot(status, {status, error: status === "failed" ? "ACTUAL FAILURE" : undefined, disposed: ["settled", "failed", "cancelled"].includes(status)})];
+      assert.match(output(), new RegExp(status));
+      assert.match(output(), status === "queued" ? /no SDK messages yet/ : status === "failed" ? /ACTUAL FAILURE/ : /Waiting for SDK messages/);
+    }
+    hub.handleInput!("/"); hub.handleInput!("unmatched"); hub.handleInput!("\r");
+    assert.match(output(), /No matching tasks/);
+  } finally {hub.dispose();}
+});
+
+test("Hub prefilled filter editing starts at the native Input end after an empty control is cancelled", t => {
+  const coordinator = new DelegationCoordinator("unused", "root");
+  t.mock.method(coordinator, "list", () => [snapshot("one", {assignment: "alpha"}), snapshot("two", {assignment: "alpha beta"})]);
+  t.mock.method(coordinator, "messages", () => []);
+  const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {});
+  const output = () => stripAnsi(hub.render(90).join("\n"));
+  try {
+    output(); hub.handleInput!("/"); hub.handleInput!("alpha"); hub.handleInput!("\r");
+    hub.handleInput!("s"); hub.handleInput!("\x1b"); // Input cursor is now at zero, filter is still "alpha".
+    hub.handleInput!("/"); hub.handleInput!(" beta"); hub.handleInput!("\r");
+    assert.match(output(), /Filter: alpha beta · 1 generations/);
+    assert.match(output(), /> └ two #1/);
+    hub.handleInput!("/"); hub.handleInput!("\x15"); hub.handleInput!("alpha"); hub.handleInput!("\r");
+    assert.match(output(), /Filter: alpha · 2 generations/, "native Ctrl+U replaces a prefilled filter without an extra cursor workaround");
+  } finally {hub.dispose();}
+});
+
+for (const action of ["stop", "steer", "message"] as const) {
+  test(`Hub ${action} keeps the full original target visible at short height and blocks hidden controls until resize`, async t => {
+    const coordinator = new DelegationCoordinator("unused", "root");
+    const a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    let children = [snapshot(a, {generation: 7, progress: "match"}), snapshot(b, {generation: 9, progress: "match"})];
+    const calls: ChildRef[] = [];
+    t.mock.method(coordinator, "list", () => structuredClone(children));
+    t.mock.method(coordinator, "messages", () => []);
+    t.mock.method(coordinator, "snapshot", (ref: ChildRef) => children.find(child => child.id === ref.id && child.generation === ref.generation));
+    t.mock.method(coordinator, "stop", async (ref: ChildRef) => { calls.push({...ref}); });
+    t.mock.method(coordinator, "steer", async (ref: ChildRef) => { calls.push({...ref}); return "queued"; });
+    t.mock.method(coordinator, "message", async (_actor: ChildRef | undefined, ref: ChildRef | undefined) => { calls.push({...ref!}); throw new Error("receipt fixture"); });
+    let rows = 8, width = 90;
+    const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {}, () => rows);
+    const render = () => {
+      const lines = hub.render(width);
+      assert.ok(lines.length <= rows);
+      assert.ok(lines.every(line => visibleWidth(line) === width));
+      return stripAnsi(lines.join("\n"));
+    };
+    const begin = () => { hub.handleInput!(action === "stop" ? "x" : action === "steer" ? "s" : "m"); if (action !== "stop") hub.handleInput!("original payload"); };
+    const submit = async () => { hub.handleInput!(action === "stop" ? "y" : "\r"); await new Promise(resolve => setImmediate(resolve)); };
+    try {
+      render(); hub.handleInput!("/"); hub.handleInput!("match"); hub.handleInput!("\r");
+      begin(); children[0] = {...children[0], progress: "no hit"};
+      await submit(); assert.deepEqual(calls, [], "a newly opened but not yet displayed target cannot authorize dispatch");
+      const short = render();
+      assert.match(short, /> └ bbbbbbbb #9/);
+      assert.ok(short.includes(`Target: ${a} #7`), "full pinned identity must outrank filter/status hints at height 8");
+      await submit(); assert.deepEqual(calls, [{id: a, generation: 7}]);
+
+      children[0] = {...children[0], progress: "match"}; render(); hub.handleInput!("\x1b[A"); begin();
+      children[0] = {...children[0], progress: "no hit"}; render(); rows = 4; width = 20;
+      await submit(); assert.equal(calls.length, 1, "shrinking before redraw also blocks submission");
+      assert.match(render(), /Resize/);
+      await submit(); assert.equal(calls.length, 1, "hidden UUID cannot authorize confirmation/input submission");
+      rows = 27; width = 90;
+      assert.ok(render().includes(`Target: ${a} #7`), "resize must retain the original pin and input");
+      await submit(); assert.deepEqual(calls, [{id: a, generation: 7}, {id: a, generation: 7}]);
+
+      begin(); rows = 4; width = 20; render(); hub.handleInput!("\x1b");
+      rows = 14; width = 36;
+      assert.doesNotMatch(render(), /Target:/, "cancel clears the blocked interaction");
+      begin(); const reset = render();
+      assert.ok(reset.replaceAll("\n", "").replaceAll("│", "").replaceAll(" ", "").includes(`Target:${b}#9`), "new interaction pins B, not cancelled A");
+      hub.handleInput!("\x1b"); assert.equal(calls.length, 2);
+    } finally {hub.dispose();}
   });
 }

@@ -41,7 +41,7 @@ export function taskCard(child: ChildSnapshot | undefined, expanded = false): st
     `${child.id} #${child.generation} · ${child.profile} · ${child.status}`,
     `${child.model.provider}/${child.model.id} · effort ${child.effort ?? "unavailable"}`,
     truncateToWidth(lineText(activity(child)), 240, "… [preview truncated]"),
-    `Prewalk ${child.prewalk?.status ?? "off"} · advisor unavailable`,
+    `Prewalk ${child.prewalk ? JSON.stringify(child.prewalk) : "off"} · advisor unavailable`,
     `Parent ${child.parentId}${child.parentGeneration ? ` #${child.parentGeneration}` : ""} · depth ${child.depth} · writer lease ${child.writerLease}`,
     ...(child.outcome ? [`Structured ${child.outcome.validation} · ${child.outcome.finalized ? "finalized" : "provisional"} · attempts ${child.outcome.attempts}`] : []),
     ...(child.limitReason ? [`Limit: ${child.limitReason}`] : []),
@@ -56,6 +56,7 @@ export function transcriptLines(messages: ReturnType<DelegationCoordinator["mess
   const lines: string[] = [];
   for (const message of messages) {
     if (message.role === "system") continue;
+    const start = lines.length;
     const blocks = "content" in message ? message.content : undefined;
     if (!toolsOnly || message.role === "toolResult") {
       lines.push(`[${message.role}${message.role === "toolResult" ? ` ${message.toolName} ${message.toolCallId} ${message.isError ? "ERROR" : "result"}` : ""}]`);
@@ -70,6 +71,7 @@ export function transcriptLines(messages: ReturnType<DelegationCoordinator["mess
       }
     }
     if (message.role === "assistant" && message.errorMessage) lines.push("Error: " + safe(message.errorMessage));
+    if (start && lines.length > start) lines.splice(start, 0, "");
   }
   return lines.length ? lines.map(safe) : [toolsOnly ? "No tool calls yet" : "Waiting for SDK messages"];
 }
@@ -83,8 +85,9 @@ export function createHub(
   let selected: string | undefined;
   let query = "";
   let interactionTarget: ChildRef | undefined;
+  let interactionVisibleAtHeight: number | undefined;
   let mode: "browse" | "search" | "steer" | "message" | "stop" = "browse";
-  let tab: "inspector" | "transcript" | "tools" = "inspector";
+  let tab: "thread" | "details" | "tools" = "thread";
   let offset = 0;
   let viewport = 1;
   let notice = "";
@@ -109,15 +112,19 @@ export function createHub(
   const roster = () => coordinator.list().flatMap(child => coordinator.generations(child.id)).filter(child => lineText([child.id, child.parentId, child.profile, child.status, child.assignment, child.progress, child.result, child.error, child.model.id].join(" ")).toLowerCase().includes(query.toLowerCase()));
   const selection = () => {
     const children = roster();
-    if (!children.some(child => identity(child) === selected)) selected = children[0] && identity(children[0]);
+    if (!children.some(child => identity(child) === selected)) { selected = children[0] && identity(children[0]); offset = 0; }
     return children.find(child => identity(child) === selected);
   };
   const control = async (target: ChildRef, text?: string, message = false) => {
     notice = text === undefined ? "Stopping and draining…" : message ? "Sending inbox message…" : "Sending steering…"; refresh();
     try {
       const child = coordinator.snapshot(target);
-      if (!child || child.disposed || (text !== undefined && child.status !== "running")) throw new Error(`Target ${target.id} #${target.generation} is no longer running; no action sent`);
-      notice = text === undefined ? (await coordinator.stop(target), "Stopped and drained") : message ? `Message ${JSON.stringify(await coordinator.message(undefined, target, text))} · NOT model acknowledgment` : `Steering ${await coordinator.steer(target, text)}`;
+      if (!child || child.disposed || child.status === "draining" || (text !== undefined && child.status !== "running")) throw new Error(`Target ${target.id} #${target.generation} is no longer running; no action sent`);
+      if (text === undefined) { await coordinator.stop(target); notice = "Stopped and drained"; }
+      else if (message) {
+        const receipt = await coordinator.message(undefined, target, text);
+        notice = `Message ${receipt.id} · ${receipt.status} · NOT model acknowledgment${receipt.error ? ` · ${receipt.error}` : ""}`;
+      } else notice = `Steering ${await coordinator.steer(target, text)}`;
     } catch (error) { notice = String(error); }
     refresh();
   };
@@ -128,7 +135,12 @@ export function createHub(
     } catch (error) { notice = String(error); }
     refresh();
   };
+  const canSubmitInteraction = () => {
+    if (interactionVisibleAtHeight === Math.max(1, availableRows())) return true;
+    notice = "Resize for controls · Esc cancels; no action sent"; refresh(); return false;
+  };
   const finishInput = () => {
+    if (interactionTarget && !canSubmitInteraction()) return;
     if (mode === "search") query = lineText(input.getValue());
     else if ((mode === "steer" || mode === "message") && interactionTarget) void control(interactionTarget, input.getValue(), mode === "message");
     interactionTarget = undefined;
@@ -137,6 +149,7 @@ export function createHub(
   return {
     focused: false,
     render(width) {
+      interactionVisibleAtHeight = undefined;
       width = Math.max(0, width);
       const height = Math.max(1, availableRows());
       const child = selection();
@@ -146,7 +159,7 @@ export function createHub(
         const padded = clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
         return padded.split("\x1b[0m").map(part => theme.style(part, { bg: panelBg })).join("\x1b[0m");
       };
-      if (width < 4 || height < 3) return [paint("FLEET " + coordinator.list().length)];
+      if (width < 4 || height < 3) return [paint(interactionTarget ? "Resize · Esc cancels" : "FLEET " + coordinator.list().length)];
       const inner = Math.max(0, width - 4);
       const row = (text: string) => {
         const clipped = truncateToWidth(text, inner);
@@ -156,61 +169,99 @@ export function createHub(
         const text = truncateToWidth(title, width - 2);
         return paint(theme.fg("border", left) + theme.fg("accent", text) + theme.fg("border", "─".repeat(Math.max(0, width - 2 - visibleWidth(text))) + right));
       };
-      const body: string[] = [];
-      const all = coordinator.list();
-      const close = [...new Set([...keybindings.getKeys("tui.select.cancel"), ...keybindings.getKeys("tui.select.confirm")])].join("/");
-      const hints = width < 60 ? ["↑↓ agent Tab view PgUp/Dn scroll", "/ filter s steer m inbox x stop", `w wait p park · ${close}: close`]
-        : ["↑↓ select · Tab view · PgUp/Dn scroll", `${close}: close · / filter s steer m inbox x stop · w wait p park`];
       const children = roster();
-      const listHeight = Math.min(children.length, Math.max(1, Math.floor((height - 7) / 4)));
+      const current = coordinator.list();
+      const historical = (item: ChildRef) => !current.some(live => identity(live) === identity(item));
       const index = children.findIndex(item => identity(item) === selected);
-      const start = Math.max(0, index - listHeight + 1);
-      body.push(`Parent ${lineText(child?.parentId ?? coordinator.parentId)} · ${children.length}/${all.length} children`);
-      for (const item of children.slice(start, start + listHeight)) body.push(`${identity(item) === selected ? ">" : " "} ${"  ".repeat(Math.min(8, Math.max(0, item.depth - 1)))}└ ${item.id.slice(0, 8)} #${item.generation} ${item.profile} ${item.status} · ${lineText(item.assignment)}`);
-      if (!children.length) body.push(query ? "No matching tasks · / to search again" : "No tasks · ask the model to delegate_task");
-      if (all.some(item => item.writerLease)) body.push("WRITER: model tools only; no manual/external writes");
-      body.push(`${tab.toUpperCase()}${query ? ` · filter: ${query}` : ""}${notice ? ` · ${lineText(notice)}` : ""}`);
-      if (notice) body.push(...wrapTextWithAnsi(lineText(notice), Math.max(1, inner)).slice(0, 3));
-      if (interactionTarget) body.push(...wrapTextWithAnsi(`Target: ${interactionTarget.id} #${interactionTarget.generation}`, Math.max(1, inner)));
+      const wide = width >= 76;
+      const leftWidth = wide ? Math.min(32, Math.max(24, Math.floor(inner / 3))) : 0;
+      const threadWidth = wide ? inner - leftWidth - 3 : inner;
+      const close = [...new Set([...keybindings.getKeys("tui.select.cancel"), ...keybindings.getKeys("tui.select.confirm")])].join("/");
+      const footer: string[] = [];
+      if (query) footer.push(theme.fg("muted", `Filter: ${lineText(query)} · ${children.length} generations`));
+      if (current.some(item => item.writerLease)) footer.push(theme.fg("warning", "WRITER: model tools only; no manual/external writes"));
+      if (notice) {
+        const lines = wrapTextWithAnsi(lineText(notice), Math.max(1, inner));
+        footer.push(...lines.slice(0, 3).map((line, index) => theme.fg("warning", index === 2 && lines.length > 3 ? truncateToWidth(line, Math.max(0, inner - 19)) + " [notice truncated]" : line)));
+      }
+      const targetLines = interactionTarget ? wrapTextWithAnsi(`Target: ${interactionTarget.id} #${interactionTarget.generation}`, Math.max(1, inner)) : [];
+      if (interactionTarget && (inner < 26 || height < targetLines.length + 5)) {
+        return [frame("╭", " Resize / Esc cancel ", "╮"), ...targetLines.slice(0, height - 3).map(row),
+          row("Resize for controls · Esc cancels"), frame("╰", "", "╯")];
+      }
+      footer.push(...targetLines.map(line => theme.fg("accent", line)));
+      if (mode === "search" || mode === "steer" || mode === "message") {
+        input.focused = this.focused;
+        const label = mode === "search" ? "Filter: " : mode === "message" ? "Inbox: " : "Steer: ";
+        footer.push(label + input.render(Math.max(1, inner - visibleWidth(label)))[0], "Enter submit · Esc back (no action)");
+      } else if (mode === "stop") footer.push("Stop target? y confirms · Esc back", "Enter does not confirm stop");
+      else footer.push(...(wide ? ["↑↓ agents · / filter · Tab view · PgUp/Dn Home/End scroll", `s steer · m inbox · x stop · w wait · p park · ${close}: close`]
+        : ["↑↓ / Tab · s steer m msg x stop", `PgUp/Dn · ${close.replaceAll("escape", "Esc").replaceAll("enter", "Enter").replaceAll("ctrl+", "C-")}: close`]));
+      // A pinned target and its controls are indivisible; optional hints must yield first.
+      const requiredFooter = interactionTarget ? targetLines.length + 2 : 0;
+      const shownFooter = requiredFooter || height >= 8 ? footer.slice(-Math.max(2, height - 7, requiredFooter)) : [];
+      if (interactionTarget) interactionVisibleAtHeight = height;
+      const paneHeight = Math.max(1, height - 2 - shownFooter.length);
+      viewport = Math.max(1, paneHeight - 3);
       let detail: string[] = [];
       if (child) {
-        if (tab === "inspector") {
+        if (tab === "details") {
           const metric = (value: unknown) => value === null || value === undefined ? "unavailable" : JSON.stringify(value);
           detail = [
-            ...taskCard(child).slice(0, -1),
-            "Followup/revive: native delegate_coordinate only (Hub has no tool dispatcher)",
-            `Presence ${coordinator.agents().find(agent => agent.id === child.id && agent.generation === child.generation)?.presence ?? "historical"}`,
-            `Elapsed ${Math.max(0, Math.floor(((child.endedAt ?? Date.now()) - child.createdAt) / 1000))}s · resources ${child.disposed ? "disposed" : "live"}`,
+            "Assignment", safe(child.assignment), "", "Result", safe(child.result || "Not available yet"), "",
+            ...(child.error ? ["Error", safe(child.error), ""] : []),
+            ...(child.outcome ? ["Structured outcome", JSON.stringify(child.outcome, null, 2), ""] : []),
+            ...(child.artifacts ? ["Saved artifacts", JSON.stringify(child.artifacts, null, 2), ""] : []),
+            `Effective builtin tools: ${child.tools.join(", ")}`,
+            `${child.model.provider}/${child.model.id} · effort ${child.effort ?? "unavailable"}`,
+            `Prewalk ${child.prewalk ? JSON.stringify(child.prewalk) : "off"} · advisor unavailable`,
+            `Presence ${coordinator.agents().find(agent => agent.id === child.id && agent.generation === child.generation)?.presence ?? "historical"} · resources ${child.disposed ? "disposed" : "live"}`,
+            `Elapsed ${Math.max(0, Math.floor(((child.endedAt ?? Date.now()) - child.createdAt) / 1000))}s`,
             `Direct requests ${metric(child.telemetry.requests)} · cost ${metric(child.telemetry.cost)}`,
             `Direct tokens ${metric(child.telemetry.tokens)}`, `Context ${metric(child.telemetry.context)}`,
             `Parent ${child.parentId} #${child.parentGeneration ?? "root"} · depth ${child.depth} · direct generation only`,
             `Limits ${JSON.stringify(child.limits)} · calls ${child.toolCalls} · reason ${child.limitReason ?? "none"}`,
-            ...(child.outcome ? ["Structured outcome: " + JSON.stringify(child.outcome, null, 2)] : []),
-            ...(child.artifacts ? ["Saved artifacts: " + JSON.stringify(child.artifacts, null, 2)] : []), "Assignment: " + safe(child.assignment), "Activity: " + safe(activity(child)),
-            "Result: " + safe(child.result || child.error || "Not available yet"),
-            "Full transcript: " + safe(child.transcript ?? "unavailable (setup)"),
+            "Activity: " + safe(activity(child)),
+            "Full transcript: " + safe(child.transcript ?? "unavailable (queued/setup)"),
+            "Followup/revive: native delegate_coordinate only (Hub has no tool dispatcher)",
             ...(child.writerLease ? [writerWarning] : []),
           ];
         } else {
           try {
             const messages = coordinator.messages(child);
             const partial = streaming.get(identity(child));
-            detail = [...transcriptLines(partial ? [...messages, partial] : messages, tab === "tools"), ...(liveTools.get(identity(child)) ?? [])];
+            detail = messages.length || partial
+              ? [...transcriptLines(partial ? [...messages, partial] : messages, tab === "tools"), ...(liveTools.get(identity(child)) ?? [])]
+              : [child.error || child.result || (child.status === "queued" ? "Queued · no SDK messages yet" : "Waiting for SDK messages")];
           } catch (error) { detail = ["Transcript unavailable: " + safe(String(error))]; }
         }
-      }
-      const wrapped = detail.flatMap(text => safe(text).split("\n").flatMap(line => wrapTextWithAnsi(line, Math.max(1, inner))));
-      viewport = Math.max(1, height - 2 - body.length - hints.length);
+      } else detail = [query ? "No matching tasks · / to change filter" : "No tasks · ask the model to delegate_task"];
+      const wrapped = detail.flatMap(text => safe(text).split("\n").flatMap(line => wrapTextWithAnsi(line, Math.max(1, threadWidth))));
       offset = Math.max(0, Math.min(offset, wrapped.length - viewport));
-      body.push(...wrapped.slice(offset, offset + viewport));
-      while (body.length < height - 2 - hints.length) body.push("");
-      if (mode === "search" || mode === "steer" || mode === "message") {
-        input.focused = this.focused;
-        body.push(`${mode === "search" ? "Filter" : mode === "message" ? "Inbox" : "Steer"}:` + input.render(Math.max(1, inner - 7))[0]);
-        body.push(...hints.slice(1, -1), "Enter submit · Esc back (no action)");
-      } else if (mode === "stop") body.push("Stop target? y confirms", ...hints.slice(1, -1), "Esc back (no action)");
-      else body.push(...hints);
-      return [frame("╭", " Fleet / Agent Hub ", "╮"), ...body.slice(0, height - 2).map(text => row(theme.fg("text", text))), frame("╰", "", "╯")];
+      const content = wrapped.slice(offset, offset + viewport).map(line => theme.fg("text", line));
+      const statusColor = (item: ChildSnapshot): "error" | "warning" | "success" | "accent" => item.status === "failed" ? "error" : item.status === "cancelled" ? "warning" : item.status === "settled" ? "success" : "accent";
+      const selectedLabel = child ? `${child.id.slice(0, 8)} #${child.generation} · ${child.profile} · ${child.status}${historical(child) ? " · history" : ""}` : "No selection";
+      const viewLabel = `${tab.toUpperCase()} · Tab: ${tab === "thread" ? "details" : tab === "details" ? "tools" : "thread"}`;
+      const position = `${offset + 1}–${Math.min(wrapped.length, offset + viewport)}/${wrapped.length} lines${offset + viewport < wrapped.length ? " · more ↓" : ""}`;
+      const pane: string[] = [];
+      if (wide) {
+        const slots = Math.max(1, Math.floor((paneHeight - 2) / 3));
+        const start = Math.max(0, index - slots + 1);
+        const left = [theme.fg("accent", `AGENTS · ${children.length} generations`), ...children.slice(start, start + slots).flatMap(item => [
+          theme.fg(identity(item) === selected ? "accent" : "text", `${identity(item) === selected ? ">" : " "} ${" ".repeat(Math.min(4, Math.max(0, item.depth - 1)))}└ ${item.id.slice(0, 8)} #${item.generation}${historical(item) ? " · history" : ""}`),
+          theme.fg(statusColor(item), `  ${item.profile} · ${item.status}`),
+          theme.fg("muted", "  " + lineText(item.assignment)),
+        ])];
+        const right = [theme.fg("accent", lineText(selectedLabel)), theme.fg("muted", viewLabel), ...content];
+        const cell = (text: string, columns: number) => { const clipped = truncateToWidth(text, columns); return clipped + " ".repeat(Math.max(0, columns - visibleWidth(clipped))); };
+        for (let index = 0; index < paneHeight; index++) pane.push(cell(index === paneHeight - 1 ? theme.fg("muted", `${children.length ? start + 1 : 0}–${Math.min(children.length, start + slots)}/${children.length} · ↑↓ select`) : left[index] ?? "", leftWidth) +
+          theme.fg("border", " │ ") + cell(index === paneHeight - 1 ? theme.fg("muted", position) : right[index] ?? "", threadWidth));
+      } else {
+        pane.push(theme.fg("accent", child ? `> └ ${child.id.slice(0, 8)} #${child.generation} · ${index + 1}/${children.length}` : "No selection"));
+        if (paneHeight > 1) pane.push(theme.fg(child ? statusColor(child) : "muted", `${viewLabel}${child ? ` · ${child.status}` : ""}`));
+        if (paneHeight > 2) pane.push(...content.slice(0, paneHeight - 3), ...Array(Math.max(0, paneHeight - 3 - content.length)).fill(""), theme.fg("muted", position));
+      }
+      return [frame("╭", " Fleet / Agent Hub ", "╮"), ...pane.slice(0, height - 2).map(row), ...shownFooter.map(row), frame("╰", "", "╯")];
     },
     handleInput(data) {
       if (keybindings.matches(data, "tui.select.cancel")) {
@@ -223,7 +274,11 @@ export function createHub(
         return;
       }
       if (mode === "stop") {
-        if (data === "y") { if (interactionTarget) void control(interactionTarget); interactionTarget = undefined; mode = "browse"; }
+        if (data === "y") {
+          if (interactionTarget && !canSubmitInteraction()) return;
+          if (interactionTarget) void control(interactionTarget);
+          interactionTarget = undefined; mode = "browse";
+        }
         refresh(); return;
       }
       if (keybindings.matches(data, "tui.select.confirm")) { done(); return; }
@@ -237,8 +292,12 @@ export function createHub(
       else if (keybindings.matches(data, "tui.select.pageDown")) offset += viewport;
       else if (matchesKey(data, "home")) offset = 0;
       else if (matchesKey(data, "end")) offset = Number.MAX_SAFE_INTEGER;
-      else if (matchesKey(data, "tab")) { tab = tab === "inspector" ? "transcript" : tab === "transcript" ? "tools" : "inspector"; offset = 0; }
-      else if (data === "/") { mode = "search"; input.setValue(query); }
+      else if (matchesKey(data, "tab")) { tab = tab === "thread" ? "details" : tab === "details" ? "tools" : "thread"; offset = 0; }
+      else if (data === "/") {
+        mode = "search"; input.setValue(query);
+        // Native Input.setValue preserves its old cursor; a saved filter starts editing at its end.
+        input.handleInput("\x1b[F");
+      }
       else if (["w", "p", "f", "r"].includes(data)) {
         const child = selection();
         if (!child) notice = "Select an identity first";
@@ -249,8 +308,8 @@ export function createHub(
       }
       else if (data === "s" || data === "x" || data === "m") {
         const child = selection();
-        if (child && !child.disposed && (data === "x" || child.status === "running")) { mode = data === "s" ? "steer" : data === "m" ? "message" : "stop"; interactionTarget = {id: child.id, generation: child.generation}; input.setValue(""); }
-        else notice = "Controls unavailable: historical/disposed target, or task not running (stop accepts queued/setup/draining)";
+        if (child && !child.disposed && child.status !== "draining" && (data === "x" || child.status === "running")) { mode = data === "s" ? "steer" : data === "m" ? "message" : "stop"; interactionTarget = {id: child.id, generation: child.generation}; interactionVisibleAtHeight = undefined; input.setValue(""); }
+        else notice = "Controls unavailable: historical/disposed target, or task not running (stop accepts queued/setup/running)";
       }
       refresh();
     },

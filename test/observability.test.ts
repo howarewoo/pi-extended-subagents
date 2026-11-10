@@ -85,7 +85,7 @@ test("real SDK Hub stop keeps leased writer draining and queue transcript empty 
     assert.equal(f.coordinator.snapshot(second)!.status, "queued");
     assert.deepEqual(f.coordinator.messages(second), []);
     assert.equal(f.coordinator.snapshot(second)!.transcript, undefined);
-    render(); hub.handleInput!("x"); hub.handleInput!("y");
+    render(); hub.handleInput!("x"); assert.match(render(), new RegExp(`Target: ${first.id} #${first.generation}`)); hub.handleInput!("y");
     await eventually(() => f.coordinator.snapshot(first)!.status === "draining");
     assert.equal(f.coordinator.snapshot(first)!.disposed, false);
     assert.equal(f.coordinator.snapshot(first)!.endedAt, null);
@@ -122,9 +122,13 @@ test("real SDK selected generation retains full outcomes/transcript/artifacts ac
     await f.coordinator.wait(next);
     assert.match(render(), new RegExp(`> └ ${ref.id.slice(0, 8)} #1`));
     hub.handleInput!("\x1b[F");
-    assert.match(render(), /structured original/); assert.match(render(), /structured.json/);
-    hub.handleInput!("\t"); hub.handleInput!("\x1b[F");
+    assert.match(render(), /structured original/);
     assert.match(render(), /final original/); assert.doesNotMatch(render(), /final successor/);
+    hub.handleInput!("\t");
+    const detailsStart = render(); hub.handleInput!("\x1b[F");
+    const details = detailsStart + render();
+    assert.match(details, /structured.json/); assert.match(details, /Effective builtin tools: read/);
+    assert.match(details, /Direct requests/);
     assert.deepEqual(f.coordinator.messages(ref), messages);
     const detached = f.coordinator.messages(ref); detached.length = 0;
     assert.deepEqual(f.coordinator.messages(ref), messages, "readonly projection must be detached");

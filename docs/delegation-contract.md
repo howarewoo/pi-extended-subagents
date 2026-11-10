@@ -175,12 +175,12 @@ The joined fleet widget, ordered single/batch result cards and `/task-hub` consu
 
 | Capability | Supported surface / precise restriction |
 | --- | --- |
-| Fleet/roster/tree/history, physical model/effort/prewalk, limits, schema validation/value/artifacts, direct usage | Persistent widget + native cards + Hub inspector/transcript/tools. Current fleet counts exclude old generations; history rows remain individually selectable. |
-| Filter/search and scrolling | `/` searches roster content including result/progress, not a filesystem or full-transcript search engine. Tab views; PgUp/PgDn/Home/End detail scroll. |
+| Fleet/roster/tree/history, physical model/effort/prewalk, limits, schema validation/value/artifacts, direct usage | Persistent widget + native cards + Hub thread/details/tools. Wide Hub: capped left generation roster, dominant right thread; compact Hub: selected-generation header and full-width thread. Current fleet counts exclude old generations; history rows remain individually selectable. |
+| Filter/search and scrolling | `/` searches roster content including result/progress, not a filesystem or full-transcript search engine. Tab cycles thread/details/tools (thread default); PgUp/PgDn/Home/End scroll the active readonly view independently of the roster. Prefilled filters start editing at the end using public native Input handling. |
 | Steering | Hub `s` or `/task-steer`, original UUID+generation, running only. Public SDK queued/handled is not model acknowledgment. |
 | Root inbox message | Hub `m` → existing root `message` authority, bounded native mailbox; receipt shows actual state, never model acknowledgment. Model tool additionally supports steer/followUp modes, inbox consumption and receipt waits. |
 | Outcome wait | Hub `w` → native event wait with explicit 1000ms bound; native tool supports 1–60000ms outcome/inbox/receipt waits with existing deadlock/refusal rules. |
-| Stop subtree | Hub `x` → pinned target → `y` confirmation → existing stop/drain, retaining capacity/writer until disposal. Queued/setup/running/draining supported; historical/disposed UI targets refuse. `/task-stop` and native root stop retain existing semantics. |
+| Stop subtree | Hub `x` → pinned target → `y` confirmation → existing stop/drain, retaining capacity/writer until disposal. Queued/setup/running UI targets supported; historical/draining/disposed UI targets refuse, including transitions during pinned input. `/task-stop` and native root stop retain existing semantics. |
 | Park | Hub `p` or native root tool; only disposed idle current identity with valid original parent. No warm SDK retained. |
 | Followup/revive | **Native model-issued `delegate_coordinate` only**, fresh session/generation/current narrowed authority, exact active original parent for descendants. Hub command context lacks `tools/executeTool`: it cannot safely start a generation; f/r only explain refusal, allocate nothing and dispatch nothing. |
 | Child coordination/spawn/model authority | Still operator default-off and project/request/ancestor subset-only; the UI cannot mint grants or impersonate a child. |
