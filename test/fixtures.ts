@@ -9,11 +9,11 @@ import extension from "../src/extension.ts";
 import { DelegationCoordinator, type RegistryEvent } from "../src/coordinator.ts";
 import { resolveProfile } from "../src/profiles.ts";
 
-export async function fixture(t: TestContext, options: { speed?: number; extra?: ExtensionFactory; response?: FauxResponseFactory } = {}) {
+export async function fixture(t: TestContext, options: { speed?: number; tokenSize?: { min: number; max: number }; extra?: ExtensionFactory; response?: FauxResponseFactory } = {}) {
   const root = await mkdtemp(join(tmpdir(), "delegation-test-"));
   const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = join(root, "operator");
-  const model = fauxProvider({ provider: "delegation-controlled", tokensPerSecond: options.speed ?? 10000, tokenSize: { min: 1, max: 1 } });
+  const model = fauxProvider({ provider: "delegation-controlled", tokensPerSecond: options.speed ?? 10000, tokenSize: options.tokenSize ?? { min: 1, max: 1 } });
   const respond: FauxResponseFactory = (context, opts, state, selected) => {
     model.appendResponses([respond]);
     if (options.response) return options.response(context, opts, state, selected);

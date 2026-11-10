@@ -12,39 +12,82 @@ const text = (context: Parameters<import("@earendil-works/pi-ai").FauxResponseFa
   return typeof user?.content === "string" ? user.content : user?.content.filter(block => block.type === "text").map(block => block.text).join("") ?? "";
 };
 
-test("aborted active parent-dispatched tool drains before writer lease or scheduler permit release", { timeout: 10000 }, async t => {
+for (const cancellation of ["stop", "deadline"] as const) test(`aborted active parent-dispatched tool drains before writer lease or scheduler permit release (${cancellation})`, { timeout: 10000 }, async t => {
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
-  let entered = false;
-  const f = await fixture(t, { extra: pi => {
+  let markEntered!: () => void;
+  const entered = new Promise<void>(resolve => { markEntered = resolve; });
+  let markDraining!: () => void;
+  const draining = new Promise<void>(resolve => { markDraining = resolve; });
+  let markCompleted!: () => void;
+  const completed = new Promise<void>(resolve => { markCompleted = resolve; });
+  const latest = new Map<string, ChildSnapshot>();
+  const timeline: string[] = [];
+  let hookOwner: ChildSnapshot | undefined;
+  let hookCallId: string | undefined;
+  const f = await fixture(t, { speed: 0, extra: pi => {
+    pi.events.on("delegation:registry", data => {
+      const child = (data as import("../src/coordinator.ts").RegistryEvent).child;
+      latest.set(child.assignment, child);
+      if (child.assignment === "first" && child.status === "draining") markDraining();
+      if (child.disposed) timeline.push(`${child.id}:disposed`);
+      if (child.assignment === "second" && child.disposed) markCompleted();
+    });
     pi.on("tool_call", async event => {
-      if (event.toolName === "write" && !entered) { entered = true; await gate; }
+      if (event.toolName !== "write") return;
+      timeline.push(`${String(event.input.path)}:hook`);
+      // Pin the gate to the designated first task, never a later writer.
+      if (event.input.path === "first.txt") {
+        hookOwner = latest.get("first");
+        hookCallId = event.toolCallId;
+        markEntered();
+        await gate;
+      }
     });
   }, response: context => {
     const assignment = text(context);
     if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
     return fauxAssistantMessage(fauxToolCall(assignment.startsWith("LAUNCH ") ? "delegate_task" : "write", assignment.startsWith("LAUNCH ") ? JSON.parse(assignment.slice(7)) : { path: assignment + ".txt", content: "written" }), { stopReason: "toolUse" });
   } });
+  await mkdir(join(f.root, "operator"), { recursive: true });
+  await writeFile(join(f.root, "operator", "delegation.json"), JSON.stringify({ scheduling: { concurrency: 1 } }));
+  // Native timers advance the admission deadline only after actual hook entry.
+  // Controlled provider speed=0 uses microtasks, so no streaming timer is hidden.
+  if (cancellation === "deadline") t.mock.timers.enable({ apis: ["setTimeout"] });
+  let stopping: Promise<void> | undefined;
+  let stopReturned = false;
   try {
     await f.session.prompt("LAUNCH " + JSON.stringify({ background: true, tasks: [
-      { assignment: "first", profile: "implementation", limits: { deadlineMs: 100 } },
+      { assignment: "first", profile: "implementation", ...(cancellation === "deadline" ? { limits: { deadlineMs: 100 } } : {}) },
       { assignment: "second", profile: "implementation" },
     ] }));
     const result = f.session.messages.find(message => message.role === "toolResult" && message.toolName === "delegate_task");
     assert.ok(result?.role === "toolResult");
     const refs = (result.details as { children: ChildSnapshot[] }).children;
-    await eventually(() => entered && f.events.some(event => event.child.id === refs[0].id && event.child.status === "draining"));
-    const first = f.events.filter(event => event.child.id === refs[0].id).at(-1)!.child;
+    await entered;
+    assert.equal(hookOwner?.id, refs[0].id, "held permission call belongs to first UUID");
+    assert.equal(hookOwner.status, "running");
+    assert.ok(hookCallId?.includes("/"), "actual public parent-dispatched nested tool call");
+    if (cancellation === "stop") stopping = f.session.prompt(`/task-stop ${refs[0].id} ${refs[0].generation}`).then(() => { stopReturned = true; });
+    else t.mock.timers.tick(100);
+    await draining;
+    const first = latest.get("first")!;
+    assert.equal(first.id, refs[0].id);
     assert.equal(first.disposed, false);
     assert.equal(first.writerLease, true);
-    assert.equal(f.events.filter(event => event.child.id === refs[1].id).at(-1)!.child.status, "queued");
+    assert.equal(first.limitReason, cancellation === "deadline" ? "deadline" : undefined);
+    assert.equal(stopReturned, false, "stop cannot acknowledge completion before permission drain");
+    assert.equal(latest.get("second")!.status, "queued");
+    assert.deepEqual(timeline, ["first.txt:hook"], "neither disposal nor later hook can precede release");
     release();
-    await eventually(() => f.events.some(event => event.child.id === refs[1].id && event.child.disposed));
+    await stopping;
+    await completed;
     const disposed = f.events.filter(event => event.child.disposed).map(event => event.child);
     assert.deepEqual(disposed.map(state => state.status), ["cancelled", "settled"]);
+    assert.deepEqual(timeline, ["first.txt:hook", `${refs[0].id}:disposed`, "second.txt:hook", `${refs[1].id}:disposed`]);
     assert.match(await readFile(disposed[1].transcript!, "utf8"), /written/);
     assert.equal(await readFile(join(f.root, "second.txt"), "utf8"), "written");
-  } finally { release(); }
+  } finally { release(); await stopping; }
 });
 
 test("root writer admission queues while the current writer's forwarded write is in flight", { timeout: 10000 }, async t => {

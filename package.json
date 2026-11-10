@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "exercise": "node examples/sdk-exercise.ts"
   },
+  "dependencies": { "@earendil-works/pi-schema": "1.5.2" },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*",

@@ -1,8 +1,10 @@
+import { clippedText } from "./outcomes.ts";
+import { readTaskInput } from "./task-input.ts";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { truncateHead, type ExtensionToolContext, type ToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveScheduling } from "./scheduling.ts";
-import { DelegationCoordinator, type ChildRef, type ChildSnapshot } from "./coordinator.ts";
+import { DelegationCoordinator, type ChildRef, type ChildSnapshot, type StartTask } from "./coordinator.ts";
 import { READ_TOOLS, resolveProfile, bundledProfiles } from "./profiles.ts";
 import { createChildWidget, createHub } from "./hub.ts";
 
@@ -17,8 +19,16 @@ export default function delegation(pi: ExtensionAPI) {
     return { id, generation: Number(generation) };
   };
   const preview = (value: unknown, transcript?: string) => {
-    const clipped = truncateHead(JSON.stringify(value, null, 2));
-    return `${transcript ? `Transcript: ${transcript}\n` : ""}${clipped.content}${clipped.truncated ? "\n[Preview truncated; inspect the retained transcript or request task-status for one identity]" : ""}`;
+    const snapshots = (Array.isArray(value) ? value : [value]).filter((item): item is ChildSnapshot => !!item && typeof item === "object" && "id" in item && "generation" in item && "status" in item);
+    const references = snapshots.map(state => ({ id: state.id, generation: state.generation, status: state.status,
+      transcript: state.transcript, artifacts: state.artifacts }));
+    const text = JSON.stringify(value, (key, item) => {
+      if (["result", "assignment", "activity", "progress", "error"].includes(key) && typeof item === "string") return clippedText(item);
+      if (key === "value") return clippedText(JSON.stringify(item));
+      return item;
+    }, 2);
+    const clipped = truncateHead((references.length ? `References: ${JSON.stringify(references)}\n` : transcript ? `Transcript: ${transcript}\n` : "") + text);
+    return `${clipped.content}${clipped.truncated ? "\n[Preview truncated; inspect full artifact/transcript references or task-status for one identity]" : ""}`;
   };
   const show = (value: unknown, transcript?: string) => pi.sendMessage({ customType: "delegation", content: preview(value, transcript), display: true });
   pi.on("session_start", (_event, ctx) => {
@@ -53,7 +63,7 @@ export default function delegation(pi: ExtensionAPI) {
   };
   const role = Type.Union([Type.Literal("general"), Type.Literal("scout"), Type.Literal("review"), Type.Literal("implementation")]);
   const limits = Type.Object({ depth: Type.Optional(Type.Integer({ minimum: 0 })), spawns: Type.Optional(Type.Integer({ minimum: 0 })), deadlineMs: Type.Optional(Type.Integer({ minimum: 1 })), requests: Type.Optional(Type.Integer({ minimum: 1 })), tools: Type.Optional(Type.Integer({ minimum: 1 })) }, { additionalProperties: false });
-  const assignment = { assignment: Type.String({ minLength: 1 }), profile: role, spawn: Type.Optional(Type.Array(role)), limits: Type.Optional(limits) };
+  const assignment = { assignment: Type.Optional(Type.String({ minLength: 1 })), taskFile: Type.Optional(Type.String({ minLength: 1 })), resultSchema: Type.Optional(Type.Unknown()), profile: role, spawn: Type.Optional(Type.Array(role)), limits: Type.Optional(limits) };
   const item = Type.Object(assignment, { additionalProperties: false });
   const parameters = Type.Union([
     Type.Object({ ...assignment, background: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
@@ -61,7 +71,7 @@ export default function delegation(pi: ExtensionAPI) {
   ]);
   const taskTool = (parent?: ChildRef, rootContext?: ExtensionToolContext, rootCallerId?: string): ToolDefinition<typeof parameters> => ({
     name: "delegate_task", label: "Delegate task", exposure: "model-only",
-    description: "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model. Bounded FIFO capacity; implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits; background delivers one final batch message. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Preview 50KB/2000 lines; actual transcripts retained.",
+    description: "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model. Bounded FIFO capacity; implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits; background delivers one final batch message. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
     parameters,
     async execute(callerId, args, signal, onUpdate, localContext) {
       const ctx = rootContext ?? localContext;
@@ -70,16 +80,23 @@ export default function delegation(pi: ExtensionAPI) {
       const policy = await resolveScheduling(ctx.cwd, ctx.isProjectTrusted());
       owner.configure(policy);
       const items = "tasks" in args ? args.tasks : [args];
-      const inputs = await Promise.all(items.map(async task => {
+      const inputs: StartTask[] = [];
+      for (const task of items) {
+        if ((task.assignment === undefined) === (task.taskFile === undefined)) throw new Error("Supply exactly one of assignment or taskFile");
         let { profile, skills } = await resolveProfile(task.profile, ctx.cwd, ctx.isProjectTrusted());
         if (task.spawn) {
           if (task.spawn.some(role => !profile.spawn?.includes(role))) throw new Error("Request cannot mint spawn grants");
           profile = { ...profile, spawn: task.spawn };
         }
         assertTools(profile.tools);
-        return { assignment: task.assignment, profile, skills, context: ctx, callerId: rootCallerId ?? callerId, parent, limits: task.limits,
-          nestedTool: (ref: ChildRef) => taskTool(ref, ctx, rootCallerId ?? callerId) };
-      }));
+        let text = task.assignment;
+        if (task.taskFile !== undefined) {
+          assertTools(["read"]);
+          text = await readTaskInput(task.taskFile, ctx, signal, parent ? () => owner.taskInputRead(parent) : undefined);
+        }
+        inputs.push({ assignment: text!, resultSchema: task.resultSchema, profile, skills, context: ctx, callerId: rootCallerId ?? callerId, parent, limits: task.limits,
+          nestedTool: (ref: ChildRef) => taskTool(ref, ctx, rootCallerId ?? callerId) });
+      }
       signal?.throwIfAborted();
       const children = owner.admit(inputs);
       const stop = () => owner.stopMany(children);

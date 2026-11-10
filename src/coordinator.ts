@@ -5,6 +5,8 @@ import {
   createAgentSession, createExtensionRuntime, SessionManager, SettingsManager,
   type AgentSession, type AgentSessionEvent, type ExtensionToolContext, type ResourceLoader, type Skill, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { resultValidator, submissionParameters, saveOutcomeArtifact, type StructuredOutcome } from "./outcomes.ts";
+import type { Validator } from "@earendil-works/pi-schema";
 import { parentModelRuntime } from "./model-adapter.ts";
 import { DEFAULT_POLICY, narrowLimits, validatePolicy, type ExecutionLimits, type SchedulingPolicy } from "./scheduling.ts";
 import { isWriter, READ_TOOLS, type Profile } from "./profiles.ts";
@@ -26,14 +28,16 @@ export type ChildSnapshot = Readonly<ChildRef & {
   model: { provider: string; id: string };
   effort: string | null;
   telemetry: { requests: number | null; tokens: ReturnType<AgentSession["getSessionStats"]>["tokens"] | null; cost: number | null; context: ReturnType<AgentSession["getContextUsage"]> | null };
+  outcome?: StructuredOutcome;
+  artifacts?: { text?: string; structured?: string; error?: string };
   error?: string;
   transcript?: string;
   disposed: boolean;
 }>;
 export type RegistryEvent = Readonly<{ type: "changed" | "sdk"; child: ChildSnapshot; event?: AgentSessionEvent }>;
-export type StartTask = { assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; nestedTool?: (parent: ChildRef) => ToolDefinition };
+export type StartTask = { resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; nestedTool?: (parent: ChildRef) => ToolDefinition };
 type ChildSelection = Pick<ExtensionToolContext, "model" | "modelRegistry" | "scopedModels" | "thinkingLevel" | "cwd">;
-type Entry = { input: StartTask; selection: ChildSelection; done: Promise<void>; finish: () => void; timer?: ReturnType<typeof setTimeout>; spawned: number; state: ChildSnapshot; setup?: Promise<void>; run?: Promise<void>; session?: AgentSession; unsubscribe?: () => void; cancelled: boolean; callerId: string };
+type Entry = { validator?: Validator; input: StartTask; selection: ChildSelection; done: Promise<void>; finish: () => void; timer?: ReturnType<typeof setTimeout>; spawned: number; state: ChildSnapshot; setup?: Promise<void>; run?: Promise<void>; session?: AgentSession; unsubscribe?: () => void; cancelled: boolean; callerId: string };
 
 export function childResources(prompt: string, skills: Skill[] = []): ResourceLoader {
   const extensions = { extensions: [], errors: [], runtime: createExtensionRuntime() };
@@ -116,6 +120,7 @@ export class DelegationCoordinator {
   admit(inputs: StartTask[]): ChildRef[] {
     if (!inputs.length || inputs.length > this.policy.batch) throw new Error("Batch size limit");
     const selections = inputs.map(input => this.validate(input));
+    const validators = inputs.map(input => input.resultSchema === undefined ? undefined : resultValidator(input.resultSchema));
     const limits = inputs.map(input => {
       const maximum: ExecutionLimits = { deadlineMs: this.policy.deadlineMs, requests: this.policy.requests,
         tools: this.policy.tools, depth: this.policy.depth, spawns: this.policy.spawns };
@@ -148,10 +153,11 @@ export class DelegationCoordinator {
       const selection = selections[index];
       let finish!: () => void;
       const done = new Promise<void>(resolve => { finish = resolve; });
-      const entry: Entry = { input, selection, done, finish, spawned: 0, cancelled: false, callerId: input.callerId, state: {
+      const entry: Entry = { validator: validators[index], input, selection, done, finish, spawned: 0, cancelled: false, callerId: input.callerId, state: {
         id: randomUUID(), generation: 1, parentId: input.parent?.id ?? this.parentId,
         depth: input.parent ? this.entry(input.parent).state.depth + 1 : 1,
         status: "queued", writerLease: false, limits: limits[index], toolCalls: 0, profile: input.profile.name,
+        outcome: validators[index] ? { validation: "awaiting", attempts: 0, errors: [], finalized: false } : undefined,
         assignment: input.assignment, activity: "Queued for capacity / writer admission", progress: "", result: "", disposed: false,
         model: { provider: selection.model!.provider, id: selection.model!.id }, effort: selection.thinkingLevel ?? null,
         telemetry: { requests: null, tokens: null, cost: null, context: null },
@@ -193,8 +199,11 @@ export class DelegationCoordinator {
   }
   private async create(entry: Entry, input: StartTask, selection: ChildSelection): Promise<void> {
     try {
-      const agentDir = join(this.root, entry.state.id, "agent");
-      await mkdir(agentDir, { recursive: true });
+      await mkdir(this.root, { recursive: true });
+      const taskDir = join(this.root, entry.state.id);
+      await mkdir(taskDir); // exclusive ownership: never reuse an existing task record
+      const agentDir = join(taskDir, "agent");
+      await mkdir(agentDir);
       const runtime = await parentModelRuntime(selection, agentDir, () => {
         if (entry.cancelled || this.closing) throw new Error("Delegation cancelled");
         if ((entry.state.telemetry.requests ?? 0) >= entry.state.limits.requests) { this.limit(entry, "requests"); throw new Error("Direct request limit"); }
@@ -211,6 +220,28 @@ export class DelegationCoordinator {
             return { ...outcome.result, isError: outcome.isError };
           } };
       });
+      if (entry.validator) {
+        const submission: ToolDefinition<typeof submissionParameters> = {
+          name: "submit_result", label: "Submit result", exposure: "model-only",
+          description: `Submit the assignment's required structured JSON value exactly once. Invalid values return errors and can be corrected within normal limits. Submission is provisional until prompt/tools/descendants drain; it never overrides cancellation or failure. Required schema: ${JSON.stringify(input.resultSchema)}`,
+          parameters: submissionParameters,
+          execute: async (_id, args, signal) => {
+            signal?.throwIfAborted();
+            if (entry.cancelled || this.closing || entry.state.disposed || entry.state.status !== "running") throw new Error("Submission identity is no longer running");
+            const outcome = entry.state.outcome!;
+            if (outcome.validation === "submitted") throw new Error("A result was already submitted; duplicate submission rejected");
+            const checked = entry.validator!.validate(args.value);
+            if (!checked.ok) {
+              const errors = checked.errors.map(error => `${error.path || "/"}: ${error.message}`).slice(0, 32);
+              this.update(entry, { outcome: { validation: "invalid", attempts: outcome.attempts + 1, errors, finalized: false } });
+              throw new Error("Invalid structured result; correct and resubmit: " + errors.join("; "));
+            }
+            this.update(entry, { outcome: { validation: "submitted", attempts: outcome.attempts + 1, errors: [], value: structuredClone(args.value), finalized: false } });
+            return { content: [{ type: "text", text: "Structured value submitted; final outcome awaits prompt/tool/descendant drain." }], details: {} };
+          },
+        };
+        tools.push(submission);
+      }
       if (input.profile.spawn?.length && input.nestedTool) tools.push(input.nestedTool(entry.state));
       for (const tool of tools) {
         const execute = tool.execute;
@@ -224,7 +255,7 @@ export class DelegationCoordinator {
       const { session, modelFallbackMessage } = await createAgentSession({
         cwd: selection.cwd, agentDir, modelRuntime: runtime, model: selection.model,
         thinkingLevel: selection.thinkingLevel, scopedModels: [{ model: selection.model!, thinkingLevel: selection.thinkingLevel }],
-        resourceLoader: childResources(input.profile.prompt, input.skills), tools: tools.map(tool => tool.name), customTools: tools,
+        resourceLoader: childResources(input.profile.prompt + (entry.validator ? "\nThis assignment requires a structured result. Call submit_result with the actual value; final prose is not a submission." : ""), input.skills), tools: tools.map(tool => tool.name), customTools: tools,
         settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
         sessionManager: SessionManager.create(selection.cwd, join(this.root, entry.state.id, "transcripts")),
       });
@@ -253,10 +284,20 @@ export class DelegationCoordinator {
         const last = session.messages.filter(message => message.role === "assistant").at(-1);
         const failed = !last || last.stopReason === "error";
         const stats = session.getSessionStats();
+        this.update(entry, { status: "draining", activity: "Finalizing outcome artifacts" });
+        const result = session.getLastAssistantText() ?? "";
+        const artifacts: NonNullable<ChildSnapshot["artifacts"]> = {};
+        try {
+          artifacts.text = await saveOutcomeArtifact(taskDir, "result.txt", last?.content.filter(block => block.type === "text").map(block => block.text).join("") ?? "");
+          if (entry.state.outcome?.validation === "submitted") artifacts.structured = await saveOutcomeArtifact(taskDir, "structured.json", JSON.stringify(entry.state.outcome.value));
+        } catch (error) { artifacts.error = `Outcome artifact persistence failed: ${String(error)}`; }
+        const missing = entry.validator && entry.state.outcome?.validation !== "submitted";
         this.update(entry, {
-          status: entry.cancelled || last?.stopReason === "aborted" ? "cancelled" : failed ? "failed" : "settled",
-          result: session.getLastAssistantText() ?? "",
-          error: entry.state.limitReason ? entry.state.error : failed ? last?.errorMessage ?? "No final assistant outcome" : undefined,
+          artifacts,
+          outcome: entry.state.outcome ? { ...entry.state.outcome, finalized: true } : undefined,
+          status: entry.cancelled || last?.stopReason === "aborted" ? "cancelled" : failed || missing || artifacts.error ? "failed" : "settled",
+          result,
+          error: entry.state.limitReason ? entry.state.error : failed ? last?.errorMessage ?? "No final assistant outcome" : missing ? "Required structured result was not submitted successfully" : artifacts.error,
           activity: "Prompt completed",
           telemetry: { requests: entry.state.telemetry.requests, tokens: stats.assistantMessages ? stats.tokens : null,
             cost: stats.assistantMessages ? stats.cost : null, context: session.getContextUsage() ?? null },
@@ -279,9 +320,15 @@ export class DelegationCoordinator {
     clearTimeout(entry.timer);
     entry.unsubscribe?.(); entry.session?.dispose();
     if (this.writer === entry.state.id) this.writer = undefined;
-    this.update(entry, { disposed: true, writerLease: false });
+    this.update(entry, { disposed: true, writerLease: false, outcome: entry.state.outcome ? { ...entry.state.outcome, finalized: true } : undefined });
     entry.finish();
     this.pump();
+  }
+  taskInputRead(ref: ChildRef): void {
+    const entry = this.entry(ref);
+    if (entry.cancelled || entry.state.disposed || this.closing || !entry.input.profile.tools.includes("read")) throw new Error("Delegating parent has no active read grant");
+    if (entry.state.toolCalls >= entry.state.limits.tools) { this.limit(entry, "tools"); throw new Error("Tool call limit"); }
+    this.update(entry, { toolCalls: entry.state.toolCalls + 1 });
   }
   async steer(ref: ChildRef, text: string): Promise<"queued" | "handled"> {
     const entry = this.entry(ref);

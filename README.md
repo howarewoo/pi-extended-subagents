@@ -51,6 +51,20 @@ Foreground returns final state/text once. With `background:true`, the tool retur
 
 Steering queues after the current assistant/tool turn. Stop aborts and drains work, preserving its transcript. `/task-hub` observes the **latest task only**, is TUI-only and closes with configured Enter/Escape keys. Closing the view never stops execution. The compact widget retains that latest task's real state/activity; `/task-status` lists all entries. The existing opaque neutral, theme-adaptive surface is retained. This is not the planned roster/tree/transcript Hub.
 
+### File instructions, validated results and full output
+
+Each item may use `taskFile` **instead of** `assignment`, and may independently require a supported `resultSchema`:
+
+```json
+{"taskFile":"tasks/review.txt","profile":"review","resultSchema":{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}}
+```
+
+Task paths are explicit non-hidden workspace-relative regular UTF-8 files (1–50000 bytes, no traversal/escaping symlinks or `node_modules`). Hidden/`node_modules` exclusions apply to both the supplied path and resolved target; ordinary aliases to allowed in-workspace files remain supported. The actual parent builtin read dispatcher and permission hooks obtain the text; empty/denied/truncated/binary reads reject the whole batch before any child setup. Files contain task text, **never authority**. Do not change them during preflight; the public read API does not provide an atomic filesystem sandbox. Nested reads still require the ancestor's read grant/budget.
+
+Schema-required children must call their child-local **`submit_result({value:...})`**. Actual values are validated strictly with native Pi validation; final prose is not parsed as a result. Invalid submissions provide errors and can be corrected within normal limits. A valid submission is provisional until all work drains, cannot be replaced, and never overrides cancellation/provider failure. Missing/invalid required submissions fail visibly. Ordinary tasks need no schema. The [contract](docs/delegation-contract.md#required-structured-results) defines the deliberately finite, no-ref/no-regex supported schema subset.
+
+New completed prompts retain exact last-assistant text in `result.txt` and any accepted value in `structured.json` alongside their SDK transcript. Snapshot `outcome` and `artifacts` distinguish submission/validation, terminal status and available full paths. Previews explicitly truncate large fields; tool details retain full detached snapshots. Persistence failures are errors, never successful full-output claims. Failed/cancelled output may be retained as evidence, not success. Treat these sensitive files like transcripts; no external logging/upload or historical migration is performed.
+
 ### Shared-writer scope: model tools only
 
 The coordinator enforces one child writer against parent model-tool `bash`/`edit`/`write` and unknown tools, including in-flight parent mutations. Batch/root child writers queue and serialize; a conflicting parent model tool fails visibly. An already in-flight parent mutation rejects writer admission before any new launch. Read-only children may coexist within capacity. The implementation widget/overlay warns while a writer is active.
@@ -114,8 +128,10 @@ New transcripts are stored under the parent session directory:
 delegation/<parent-session-id>/<task-id>/
   agent/                     # scoped child runtime cache location, no copied credentials
   transcripts/<new-id>.jsonl # actual SDK messages/tool results
+  result.txt                 # complete last-assistant text after drain (when referenced)
+  structured.json            # accepted JSON value, if supplied (when referenced)
 ```
 
 Old `extended-subagents-proof` data is left untouched and is not loaded or migrated. New artifacts may contain sensitive assignment, tool and model output; treat them like parent transcripts. There is no retention, recovery, cross-parent revival or generalized artifact service. Parent shutdown/reload aborts, drains and disposes all children. SDK hosts must bind extensions and emit shutdown through the public lifecycle; bare `session.dispose()` is not a substitute for host shutdown dispatch. Abrupt process death cannot run cleanup hooks.
 
-Not implemented: structured yield, peer messaging/wait, parking/revival, isolation/apply, advisor/prewalk/probes/speculation/workpool, executable extension/MCP grants, or the full roster/tree/transcript UI. No live provider inference, credential changes, global Pi installation/config changes or retained-data migration were performed during verification.
+Not implemented: peer messaging/wait, parking/revival, isolation/apply, advisor/prewalk/probes/speculation/workpool, executable extension/MCP grants, or the full roster/tree/transcript UI. No live provider inference, credential changes, global Pi installation/config changes or retained-data migration were performed during verification.

@@ -4,23 +4,52 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentSession, DefaultResourceLoader, initTheme, ModelRuntime, SessionManager, SettingsManager,
-  type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+  type AgentSession, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { fauxProvider, fauxAssistantMessage, fauxToolCall, InMemoryCredentialStore, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { colorToRgb, indexedColor, rgbColor, ProcessTerminal, TuiMainScreen, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import extension from "../src/extension.ts";
 import { createHub } from "../src/hub.ts";
-import { DelegationCoordinator } from "../src/coordinator.ts";
+import { DelegationCoordinator, type RegistryEvent } from "../src/coordinator.ts";
 
 test("real extension widget lifecycle and neutral Hub surfaces for native dark/light and tinted custom palettes", { timeout: 15000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), "extended-subagents-widget-"));
   const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = join(root, "operator");
-  t.after(() => { if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir; });
-  t.after(() => rm(root, { recursive: true, force: true }));
+  let session: AgentSession | undefined;
+  t.after(async () => {
+    try {
+      if (session) {
+        await session.abort();
+        await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      }
+    } finally {
+      session?.dispose();
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  let markRunning!: () => void;
+  let markDelta!: () => void;
+  let running = new Promise<void>(resolve => { markRunning = resolve; });
+  let delta = new Promise<void>(resolve => { markDelta = resolve; });
+  let rendersAtStart = 0;
+  let rendersAtDelta = 0;
+  let renders = 0;
+  const events: RegistryEvent[] = [];
   const settings = SettingsManager.inMemory();
   const loader = new DefaultResourceLoader({ cwd: root, agentDir: join(root, "agent"), settingsManager: settings,
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-    extensionFactories: [extension] });
+    extensionFactories: [extension, pi => {
+      pi.events.on("delegation:registry", data => {
+        const event = data as RegistryEvent;
+        events.push(event);
+        if (event.event?.type === "agent_start") { rendersAtStart = renders; markRunning(); }
+        if (event.event?.type === "message_update" && event.event.assistantMessageEvent.type === "text_delta") {
+          rendersAtDelta = renders;
+          markDelta();
+        }
+      });
+    }] });
   await loader.reload();
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null,
     modelsStorePath: join(root, "cache.json"), refreshOnCreate: false });
@@ -34,13 +63,11 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
   };
   model.setResponses([respond]);
   runtime.registerNativeProvider(model.provider);
-  const { session } = await createAgentSession({ cwd: root, agentDir: join(root, "agent"), modelRuntime: runtime,
+  ({ session } = await createAgentSession({ cwd: root, agentDir: join(root, "agent"), modelRuntime: runtime,
     model: model.getModel(), resourceLoader: loader, tools: ["delegate_task", "read", "grep", "find", "ls"], settingsManager: settings,
-    sessionManager: SessionManager.create(root, join(root, "transcripts")) });
-  t.after(() => session.dispose());
+    sessionManager: SessionManager.create(root, join(root, "transcripts")) }));
   initTheme("dark", false);
   const tui = new TuiMainScreen(new ProcessTerminal()); // Not started: no terminal input/output in this lifecycle test.
-  let renders = 0;
   t.mock.method(tui, "requestRender", () => { renders++; });
   let widget: Component | undefined;
   const calls: boolean[] = [];
@@ -52,7 +79,8 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
       widget = typeof content === "function" ? content(tui, this.theme) : undefined;
     },
   };
-  await session.bindExtensions({ mode: "tui", uiContext: ui });
+  const errors: unknown[] = [];
+  await session.bindExtensions({ mode: "tui", uiContext: ui, onError: error => { errors.push(error); } });
   assert.match(widget!.render(80).join("\n"), /not-started/);
   const panelLevels: number[] = [];
   for (const name of ["dark", "light", "tinted-custom"] as const) {
@@ -81,10 +109,10 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
   assert.ok(panelLevels[0] < panelLevels[1], "native light surface is lighter than native dark");
   initTheme("dark", false);
   await session.prompt("launch");
+  // Background acknowledgment is setup/queued, not an SDK running acknowledgment.
+  await Promise.all([running, delta]);
   assert.match(widget!.render(80).join("\n"), /running/);
-  const afterStart = renders;
-  await new Promise(resolve => setTimeout(resolve, 300));
-  assert.ok(renders > afterStart, "actual child deltas request widget renders");
+  assert.ok(rendersAtDelta > rendersAtStart, "actual child text delta requests widget renders");
   const task = session.messages.find(message => message.role === "toolResult" && message.toolName === "delegate_task");
   assert.ok(task?.role === "toolResult");
   const identity = task.details as {id: string; generation: number};
@@ -98,8 +126,22 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
   assert.notEqual(widget, oldWidget);
   assert.equal(model.state.callCount, callsBeforeStop, "reload makes no inference request");
   assert.match(widget!.render(80).join("\n"), /not-started/);
-  const afterReload = renders;
-  await new Promise(resolve => setTimeout(resolve, 100));
-  assert.equal(renders, afterReload, "old child no longer drives the replacement widget");
+  running = new Promise<void>(resolve => { markRunning = resolve; });
+  delta = new Promise<void>(resolve => { markDelta = resolve; });
+  await session.prompt("launch");
+  await Promise.all([running, delta]);
+  assert.match(widget!.render(80).join("\n"), /running/);
+  assert.match(oldWidget.render(80).join("\n"), /cancelled/, "replacement activity cannot retarget the detached old observer");
+  const second = events.at(-1)!.child;
+  assert.equal(second.disposed, false);
+  const callsBeforeActiveReload = model.state.callCount;
+  await session.reload();
+  assert.equal(model.state.callCount, callsBeforeActiveReload, "active reload drains without new inference");
+  assert.deepEqual(calls, [true, false, true, false, true]);
+  const drained = events.filter(event => event.child.id === second.id).at(-1)!.child;
+  assert.equal(drained.status, "cancelled");
+  assert.equal(drained.disposed, true);
+  assert.match(widget!.render(80).join("\n"), /not-started/);
+  assert.deepEqual(errors, [], "reload and drain must not use stale extension contexts");
   assert.ok(model.state.callCount >= 3, "controlled parent and delegated child used actual provider dispatch");
 });
