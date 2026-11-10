@@ -5,15 +5,17 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { fixture, eventually } from "./fixtures.ts";
 
-test("production permits one child writer and concurrent read-only children, then releases ownership", async t => {
-  const { launch, session, events } = await fixture(t, { speed: 500 });
-  const first = await launch("long writer ".repeat(100), "implementation");
-  await assert.rejects(launch("second writer", "implementation"), /writer conflict/);
-  const readonly = await launch("readonly child");
+test("coordinator permits one writer and concurrent read-only children, queues later writer and releases ownership", async t => {
+  const { direct, coordinator } = await fixture(t, { speed: 500 });
+  const first = await direct("long writer ".repeat(100), "implementation");
+  const readonly = await direct("readonly child");
   assert.notEqual(first.id, readonly.id);
-  await session.prompt(`/task-stop ${first.id} ${first.generation}`);
-  const next = await launch("new writer", "implementation", false);
-  assert.equal(events.filter(event => event.child.id === next.id).at(-1)!.child.status, "settled");
+  const second = await direct("second writer", "implementation");
+  assert.equal(coordinator.snapshot(second)!.status, "queued");
+  await coordinator.stop(second);
+  await coordinator.stop(first);
+  const next = await direct("new writer", "implementation");
+  assert.equal((await coordinator.wait(next)).status, "settled");
 });
 
 test("production parent write/bash path visibly rejects while child holds writer", async t => {

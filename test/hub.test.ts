@@ -49,17 +49,17 @@ test("widget retains each child state, sanitizes terminal content and shows late
   let child: ChildSnapshot | undefined;
   const widget = createChildWidget(() => child, theme);
   assert.match(widget.render(100).join("\n"), /not-started.*task-hub/);
-  for (const status of ["setup", "running", "settled", "cancelled", "failed"] as const) {
-    child = { id: "test", generation: 1, parentId: "parent", profile: "general", assignment: "test", activity: "", model: {provider: "test", id: "test"}, effort: "off", telemetry: {requests: null, tokens: null, cost: null, context: null}, status, progress: "old activity ".repeat(20) + "中文 👩‍💻 latest\u001b\u0007", result: "final result", disposed: false };
+  for (const status of ["queued", "setup", "running", "draining", "settled", "cancelled", "failed"] as const) {
+    child = { id: "test", generation: 1, parentId: "parent", depth: 1, writerLease: false, limits: { deadlineMs: 600000, requests: 100, tools: 100, depth: 2, spawns: 8 }, toolCalls: 0, profile: "general", assignment: "test", activity: "", model: {provider: "test", id: "test"}, effort: "off", telemetry: {requests: null, tokens: null, cost: null, context: null}, status, progress: "old activity ".repeat(20) + "中文 👩‍💻 latest\u001b\u0007", result: "final result", disposed: ["settled", "failed", "cancelled"].includes(status) };
     const output = widget.render(80).join("\n");
     assert.ok(output.includes(status));
     assert.ok(widget.render(20)[0].startsWith(status));
     assert.ok(!/[\x00-\x1f\x7f-\x9f]/.test(output.replaceAll("\n", "")));
     if (status === "running") assert.ok(output.includes("latest"));
-    else assert.ok(output.includes("final result"));
+    else if (child.disposed) assert.ok(output.includes("final result"));
     for (const width of [0, 1, 2, 8, 20, 40]) assert.ok(widget.render(width).every(line => visibleWidth(line) <= width));
   }
-  child = { ...child!, status: "running", profile: "implementation", disposed: false };
+  child = { ...child!, status: "running", profile: "implementation", writerLease: true, disposed: false };
   assert.match(widget.render(100).join("\n"), /no conflicting manual !\/!! or external edits/);
   child = { ...child!, status: "failed", error: "Cannot start\u001b\u0007" };
   assert.match(widget.render(80).join("\n"), /Cannot start/);

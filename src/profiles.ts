@@ -5,7 +5,7 @@ import { CONFIG_DIR_NAME, getAgentDir, loadSkills, type Skill } from "@earendil-
 export const READ_TOOLS = ["read", "grep", "find", "ls"] as const;
 export const WRITE_TOOLS = [...READ_TOOLS, "write", "edit", "bash"] as const;
 export type BuiltinTool = typeof WRITE_TOOLS[number];
-export type Profile = Readonly<{ name: string; description: string; prompt: string; tools: readonly BuiltinTool[]; skills: readonly string[] }>;
+export type Profile = Readonly<{ name: string; description: string; prompt: string; tools: readonly BuiltinTool[]; skills: readonly string[]; spawn?: readonly string[] }>;
 const bundled: Record<string, Profile> = {
   general: { name: "general", description: "General read-only delegation", prompt: "Complete the assigned analysis and report the evidence and limitations.", tools: READ_TOOLS, skills: [] },
   scout: { name: "scout", description: "Explore and locate evidence", prompt: "Explore the assignment using read-only tools. Report precise source locations and findings.", tools: READ_TOOLS, skills: [] },
@@ -30,13 +30,15 @@ function strings(value: unknown, field: string): string[] {
 function specialize(base: Profile, value: unknown, operator: boolean): Profile {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid profile ${base.name}`);
   const input = value as Record<string, unknown>;
-  for (const key of Object.keys(input)) if (!["description", "prompt", "tools", "skills"].includes(key)) throw new Error(`Unsupported profile field: ${key}`);
+  for (const key of Object.keys(input)) if (!["description", "prompt", "tools", "skills", "spawn"].includes(key)) throw new Error(`Unsupported profile field: ${key}`);
   const tools = input.tools === undefined ? [...base.tools] : strings(input.tools, "tools");
   if (tools.some(tool => !base.tools.includes(tool as BuiltinTool))) throw new Error(`Profile ${base.name} cannot broaden tool grants`);
   const skills = input.skills === undefined ? [...base.skills] : strings(input.skills, "skills");
   if (skills.some(path => !isAbsolute(path) || (!operator && !base.skills.includes(path)))) throw new Error(`Profile ${base.name} cannot mint skill grants; operator paths must be absolute`);
   for (const field of ["description", "prompt"] as const) if (input[field] !== undefined && typeof input[field] !== "string") throw new Error(`${field} must be text`);
-  return { ...base, description: input.description as string ?? base.description, prompt: input.prompt as string ?? base.prompt, tools: tools as BuiltinTool[], skills };
+  const spawn = input.spawn === undefined ? [...(base.spawn ?? [])] : strings(input.spawn, "spawn");
+  if (spawn.some(name => !Object.hasOwn(bundled, name) || (!operator && !base.spawn?.includes(name)))) throw new Error("Cannot mint spawn grants");
+  return { ...base, spawn, description: input.description as string ?? base.description, prompt: input.prompt as string ?? base.prompt, tools: tools as BuiltinTool[], skills };
 }
 
 /** Operator config can grant exact skill paths; trusted project config can only narrow those grants. */
@@ -44,11 +46,11 @@ export async function resolveProfile(name: string, cwd: string, trusted: boolean
   let profile = bundled[name];
   if (!Object.hasOwn(bundled, name)) throw new Error(`Unknown delegation profile: ${name}`);
   const user = await config(join(operatorDir, "delegation.json"));
-  for (const key of Object.keys(user)) if (!Object.hasOwn(bundled, key)) throw new Error(`Unknown operator profile: ${key}`);
+  for (const key of Object.keys(user)) if (key !== "scheduling" && !Object.hasOwn(bundled, key)) throw new Error(`Unknown operator profile: ${key}`);
   if (user[name] !== undefined) profile = specialize(profile, user[name], true);
   if (trusted) {
     const project = await config(join(cwd, CONFIG_DIR_NAME, "delegation.json"));
-    for (const key of Object.keys(project)) if (!Object.hasOwn(bundled, key)) throw new Error(`Unknown project profile: ${key}`);
+    for (const key of Object.keys(project)) if (key !== "scheduling" && !Object.hasOwn(bundled, key)) throw new Error(`Unknown project profile: ${key}`);
     if (project[name] !== undefined) profile = specialize(profile, project[name], false);
   }
   for (const path of profile.skills) await readFile(path, "utf8");

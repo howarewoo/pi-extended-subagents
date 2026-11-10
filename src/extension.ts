@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { Type } from "typebox";
-import { truncateHead, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { truncateHead, type ExtensionToolContext, type ToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { resolveScheduling } from "./scheduling.ts";
 import { DelegationCoordinator, type ChildRef, type ChildSnapshot } from "./coordinator.ts";
 import { READ_TOOLS, resolveProfile, bundledProfiles } from "./profiles.ts";
 import { createChildWidget, createHub } from "./hub.ts";
@@ -50,38 +51,60 @@ export default function delegation(pi: ExtensionAPI) {
       if (!tool || tool.sourceInfo.path !== `builtin:${name}`) throw new Error(`Delegation requires an unmodified built-in parent tool: ${name}`);
     }
   };
-  const parameters = Type.Object({ assignment: Type.String({ minLength: 1 }),
-    profile: Type.Union([Type.Literal("general"), Type.Literal("scout"), Type.Literal("review"), Type.Literal("implementation")]),
-    background: Type.Optional(Type.Boolean()),
-  }, { additionalProperties: false });
-  // Pi rejects conflicting extension tool registrations during resource loading.
-  pi.registerTool({
-      name: "delegate_task", label: "Delegate task", exposure: "model-only",
-      description: "Delegate ONE assignment using the selected parent model. Profiles general/scout/review are read-only; implementation holds the exclusive model-tool writer. Manual !/!! commands, external terminals/editors and unrelated sessions are UNCOORDINATED: do not run conflicting writes while a child writer is active. Foreground returns final output; background returns identity and delivers one completion. Output preview limited to 50KB/2000 lines; full transcript path retained. No batches or nesting.",
-      parameters,
-      async execute(callerId, args, signal, onUpdate, ctx) {
-        const { profile, skills } = await resolveProfile(args.profile, ctx.cwd, ctx.isProjectTrusted());
-        assertTools(profile.tools);
-        signal?.throwIfAborted();
-        const child = await coordinator.start({ assignment: args.assignment, profile, skills, context: ctx, callerId });
-        const abort = () => { void coordinator.stop(child); };
-        signal?.addEventListener("abort", abort, { once: true });
-        if (signal?.aborted) await coordinator.stop(child);
-        const result = (state: ChildSnapshot | (ChildRef & { status: ChildSnapshot["status"] })) => {
-          const transcript = "transcript" in state ? state.transcript : undefined;
-          return { content: [{ type: "text" as const, text: preview(state, transcript) }],
-            details: child, isError: state.status === "failed" || state.status === "cancelled" };
-        };
-        if (args.background) {
-          signal?.removeEventListener("abort", abort);
-          void coordinator.wait(child).then(state => { if (!closing) show(state, state.transcript); });
-          return result({ ...child, status: coordinator.snapshot(child)!.status });
+  const role = Type.Union([Type.Literal("general"), Type.Literal("scout"), Type.Literal("review"), Type.Literal("implementation")]);
+  const limits = Type.Object({ depth: Type.Optional(Type.Integer({ minimum: 0 })), spawns: Type.Optional(Type.Integer({ minimum: 0 })), deadlineMs: Type.Optional(Type.Integer({ minimum: 1 })), requests: Type.Optional(Type.Integer({ minimum: 1 })), tools: Type.Optional(Type.Integer({ minimum: 1 })) }, { additionalProperties: false });
+  const assignment = { assignment: Type.String({ minLength: 1 }), profile: role, spawn: Type.Optional(Type.Array(role)), limits: Type.Optional(limits) };
+  const item = Type.Object(assignment, { additionalProperties: false });
+  const parameters = Type.Union([
+    Type.Object({ ...assignment, background: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
+    Type.Object({ tasks: Type.Array(item, { minItems: 1, maxItems: 64 }), background: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
+  ]);
+  const taskTool = (parent?: ChildRef, rootContext?: ExtensionToolContext, rootCallerId?: string): ToolDefinition<typeof parameters> => ({
+    name: "delegate_task", label: "Delegate task", exposure: "model-only",
+    description: "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model. Bounded FIFO capacity; implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits; background delivers one final batch message. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Preview 50KB/2000 lines; actual transcripts retained.",
+    parameters,
+    async execute(callerId, args, signal, onUpdate, localContext) {
+      const ctx = rootContext ?? localContext;
+      const owner = coordinator;
+      if (parent && args.background) throw new Error("Nested background delegation is unsupported; use foreground");
+      const policy = await resolveScheduling(ctx.cwd, ctx.isProjectTrusted());
+      owner.configure(policy);
+      const items = "tasks" in args ? args.tasks : [args];
+      const inputs = await Promise.all(items.map(async task => {
+        let { profile, skills } = await resolveProfile(task.profile, ctx.cwd, ctx.isProjectTrusted());
+        if (task.spawn) {
+          if (task.spawn.some(role => !profile.spawn?.includes(role))) throw new Error("Request cannot mint spawn grants");
+          profile = { ...profile, spawn: task.spawn };
         }
-        const unsubscribe = coordinator.subscribe(event => { if (event.child.id === child.id) onUpdate?.(result(event.child)); });
-        try { return result(await coordinator.wait(child)); }
-        finally { unsubscribe(); signal?.removeEventListener("abort", abort); }
-      },
+        assertTools(profile.tools);
+        return { assignment: task.assignment, profile, skills, context: ctx, callerId: rootCallerId ?? callerId, parent, limits: task.limits,
+          nestedTool: (ref: ChildRef) => taskTool(ref, ctx, rootCallerId ?? callerId) };
+      }));
+      signal?.throwIfAborted();
+      const children = owner.admit(inputs);
+      const stop = () => owner.stopMany(children);
+      const abort = () => { void stop(); };
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) await stop();
+      const states = () => children.map(child => owner.snapshot(child)!);
+      const result = (snapshots: ChildSnapshot[]) => {
+        const value = "tasks" in args ? snapshots : snapshots[0];
+        return { content: [{ type: "text" as const, text: preview(value, snapshots.length === 1 ? snapshots[0].transcript : undefined) }],
+          details: "tasks" in args ? { children: snapshots } : snapshots[0],
+          isError: snapshots.some(state => state.status === "failed" || state.status === "cancelled") };
+      };
+      const completed = Promise.all(children.map(child => owner.wait(child)));
+      if (args.background) {
+        signal?.removeEventListener("abort", abort);
+        void completed.then(snapshots => { if (!closing && coordinator === owner) show("tasks" in args ? snapshots : snapshots[0], snapshots.length === 1 ? snapshots[0].transcript : undefined); });
+        return result(states());
+      }
+      const unsubscribe = owner.subscribe(event => { if (children.some(child => child.id === event.child.id)) onUpdate?.(result(states())); });
+      try { return result(await completed); }
+      finally { unsubscribe(); signal?.removeEventListener("abort", abort); }
+    },
   });
+  pi.registerTool(taskTool());
   pi.registerCommand("task-profiles", { description: "List bundled profiles and capability availability", handler: async () => show(bundledProfiles()) });
   pi.registerCommand("task-status", { description: "List delegation identities, states and final results", handler: async args => show(args.trim() ? coordinator.snapshot(ref(args)) : coordinator.list()) });
   pi.registerCommand("task-stop", { description: "Stop <task-id> <generation> and drain it", handler: async args => { await coordinator.stop(ref(args)); } });

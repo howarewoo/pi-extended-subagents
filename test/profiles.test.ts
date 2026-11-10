@@ -46,3 +46,22 @@ test("public parent model adapter rejects missing model/provider/auth and scope 
   t.mock.method(registry, "hasConfiguredAuth", () => false);
   await assert.rejects(parentModelRuntime(ctx, root), /No configured parent authentication/);
 });
+
+
+test("only operator can mint recursive role grants; project may remove but never re-enable them", async t => {
+  const root = await mkdtemp(join(tmpdir(), "delegation-spawn-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const operator = join(root, "operator");
+  const project = join(root, ".pi");
+  await mkdir(operator); await mkdir(project);
+  const resolve = () => resolveProfile("general", root, true, operator);
+  await writeFile(join(project, "delegation.json"), JSON.stringify({ general: { spawn: ["general"] } }));
+  await assert.rejects(resolve(), /mint spawn grants/);
+  await writeFile(join(operator, "delegation.json"), JSON.stringify({ general: { spawn: ["general"] } }));
+  assert.deepEqual((await resolve()).profile.spawn, ["general"]);
+  await writeFile(join(project, "delegation.json"), JSON.stringify({ general: { spawn: [] } }));
+  assert.deepEqual((await resolve()).profile.spawn, []);
+  await writeFile(join(operator, "delegation.json"), JSON.stringify({ general: { spawn: [] } }));
+  await writeFile(join(project, "delegation.json"), JSON.stringify({ general: { spawn: ["general"] } }));
+  await assert.rejects(resolve(), /mint spawn grants/);
+});

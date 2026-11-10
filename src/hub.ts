@@ -9,8 +9,8 @@ function safe(text: string): string {
 function childPresentation(child: ChildSnapshot | undefined) {
   return {
     status: child?.status ?? "not-started",
-    writerWarning: child?.profile === "implementation" && !child.disposed ? "Model-tool writer only: no conflicting manual !/!! or external edits" : "",
-    activity: safe(child?.error || (child?.status === "running" ? child.activity || child.progress : child?.result) || child?.progress ||
+    writerWarning: child?.writerLease ? "Model-tool writer only: no conflicting manual !/!! or external edits" : "",
+    activity: safe(child?.error || (!child?.disposed ? child?.activity || child?.progress : child?.result) || child?.progress ||
       (child ? "Waiting for streamed activity" : "Ask the model to use delegate_task with an explicit profile")),
     color: child?.status === "failed" ? "error" as const
       : child?.status === "settled" ? "success" as const
