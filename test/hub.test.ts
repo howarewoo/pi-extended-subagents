@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createChildWidget, createHub } from "../src/hub.ts";
-import { ProofCoordinator, type ChildSnapshot } from "../src/coordinator.ts";
+import { DelegationCoordinator, type ChildSnapshot } from "../src/coordinator.ts";
 import { backgroundAnsi, oklchColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
 import type { ThemeStyle } from "@earendil-works/pi-coding-agent";
 
@@ -15,7 +15,7 @@ const theme = { fg: (_color: string, text: string) => text,
   } };
 
 test("hub frames, pads and paints every cell, adapts to tiny geometry and invalidates theme output", () => {
-  const coordinator = new ProofCoordinator("unused-render-only");
+  const coordinator = new DelegationCoordinator("unused-render-only", "parent");
   let rows = 24;
   const palette = { ...theme, colors: { ...theme.colors } };
   const darkBg = backgroundAnsi(oklchColor(0.3, 0, 0), "truecolor");
@@ -36,7 +36,7 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
       }
     }
     rows = 24;
-    assert.match(hub.render(80).join("\n"), /Agent Hub · controlled proof/);
+    assert.match(hub.render(80).join("\n"), /Delegation · latest task/);
     assert.match(hub.render(80).join("\n"), /escape\/escape: close · child continues/);
     palette.colors.customMessageBg = oklchColor(0.9, 0.1, 330);
     hub.invalidate();
@@ -48,9 +48,9 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
 test("widget retains each child state, sanitizes terminal content and shows latest activity at narrow widths", () => {
   let child: ChildSnapshot | undefined;
   const widget = createChildWidget(() => child, theme);
-  assert.match(widget.render(100).join("\n"), /not-started.*proof-hub/);
-  for (const status of ["starting", "running", "completed", "cancelled", "failed"] as const) {
-    child = { status, progress: "old activity ".repeat(20) + "中文 👩‍💻 latest\u001b\u0007", result: "final result", disposed: false };
+  assert.match(widget.render(100).join("\n"), /not-started.*task-hub/);
+  for (const status of ["setup", "running", "settled", "cancelled", "failed"] as const) {
+    child = { id: "test", generation: 1, parentId: "parent", profile: "general", assignment: "test", activity: "", model: {provider: "test", id: "test"}, effort: "off", telemetry: {requests: null, tokens: null, cost: null, context: null}, status, progress: "old activity ".repeat(20) + "中文 👩‍💻 latest\u001b\u0007", result: "final result", disposed: false };
     const output = widget.render(80).join("\n");
     assert.ok(output.includes(status));
     assert.ok(widget.render(20)[0].startsWith(status));
@@ -59,6 +59,8 @@ test("widget retains each child state, sanitizes terminal content and shows late
     else assert.ok(output.includes("final result"));
     for (const width of [0, 1, 2, 8, 20, 40]) assert.ok(widget.render(width).every(line => visibleWidth(line) <= width));
   }
+  child = { ...child!, status: "running", profile: "implementation", disposed: false };
+  assert.match(widget.render(100).join("\n"), /no conflicting manual !\/!! or external edits/);
   child = { ...child!, status: "failed", error: "Cannot start\u001b\u0007" };
   assert.match(widget.render(80).join("\n"), /Cannot start/);
 });
