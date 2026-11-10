@@ -1,4 +1,46 @@
-# Group 1 verification evidence
+# Delegation verification
+
+## Slice 1 current evidence
+
+Source: isolated `feat/delegation-core` worktree based on `0cf7bf92a4a9ae952ac023070cb0d45ed089a261`, Pi **1.5.2**, Node **24.21.0**. Production fake-provider execution is removed. The current interface is [delegation-contract.md](delegation-contract.md); historical proof commands below describe only the base implementation.
+
+### Acceptance disposition
+
+The production extension now delegates read-only and implementation tasks through real SDK children. Explicit profiles/resources, the selected-parent public provider/auth adapter, registry/events/control, actual tools/storage and parent-lifetime cleanup are implemented. **Writer coordination covers parent/child model-invoked tools only.** The user explicitly classified manual !/!! commands like external terminals, outside the guarantee; the operator must not perform conflicting manual/external writes while children write. No shell interception, hook bypass, global ban, fallback heuristic or private runtime access was added. Production writer admission and model-tool conflicts are exercised with controlled provider outputs. Live-provider and fresh interactive UI acceptance remain unverified; this is not full replacement/parity acceptance.
+
+No real-model inference, paid/live provider calls, credential changes, global config/package changes or old-data migration were authorized or performed. All actual inference dispatch uses controlled Pi providers in test/example fixtures. The installed checkout was not edited; dependencies were installed from this worktree's lockfile with `npm ci --ignore-scripts` (125 packages, audit 0 vulnerabilities), without symlinks or new dependencies.
+
+### Current tests and walkthrough
+
+- `test/coordinator.test.ts`: actual SDK selected-provider streaming and queued second request; prompt-settled final text; new JSONL reopen into a fresh SDK session; hostile project extension/context exclusion; complete loader resource boundary; idempotent shutdown/dispose; acknowledged pre-delta abort; setup/shutdown race; view close/width/observer separation; real model-issued foreground/background task result exactly once; parent reload drains work; RPC overlay guard; real parent-dispatched read/grep/write/edit on a temporary Git repository (production implementation-profile task; controlled model outputs).
+- `test/profiles.test.ts`: explicit bundled profile grants, operator/project subset precedence and trust, valid selected skills, missing/forbidden resources, model/provider/auth/scope preflight denial.
+- `test/model-adapter.test.ts`: selected parent provider actually receives the exact model and in-memory key/headers for parent and child; direct child dispatch count excludes parent; transcripts/child agent directory contain no copied auth artifacts; explicit skill metadata enters actual child prompt; forbidden executable extension grants reject before setup.
+- `test/writer-lease.test.ts`: production task tool admits implementation children; one child writer, concurrent readers, actual parent write/bash blocked with no files created, sibling preflight parent bash prevents writer launch, delegated writes respect parent permission hooks. Manual shell hooks remain untouched and do not disable writers, including after reload.
+- `test/failures.test.ts`: provider failure is terminal once; parent abort drains foreground child; read-only child cannot write or self-spawn; missing parent tools and unsupported schema fields fail before child setup.
+- `test/startup-abort.test.ts`: stale generation controls reject; stop before first delta persists an actual abort, never success.
+- `test/hub.test.ts` and `test/widget-lifecycle.test.ts`: original neutral full-row surface, tiny/narrow geometry, sanitization, key hints, dark/light/tinted theme behavior, widget live updates/final cancellation, reload replacement and stale observer detachment retained against real registry state. No duplicate production UI runtime.
+- `test/cli.test.ts`: actual isolated Pi CLI with offline example parent provider and minimal fresh environment loads production extension, model-calls task tool, exits 0 and persists a child abort rather than scripted completion. No credentials or ambient resource discovery.
+- `npm run exercise`: actual isolated SDK parent → model tool → child, public selected-provider adapter, streamed state, background identity, steering, reload abort/drain, transcript inspection; temporary roots removed. SDK model is supplied explicitly from the controlled runtime (no ambient/fallback selection).
+
+The initial command-registration probe found that registering a tool during `session_start` did not satisfy an explicit SDK allowlist. The tool now registers during the extension factory using Pi's native conflict handling, and callers select its native name. An SDK-only reload fixture initially omitted any host UI/error/shutdown binding, so Pi did not emit replacement `session_start`; fixture now supplies a real host error binding and uses the supported lifecycle. A controlled shared provider queue test now waits for actual child streaming before replacing parent scripted responses; no production delay was added. Original startup-abort protection remains intact.
+
+### Limits
+
+- Manual !/!! shells, external terminals/editors/unrelated sessions are intentionally uncoordinated under the explicit approved scope. Tests do not establish external-process exclusion or an OS sandbox. Operators must not conflict with active child writers.
+- External provider behavior, OAuth refresh against real services, provider cancellation/reliability/billing, deferred provider jobs and provider-internal request counting are not verified. `requests` is direct parent-registry dispatch; tokens/cost/context are the SDK's values, with null for unknown. Parent footer is not an aggregate child-cost UI. Virtual-model routing is explicitly rejected, not silently replaced.
+- No fresh interactive PTY/screenshots/human display-level acceptance for the Slice 1 text/state update; original neutral-surface component/regression protections remain. Historical Slice 0 PTY evidence below is not new Slice 1 acceptance.
+- Public auth preflight can await operator-configured auth resolution; no bounded setup/auth timeout is claimed. Shutdown drains setup before disposal; no detached work/recovery framework is introduced.
+- No independent reviewer/subagent was launched. Coordinator review/reconciliation remains required; no publication/commit/staging authority was exercised by this worker.
+
+### Final local checks
+
+Observed on the integrated Slice 1 source: `npm run typecheck` passes; `npm test` passes **25/25** (0 failed/skipped/cancelled; approximately 5.4 seconds); `npm run exercise` prints PASS; `npm pack --dry-run` includes only the 12 declared source/docs/README/notices/manifest files, no dependencies/tests/host state; `git diff --check` passes and `git diff --cached --name-only` is empty. `node_modules` is a real worktree-local directory, not a symlink. No files were staged or committed. The final acceptance report names the tested source digest and any later refreshed check output. Historical results below do not substitute for these checks.
+
+Scoped simplification pass: removed the proof runtime rather than preserving aliases/parallel executors, unused writer/shell hazard scaffolding and duplicate state; kept one registry and native loaders/dispatcher/test runner. Captured model/cwd/effort once at admission to avoid mutable parent selection during setup. Shared bounded preview formatting now preserves transcript references and explicitly reports truncation. No scheduler, persistence framework, verifier service, dependency or global installation was added.
+
+---
+
+# Historical Group 1 verification evidence
 
 This record applies to this repository's parity-inventory/adapter-proof implementation and **Pi 1.5.2**. It does not establish full OMP parity, pi-subagents replacement readiness, external-provider behavior, or comprehensive interactive UI quality.
 

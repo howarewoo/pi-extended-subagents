@@ -2,6 +2,20 @@
 
 For implementers deciding the next bounded group. This is an investigation contract, **not a replacement implementation or a port**. OMP is a behavioral/UI reference. All OMP links below are pinned to **`eda28eff97cf7a352fd3057a03581be1686dbc7a`** in [can1357/oh-my-pi](https://github.com/can1357/oh-my-pi/tree/eda28eff97cf7a352fd3057a03581be1686dbc7a). Pi feasibility applies to the published **1.5.2** public SDK, extensions, and TUI APIs, not to OMP's similarly named classes.
 
+## Current Slice 1 disposition
+
+The historical proof matrix/ledger below remains pinned reference evidence, **not the current command/API contract**. Production proof execution has been replaced with real SDK delegation; use [the current delegation contract](delegation-contract.md) and [current verification](verification.md#slice-1-current-evidence) for source/acceptance status. No old proof data is migrated or modified.
+
+| Rows | Current implemented boundary | Still unresolved / excluded |
+| --- | --- | --- |
+| A–D | New extension-owned JSON profile config; bundled general/scout/review/implementation definitions; operator grants and project subset-only specialization; exact skill files; complete resource-loader ownership; actual parent model/public provider-auth bridge; role-specific built-in tools through parent validation/hooks | Executable extension/MCP grants unsupported; virtual-model routing rejected; nesting/batches not enabled |
+| E/G | Actual SDK message/tool streaming, prompt-completion result acceptance, foreground result/background identity + one delivery, status/steer/stop | Structured yield, peer messaging/wait, batch/nested scheduling excluded |
+| L | UUID+generation registry, setup/running/settled/failed/cancelled, direct request/SDK token/cost/context telemetry, new transcript refs, parent shutdown/reload drain/dispose | No parking/revival, detached runner, crash recovery or old-data migration |
+| K/shared checkout | Production implementation-profile task admission, actual exclusive writer lease and real parent/child model-tool permission enforcement proven under controlled model outputs | Manual !/!! commands, external terminals/editors/unrelated sessions are explicitly uncoordinated; operator must avoid conflicting writes. No shell interception or OS sandbox claim; no filesystem isolation/apply |
+| M | Existing neutral widget/overlay now reads latest real registry entry; all entries available through status command | Full roster/tree/transcript Hub remains Slice 2; no fresh display-level interactive acceptance claimed |
+
+This enables useful read-only and model-tool-coordinated writing delegation under the explicit manual/external-process exclusion, not full replacement/parity acceptance. The remaining source/test ledger still describes the larger behavioral target. The historical matrix's proof-only statuses and recommended groupings are superseded only by the explicit current rows above, not blanket parity claims.
+
 ## Reading this inventory
 
 The target is eventual full **subagent-owned observable behavior**, with equivalent Pi implementations and UI substitutions allowed. There is no pi-subagents API compatibility, historical-data migration, OMP runtime import, fork, or undocumented Pi access. Execution belongs to the parent-session lifetime. Adjacent OMP host integrations are dependencies of reference behavior, not an implicit promise to reproduce the rest of OMP.
@@ -14,7 +28,7 @@ Status:
 
 The source/test ledger below covers every file under OMP `src/task`, its entire `test/task` directory, registry lifecycle, and the named UI seams. Related host, RPC, worker and UI tests are included separately. Source comments, implementation seams and upstream test cases inform the contracts; **upstream tests were not executed here**, and an indexed test is not a claim that Pi passes it. No bulk source has been copied into this repository.
 
-## Behavior and acceptance matrix
+## Historical proof behavior and acceptance matrix
 
 Each row's acceptance describes the eventual Pi implementation unless the status explicitly says proved. The appendix links the exact source/test files for each group.
 

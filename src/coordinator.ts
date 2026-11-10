@@ -1,163 +1,200 @@
+import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  createAgentSession, createExtensionRuntime, ModelRuntime, SessionManager, SettingsManager,
-  type AgentSession, type ResourceLoader,
+  createAgentSession, createExtensionRuntime, SessionManager, SettingsManager,
+  type AgentSession, type AgentSessionEvent, type ExtensionToolContext, type ResourceLoader, type Skill, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { fauxAssistantMessage, fauxProvider, InMemoryCredentialStore, type FauxResponseFactory } from "@earendil-works/pi-ai";
+import { parentModelRuntime } from "./model-adapter.ts";
+import { isWriter, READ_TOOLS, type Profile } from "./profiles.ts";
 
-const PROOF_TOKENS_PER_SECOND = 4;
-const MAX_ECHO_CHARS = 240;
-const MAX_PROGRESS_CHARS = 4096;
-
-export type ChildSnapshot = Readonly<{
-  status: "not-started" | "starting" | "running" | "completed" | "cancelled" | "failed";
+export type ChildRef = Readonly<{ id: string; generation: number }>;
+export type ChildSnapshot = Readonly<ChildRef & {
+  parentId: string;
+  status: "setup" | "running" | "settled" | "failed" | "cancelled";
+  profile: string;
+  assignment: string;
+  activity: string;
   progress: string;
   result: string;
+  model: { provider: string; id: string };
+  effort: string | null;
+  telemetry: { requests: number | null; tokens: ReturnType<AgentSession["getSessionStats"]>["tokens"] | null; cost: number | null; context: ReturnType<AgentSession["getContextUsage"]> | null };
   error?: string;
   transcript?: string;
   disposed: boolean;
 }>;
+export type RegistryEvent = Readonly<{ type: "changed" | "sdk"; child: ChildSnapshot; event?: AgentSessionEvent }>;
+export type StartTask = { assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; callerId: string };
+type ChildSelection = Pick<ExtensionToolContext, "model" | "modelRegistry" | "scopedModels" | "thinkingLevel" | "cwd">;
+type Entry = { state: ChildSnapshot; setup?: Promise<void>; run?: Promise<void>; session?: AgentSession; unsubscribe?: () => void; cancelled: boolean; callerId: string };
 
-// Complete resource ownership, rather than filtering discoveries after extensions have executed.
-export function proofResources(): ResourceLoader {
+export function childResources(prompt: string, skills: Skill[] = []): ResourceLoader {
   const extensions = { extensions: [], errors: [], runtime: createExtensionRuntime() };
   return {
     getExtensions: () => extensions,
-    getSkills: () => ({ skills: [], diagnostics: [] }),
+    getSkills: () => ({ skills, diagnostics: [] }),
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () => "Controlled subagent adapter proof. No tools, delegation, or ambient resources.",
-    getSystemPromptSource: () => undefined,
-    getAppendSystemPrompt: () => [],
-    getAppendSystemPromptSources: () => [],
-    extendResources: () => {},
-    reload: async () => {},
+    getSystemPrompt: () => prompt + "\nYou are a delegated child. Complete only this assignment; nested delegation is unavailable.",
+    getSystemPromptSource: () => undefined, getAppendSystemPrompt: () => [], getAppendSystemPromptSources: () => [],
+    extendResources: () => {}, reload: async () => {},
   };
 }
 
-/** One controlled child for one parent runtime; not a scheduler or recovery registry. */
-export class ProofCoordinator {
-  private state: ChildSnapshot = { status: "not-started", progress: "", result: "", disposed: false };
-  private listeners = new Set<() => void>();
-  private starting?: Promise<void>;
-  private run?: Promise<void>;
+/** Authoritative parent-lifetime registry. IDs are never reused; controls require their generation. */
+export class DelegationCoordinator {
+  private entries = new Map<string, Entry>();
+  private listeners = new Set<(event: RegistryEvent) => void>();
+  private parentMutations = new Set<string>();
+  private writer?: string;
   private closing = false;
   private shutdownPromise?: Promise<void>;
-  private unsubscribe?: () => void;
-  private session?: AgentSession;
   readonly root: string;
-
-  constructor(root: string) { this.root = root; }
-  snapshot(): ChildSnapshot { return { ...this.state }; }
-  subscribe(listener: () => void): () => void {
-    this.listeners.add(listener);
-    return () => { this.listeners.delete(listener); };
+  readonly parentId: string;
+  constructor(root: string, parentId: string) { this.root = root; this.parentId = parentId; }
+  list(): ChildSnapshot[] { return [...this.entries.values()].map(entry => structuredClone(entry.state)); }
+  snapshot(ref?: ChildRef): ChildSnapshot | undefined {
+    const entry = ref ? this.entry(ref) : [...this.entries.values()].at(-1);
+    return entry && structuredClone(entry.state);
   }
-  private update(patch: Partial<ChildSnapshot>): void {
-    this.state = { ...this.state, ...patch };
-    for (const listener of this.listeners) listener();
+  private entry(ref: ChildRef): Entry {
+    const entry = this.entries.get(ref.id);
+    if (!entry || entry.state.generation !== ref.generation) throw new Error("Unknown or stale delegation identity");
+    return entry;
   }
-
-  async start(prompt: string, tokensPerSecond = PROOF_TOKENS_PER_SECOND): Promise<void> {
-    if (this.closing || this.starting) throw new Error("Proof child already started or parent shut down");
-    if (!prompt.trim()) throw new Error("A nonempty proof prompt is required");
-    this.update({ status: "starting" });
-    this.starting = this.create(prompt, tokensPerSecond);
-    await this.starting;
+  subscribe(listener: (event: RegistryEvent) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
+  private update(entry: Entry, patch: Partial<ChildSnapshot>, event?: AgentSessionEvent): void {
+    entry.state = { ...entry.state, ...patch };
+    for (const listener of this.listeners) {
+      // Observers must never own execution or turn a successful run into failure.
+      try { listener({ type: event ? "sdk" : "changed", child: structuredClone(entry.state), event }); } catch { /* observer isolated */ }
+    }
   }
-
-  private async create(prompt: string, tokensPerSecond: number): Promise<void> {
+  /** Reserve at preflight, release on every finalized call (including blocked calls). */
+  parentToolStart(id: string, name: string, readOnly = READ_TOOLS.includes(name as typeof READ_TOOLS[number])): void {
+    if (readOnly || name === "delegate_task") return;
+    const child = [...this.entries.values()].find(entry => id.startsWith(entry.callerId + "/") && !entry.state.disposed);
+    if (this.writer && (!child || this.writer !== child.state.id)) throw new Error(`Shared checkout writer is held by ${this.writer}; stop or wait for that task`);
+    this.parentMutations.add(id);
+  }
+  parentToolEnd(id: string): void { this.parentMutations.delete(id); }
+  async start(input: StartTask): Promise<ChildRef> {
+    if (this.closing) throw new Error("Parent shut down");
+    if (!input.assignment.trim()) throw new Error("A nonempty assignment is required");
+    const selection = { model: input.context.model, modelRegistry: input.context.modelRegistry,
+      scopedModels: input.context.scopedModels, thinkingLevel: input.context.thinkingLevel, cwd: input.context.cwd };
+    if (!selection.model) throw new Error("A selected parent model is required");
+    for (const name of input.profile.tools) if (!input.context.tools.some(tool => tool.name === name)) throw new Error(`Parent tool grant unavailable: ${name}`);
+    const writer = isWriter(input.profile);
+    if (writer && (this.writer || this.parentMutations.size)) throw new Error("Shared checkout writer conflict: active child writer or in-flight parent mutation");
+    const id = randomUUID();
+    const entry: Entry = { cancelled: false, callerId: input.callerId, state: {
+      id, generation: 1, parentId: this.parentId, status: "setup", profile: input.profile.name,
+      assignment: input.assignment, activity: "Preparing SDK child", progress: "", result: "", disposed: false,
+      model: { provider: selection.model.provider, id: selection.model.id }, effort: selection.thinkingLevel ?? null,
+      telemetry: { requests: null, tokens: null, cost: null, context: null },
+    } };
+    this.entries.set(id, entry);
+    if (writer) this.writer = id;
+    entry.setup = this.create(entry, input, selection);
+    this.update(entry, {});
+    await entry.setup;
+    return { id, generation: 1 };
+  }
+  private async create(entry: Entry, input: StartTask, selection: ChildSelection): Promise<void> {
     try {
-      const cwd = join(this.root, "workspace");
-      const agentDir = join(this.root, "agent");
-      await mkdir(cwd, { recursive: true });
+      const agentDir = join(this.root, entry.state.id, "agent");
       await mkdir(agentDir, { recursive: true });
-      const runtime = await ModelRuntime.create({
-        credentials: new InMemoryCredentialStore(), modelsPath: null,
-        modelsStorePath: join(agentDir, "models-cache.json"), refreshOnCreate: false,
-        allowModelNetwork: false,
+      const runtime = await parentModelRuntime(selection, agentDir, () => this.update(entry, { telemetry: { ...entry.state.telemetry, requests: (entry.state.telemetry.requests ?? 0) + 1 } }));
+      const tools: ToolDefinition[] = input.profile.tools.map(name => {
+        const tool = input.context.tools.find(tool => tool.name === name)!;
+        return { name, label: name, description: tool.description, parameters: tool.parameters,
+          execute: async (_id, args, signal, onUpdate) => {
+            if (entry.cancelled || this.closing) throw new Error("Delegation cancelled");
+            // The public parent dispatcher preserves validation and permission hooks. Do not
+            // call a raw create*Tool.execute here: that would bypass operator policy.
+            const outcome = await input.context.executeTool(name, args, { signal, onUpdate });
+            return { ...outcome.result, isError: outcome.isError };
+          } };
       });
-      const controlled = fauxProvider({ provider: "extended-subagents-proof", tokensPerSecond,
-        tokenSize: { min: 1, max: 1 } });
-      // Every request, including queued steering, stays inside Pi's controlled provider.
-      const respond: FauxResponseFactory = context => {
-        controlled.appendResponses([respond]);
-        const latest = context.messages.filter(message => message.role === "user").at(-1);
-        const text = latest && typeof latest.content !== "string"
-          ? latest.content.filter(block => block.type === "text").map(block => block.text).join("")
-          : latest?.content ?? "";
-        return fauxAssistantMessage(`Controlled response (not model reasoning): ${String(text).slice(0, MAX_ECHO_CHARS)}`);
-      };
-      controlled.setResponses([respond]);
-      runtime.registerNativeProvider(controlled.provider);
-      const { session } = await createAgentSession({
-        cwd, agentDir, modelRuntime: runtime, model: controlled.getModel(), thinkingLevel: "off",
-        resourceLoader: proofResources(), tools: [], customTools: [],
+      const { session, modelFallbackMessage } = await createAgentSession({
+        cwd: selection.cwd, agentDir, modelRuntime: runtime, model: selection.model,
+        thinkingLevel: selection.thinkingLevel, scopedModels: [{ model: selection.model!, thinkingLevel: selection.thinkingLevel }],
+        resourceLoader: childResources(input.profile.prompt, input.skills), tools: [...input.profile.tools], customTools: tools,
         settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
-        sessionManager: SessionManager.create(cwd, join(this.root, "transcripts")),
+        sessionManager: SessionManager.create(selection.cwd, join(this.root, entry.state.id, "transcripts")),
       });
-      this.session = session;
+      entry.session = session;
+      if (modelFallbackMessage || session.model?.id !== selection.model?.id || session.model?.provider !== selection.model?.provider) throw new Error("SDK did not preserve selected model");
       let markStarted!: () => void;
       const started = new Promise<void>(resolve => { markStarted = resolve; });
-      this.unsubscribe = session.subscribe(event => {
-        if (event.type === "agent_start") {
-          this.update({ status: "running" });
-          markStarted();
-        }
+      entry.unsubscribe = session.subscribe(event => {
+        const patch: { -readonly [K in keyof ChildSnapshot]?: ChildSnapshot[K] } = {};
+        if (event.type === "agent_start") { patch.status = entry.cancelled ? "cancelled" : "running"; markStarted(); }
         if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-          this.update({ progress: (this.state.progress + event.assistantMessageEvent.delta).slice(-MAX_PROGRESS_CHARS) });
+          patch.progress = (entry.state.progress + event.assistantMessageEvent.delta).slice(-4096);
+          patch.activity = patch.progress;
         }
+        if (event.type === "tool_execution_start") patch.activity = `Tool: ${event.toolName}`;
         if (event.type === "message_end" && event.message.role === "assistant") {
-          const message = event.message;
-          this.update({ result: message.content.filter(block => block.type === "text").map(block => block.text).join(""),
-            ...(message.stopReason === "error" ? { status: "failed", error: message.errorMessage } : {}) });
+          const stats = session.getSessionStats();
+          patch.telemetry = { ...entry.state.telemetry, tokens: stats.tokens, cost: stats.cost, context: session.getContextUsage() ?? null };
         }
+        this.update(entry, patch, event);
       });
-      this.update({ transcript: session.sessionFile });
-      if (this.closing) return;
-      this.run = session.prompt(prompt).then(() => {
-        if (this.state.status === "running") this.update({ status: "completed" });
-      }).catch(error => this.update({ status: "failed", error: String(error) }));
-      // prompt() prepares input asynchronously before the agent owns an abort signal.
-      // Do not acknowledge startup until abort() can actually stop that run.
-      await Promise.race([started, this.run]);
+      this.update(entry, { transcript: session.sessionFile });
+      if (this.closing || entry.cancelled) { this.update(entry, { status: "cancelled" }); this.dispose(entry); return; }
+      entry.run = session.prompt(input.assignment, { expandPromptTemplates: false }).then(() => {
+        const last = session.messages.filter(message => message.role === "assistant").at(-1);
+        const failed = !last || last.stopReason === "error";
+        const stats = session.getSessionStats();
+        this.update(entry, {
+          status: entry.cancelled || last?.stopReason === "aborted" ? "cancelled" : failed ? "failed" : "settled",
+          result: session.getLastAssistantText() ?? "",
+          error: failed ? last?.errorMessage ?? "No final assistant outcome" : undefined,
+          activity: "Prompt completed",
+          telemetry: { requests: entry.state.telemetry.requests, tokens: stats.assistantMessages ? stats.tokens : null,
+            cost: stats.assistantMessages ? stats.cost : null, context: session.getContextUsage() ?? null },
+        });
+      }).catch(error => this.update(entry, { status: entry.cancelled ? "cancelled" : "failed", error: String(error) }))
+        .finally(() => this.dispose(entry));
+      // prompt preparation precedes abort-signal ownership; acknowledge only abortable work.
+      await Promise.race([started, entry.run]);
     } catch (error) {
-      this.update({ status: "failed", error: String(error) });
+      this.update(entry, { status: entry.cancelled || this.closing ? "cancelled" : "failed", error: String(error) });
+      this.dispose(entry);
       throw error;
     }
   }
-
-  async steer(text: string): Promise<"queued" | "handled"> {
-    if (!text.trim()) throw new Error("A nonempty steering message is required");
-    if (!this.session || this.state.status !== "running") throw new Error("No running proof child");
-    return this.session.steer(text);
+  private dispose(entry: Entry): void {
+    if (entry.state.disposed) return;
+    entry.unsubscribe?.(); entry.session?.dispose();
+    if (this.writer === entry.state.id) this.writer = undefined;
+    this.update(entry, { disposed: true });
   }
-  async cancel(): Promise<void> {
-    await this.starting;
-    if (!this.session || !["starting", "running"].includes(this.state.status)) return;
-    this.update({ status: "cancelled" });
-    await this.session.abort();
-    await this.run;
+  async steer(ref: ChildRef, text: string): Promise<"queued" | "handled"> {
+    const entry = this.entry(ref);
+    if (!text.trim()) throw new Error("Nonempty steering text is required");
+    if (entry.state.status !== "running" || entry.cancelled) throw new Error("No running child");
+    return entry.session!.steer(text);
   }
-  async wait(): Promise<void> { await this.starting; await this.run; }
-  reopenTranscript() {
-    if (!this.state.transcript) throw new Error("No transcript yet");
-    return SessionManager.open(this.state.transcript).buildSessionContext();
+  async stop(ref: ChildRef): Promise<void> {
+    const entry = this.entry(ref);
+    if (entry.state.disposed) return;
+    entry.cancelled = true;
+    await entry.setup?.catch(() => {});
+    if (entry.state.disposed) return;
+    this.update(entry, { status: "cancelled" });
+    await entry.session?.abort(); await entry.run;
+    this.dispose(entry);
   }
+  async wait(ref: ChildRef): Promise<ChildSnapshot> { const entry = this.entry(ref); await entry.setup; await entry.run; return this.snapshot(ref)!; }
+  reopenTranscript(ref: ChildRef) { const path = this.entry(ref).state.transcript; if (!path) throw new Error("No transcript yet"); return SessionManager.open(path).buildSessionContext(); }
   shutdown(): Promise<void> {
     this.closing = true;
-    this.shutdownPromise ??= this.close();
+    this.shutdownPromise ??= (async () => { await Promise.all(this.list().map(ref => this.stop(ref))); this.listeners.clear(); })();
     return this.shutdownPromise;
-  }
-  private async close(): Promise<void> {
-    try { await this.cancel(); }
-    finally {
-      this.session?.dispose();
-      this.unsubscribe?.();
-      this.update({ disposed: true });
-      this.listeners.clear();
-    }
   }
 }

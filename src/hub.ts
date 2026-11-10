@@ -1,6 +1,6 @@
 import { colorToOklch, oklchColor, sliceByColumn, truncateToWidth, visibleWidth, type Component, type KeybindingsManager } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import type { ChildSnapshot, ProofCoordinator } from "./coordinator.ts";
+import type { ChildSnapshot, DelegationCoordinator } from "./coordinator.ts";
 
 function safe(text: string): string {
   return text.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, " ");
@@ -9,10 +9,11 @@ function safe(text: string): string {
 function childPresentation(child: ChildSnapshot | undefined) {
   return {
     status: child?.status ?? "not-started",
-    activity: safe(child?.error || (child?.status === "running" ? child.progress : child?.result) || child?.progress ||
-      (child ? "Waiting for streamed activity" : "Use /proof-start <text> to start a controlled child")),
+    writerWarning: child?.profile === "implementation" && !child.disposed ? "Model-tool writer only: no conflicting manual !/!! or external edits" : "",
+    activity: safe(child?.error || (child?.status === "running" ? child.activity || child.progress : child?.result) || child?.progress ||
+      (child ? "Waiting for streamed activity" : "Ask the model to use delegate_task with an explicit profile")),
     color: child?.status === "failed" ? "error" as const
-      : child?.status === "completed" ? "success" as const
+      : child?.status === "settled" ? "success" as const
       : child?.status === "cancelled" ? "warning" as const : "accent" as const,
   };
 }
@@ -28,10 +29,11 @@ export function createChildWidget(snapshot: () => ChildSnapshot | undefined, the
   return {
     render(width) {
       const child = childPresentation(snapshot());
-      const heading = width < 40 ? `${child.status} · subagent` : `Subagent proof · ${child.status}  /proof-hub`;
+      const heading = width < 40 ? `${child.status} · subagent` : `Delegation · ${child.status}  /task-hub`;
       return [
         theme.fg(child.color, heading),
         theme.fg("muted", latestActivity(child.activity, width)),
+        ...(child.writerWarning ? [theme.fg("warning", child.writerWarning)] : []),
       ].map(line => truncateToWidth(line, Math.max(0, width)));
     },
     invalidate() {},
@@ -40,7 +42,7 @@ export function createChildWidget(snapshot: () => ChildSnapshot | undefined, the
 
 /** Observation only: disposing this view never touches child execution. */
 export function createHub(
-  coordinator: ProofCoordinator,
+  coordinator: DelegationCoordinator,
   theme: Pick<Theme, "fg" | "style"> & { colors: Pick<Theme["colors"], "customMessageBg"> },
   keybindings: Pick<KeybindingsManager, "matches" | "getKeys">,
   requestRender: () => void,
@@ -69,7 +71,7 @@ export function createHub(
         return paint(theme.fg("border", "│") + " " + content +
           " ".repeat(Math.max(1, innerWidth - 1 - visibleWidth(content))) + theme.fg("border", "│"));
       };
-      const title = truncateToWidth(width >= 34 ? " Agent Hub · controlled proof " : " Agent Hub ", innerWidth);
+      const title = truncateToWidth(width >= 34 ? " Delegation · latest task " : " Agent Hub ", innerWidth);
       const top = paint(theme.fg("border", "╭") + theme.fg("accent", title) +
         theme.fg("border", "─".repeat(Math.max(0, innerWidth - visibleWidth(title))) + "╮"));
       const bottom = paint(theme.fg("border", "╰" + "─".repeat(innerWidth) + "╯"));
@@ -77,7 +79,7 @@ export function createHub(
       const hint = theme.fg("muted", `${closeKeys}: close${width >= 48 ? " · child continues" : ""}`);
       const status = row(theme.fg(child.color, `child: ${child.status}`));
       const activity = row(latestActivity(child.activity, innerWidth - 2));
-      const body = height >= 7 ? [row(""), status, activity, row(""), row(hint)]
+      const body = height >= 7 ? [row(""), status, activity, row(theme.fg("warning", child.writerWarning)), row(hint)]
         : height >= 5 ? [status, activity, row(hint)]
         : height >= 4 ? [status, row(hint)] : [status];
       return [top, ...body, bottom];

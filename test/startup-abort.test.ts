@@ -1,23 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { ProofCoordinator } from "../src/coordinator.ts";
+import { readFile } from "node:fs/promises";
+import { fixture } from "./fixtures.ts";
 
-test("acknowledged start is abortable before the first streamed delta", { timeout: 10000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "extended-subagents-startup-"));
-  const coordinator = new ProofCoordinator(root);
-  try {
-    await coordinator.start("must abort before completing");
-    await coordinator.shutdown();
-    const disk = await readFile(coordinator.snapshot().transcript!, "utf8");
-    assert.match(disk, /"stopReason":"aborted"/);
-    assert.ok(!disk.includes('"stopReason":"stop"'));
-    assert.equal(coordinator.snapshot().progress, "");
-    assert.equal(coordinator.snapshot().disposed, true);
-  } finally {
-    await coordinator.shutdown();
-    await rm(root, { recursive: true, force: true });
-  }
+test("generation controls reject stale identities and stop drains setup before first streamed delta", { timeout: 10000 }, async t => {
+  const { coordinator, direct } = await fixture(t, { speed: 10 });
+  const ref = await direct("must abort before completing");
+  await assert.rejects(coordinator.stop({ ...ref, generation: ref.generation + 1 }), /stale/);
+  await assert.rejects(coordinator.steer({ ...ref, generation: 0 }, "stale"), /stale/);
+  await coordinator.stop(ref);
+  const state = coordinator.snapshot(ref)!;
+  assert.equal(state.status, "cancelled"); assert.equal(state.disposed, true); assert.equal(state.progress, "");
+  const disk = await readFile(state.transcript!, "utf8");
+  assert.match(disk, /"stopReason":"aborted"/); assert.ok(!disk.includes('"stopReason":"stop"'));
 });

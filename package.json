@@ -1,7 +1,7 @@
 {
   "name": "pi-extended-subagents",
   "version": "0.0.1",
-  "description": "Pi-native subagent contract investigation and controlled adapter proof",
+  "description": "Pi-native single-assignment delegation with explicit profiles and parent-owned SDK children",
   "type": "module",
   "engines": { "node": ">=22.19.0" },
   "files": ["src", "docs", "README.md", "THIRD_PARTY_NOTICES.md"],
