@@ -160,7 +160,9 @@ delegation/<parent-session-id>/<task-id>/
 
 Old `extended-subagents-proof` data is left untouched and is not loaded or migrated. New artifacts may contain sensitive assignment, tool and model output; treat them like parent transcripts. There is no durable recovery, cross-parent revival or generalized artifact service. Within this live parent, completed generation snapshots and bounded message receipts are retained in memory; renewed generations use `<task-id>-g<generation>/` directories and never modify completed files. Parent shutdown/reload aborts, drains and disposes all children. SDK hosts must bind extensions and emit shutdown through the public lifecycle; bare `session.dispose()` is not a substitute for host shutdown dispatch. Abrupt process death cannot run cleanup hooks.
 
-Not implemented: cross-parent messaging or revival, automatic idle TTL/retained-session reuse, isolation/apply, advisor/probes/speculation/workpool, executable extension/MCP grants, or the full roster/tree/transcript UI. No live provider inference, credential changes, global Pi installation/config changes or retained-data migration were performed during verification.
+The joined fleet roster/tree/transcript UI is implemented as described above. **Advisor is excluded from the current product scope**, not awaiting an implementation contract; explicit ordinary `review` delegation remains supported and is not an advisor substitute. **Production isolation/apply/path or cd transformation is deferred and unimplemented**; the checkout remains shared. Neither excluded advisor nor deferred isolation is a current release gate. Other unsupported gaps remain: cross-parent messaging or revival, automatic idle TTL/retained-session reuse, probes/speculation/workpool, executable extension/MCP grants and historical consultation. See the [capability ledger](docs/advanced-policies.md) for precise boundaries.
+
+No live provider inference, credential changes, global Pi installation/config changes or retained-data migration were performed during verification.
 
 ### Offline fleet UI exercise (synthetic workspace only)
 
