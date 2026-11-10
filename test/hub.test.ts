@@ -51,7 +51,7 @@ test("widget retains each child state, sanitizes terminal content and shows late
   const widget = createChildWidget(() => child ? [child] : [], theme);
   assert.match(widget.render(100).join("\n"), /FLEET 0.*task-hub/);
   for (const status of ["queued", "setup", "running", "draining", "settled", "cancelled", "failed"] as const) {
-    child = { depth: 1, limits: {deadlineMs: 600000, requests: 100, tools: 100, depth: 2, spawns: 8}, toolCalls: 0, createdAt: 1, endedAt: null, writerLease: false, id: "test", generation: 1, parentId: "parent", profile: "general", assignment: "test", activity: "", model: {provider: "test", id: "test"}, effort: "off", telemetry: {requests: null, tokens: null, cost: null, context: null}, status, progress: "old activity ".repeat(20) + "中文 👩‍💻 latest\u001b\u0007", result: "final result", disposed: ["settled", "failed", "cancelled"].includes(status) };
+    child = { depth: 1, limits: {deadlineMs: 600000, requests: 100, tools: 100, depth: 2, spawns: 8}, toolCalls: 0, tools: ["read"], createdAt: 1, endedAt: null, writerLease: false, id: "test", generation: 1, parentId: "parent", profile: "general", assignment: "test", activity: "", model: {provider: "test", id: "test"}, effort: "off", telemetry: {requests: null, tokens: null, cost: null, context: null}, status, progress: "old activity ".repeat(20) + "中文 👩‍💻 latest\u001b\u0007", result: "final result", disposed: ["settled", "failed", "cancelled"].includes(status) };
     const output = widget.render(80).join("\n");
     assert.ok(output.includes(status));
     assert.ok(widget.render(20)[0].startsWith("FLEET"));
@@ -67,7 +67,7 @@ test("widget retains each child state, sanitizes terminal content and shows late
 });
 
 function snapshot(id: string, patch: Partial<ChildSnapshot> = {}): ChildSnapshot {
-  return { id, depth: 1, limits: {deadlineMs: 600000, requests: 100, tools: 100, depth: 2, spawns: 8}, toolCalls: 0, generation: 1, parentId: "root", status: "running", profile: "scout", assignment: "inspect " + id,
+  return { id, depth: 1, limits: {deadlineMs: 600000, requests: 100, tools: 100, depth: 2, spawns: 8}, toolCalls: 0, tools: ["read"], generation: 1, parentId: "root", status: "running", profile: "scout", assignment: "inspect " + id,
     activity: "Tool: read", progress: "streaming", result: "", model: {provider: "controlled", id: "model"}, effort: null,
     telemetry: {requests: null, tokens: null, cost: null, context: null}, disposed: false, createdAt: 1000, endedAt: null, writerLease: false, ...patch };
 }

@@ -63,10 +63,10 @@ test("read-only child cannot reach write or delegate_task even when model reques
   assert.equal(coordinator.list().length, 1, "no self-spawned task");
 });
 
-test("missing parent tool and unsupported schema fields fail before child setup", async t => {
+test("empty callable profile and unsupported schema fields fail before child setup", async t => {
   const { session, launch, model, events } = await fixture(t);
-  session.setActiveToolsByName(["delegate_task", "read"]);
-  await assert.rejects(launch("missing tools"), /Parent tool grant unavailable/);
+  session.setActiveToolsByName(["delegate_task"]);
+  await assert.rejects(launch("missing tools"), /no callable parent builtin tools/);
   assert.equal(events.length, 0);
   model.setResponses([fauxAssistantMessage(fauxToolCall("delegate_task", { assignment: "bad schema", profile: "general", extensions: ["ambient"] }), { stopReason: "toolUse" }), fauxAssistantMessage("parent done")]);
   await session.prompt("forbidden parameter");

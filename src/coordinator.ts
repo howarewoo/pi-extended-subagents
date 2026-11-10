@@ -10,7 +10,7 @@ import type { Validator } from "@earendil-works/pi-schema";
 import { allowsModel, sameSelection, validateModelSelection, type ModelSelection } from "./model-policy.ts";
 import { parentModelRuntime } from "./model-adapter.ts";
 import { DEFAULT_POLICY, narrowLimits, validatePolicy, type ExecutionLimits, type SchedulingPolicy } from "./scheduling.ts";
-import { resolveProfile, intersectProfileGrants, isWriter, READ_TOOLS, type Profile, type CoordinationAction } from "./profiles.ts";
+import { resolveProfile, intersectProfileGrants, isWriter, READ_TOOLS, type Profile, type BuiltinTool, type CoordinationAction } from "./profiles.ts";
 
 const MAX_MESSAGE_BYTES = 4096;
 const MAX_MAILBOX_MESSAGES = 64;
@@ -32,6 +32,7 @@ export type ChildSnapshot = Readonly<ChildRef & {
   toolCalls: number;
   status: "queued" | "setup" | "running" | "draining" | "settled" | "failed" | "cancelled";
   profile: string;
+  tools: readonly BuiltinTool[];
   assignment: string;
   activity: string;
   progress: string;
@@ -49,7 +50,7 @@ export type ChildSnapshot = Readonly<ChildRef & {
   endedAt: number | null;
 }>;
 export type RegistryEvent = Readonly<{ type: "changed" | "sdk"; child: ChildSnapshot; event?: AgentSessionEvent }>;
-export type StartTask = { model?: ModelSelection; resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; coordinationTools?: (actor: ChildRef) => ToolDefinition[]; nestedTool?: (parent: ChildRef) => ToolDefinition };
+export type StartTask = { model?: ModelSelection; resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; assertTools: (names: readonly string[]) => void; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; coordinationTools?: (actor: ChildRef) => ToolDefinition[]; nestedTool?: (parent: ChildRef) => ToolDefinition };
 type ChildSelection = Pick<ExtensionToolContext, "model" | "modelRegistry" | "scopedModels" | "thinkingLevel" | "cwd">;
 type Entry = { validator?: Validator; input: StartTask; selection: ChildSelection; done: Promise<void>; finish: () => void; timer?: ReturnType<typeof setTimeout>; spawned: number; state: ChildSnapshot; finalizedMessages?: AgentSession["messages"]; setup?: Promise<void>; run?: Promise<void>; session?: AgentSession; unsubscribe?: () => void; cancelled: boolean; callerId: string };
 
@@ -147,7 +148,6 @@ export class DelegationCoordinator {
       if (!input.profile.models?.some(item => sameSelection(item, input.profile.prewalk!))) throw new Error("Prewalk target requires an exact model grant");
       validateModelSelection(selection, input.profile.prewalk);
     }
-    for (const name of input.profile.tools) if (!input.context.tools.some(tool => tool.name === name)) throw new Error(`Parent tool grant unavailable: ${name}`);
     const writer = this.writer ? this.entries.get(this.writer) : undefined;
     if (isWriter(input.profile) && [...this.parentMutations].some(id => !writer || !id.startsWith(writer.callerId + "/"))) throw new Error("Shared checkout writer conflict: in-flight parent mutation");
     if (input.parent) {
@@ -167,6 +167,14 @@ export class DelegationCoordinator {
   }
   /** Whole-batch synchronous validation precedes registry insertion, disk setup or dispatch. */
   admit(inputs: StartTask[], replacement?: ChildRef): ChildRef[] {
+    inputs = inputs.map(input => {
+      if (typeof input.assertTools !== "function") throw new Error("Delegation requires a parent builtin provenance validator");
+      const callable = new Set(input.context.tools.map(tool => tool.name));
+      const profile = { ...input.profile, tools: input.profile.tools.filter(name => callable.has(name)) };
+      if (!profile.tools.length) throw new Error(`Profile ${profile.name} has no callable parent builtin tools; enable an allowed parent tool or choose a usable profile`);
+      input.assertTools(profile.tools);
+      return { ...input, profile };
+    });
     const previous = replacement ? this.entry(replacement) : undefined;
     if (previous) {
       if (inputs.length !== 1 || !previous.state.disposed || !["idle", "parked"].includes(this.presence.get(previous.state.id) ?? "")) throw new Error("Assignment is not idle or parked");
@@ -214,7 +222,7 @@ export class DelegationCoordinator {
       const entry: Entry = { validator: validators[index], input, selection, done, finish, spawned: previous?.spawned ?? 0, cancelled: false, callerId: input.callerId, state: {
         id: previous?.state.id ?? randomUUID(), generation: (previous?.state.generation ?? 0) + 1, parentGeneration: input.parent?.generation, parentId: input.parent?.id ?? this.parentId,
         depth: input.parent ? this.entry(input.parent).state.depth + 1 : 1,
-        createdAt: Date.now(), endedAt: null, status: "queued", writerLease: false, limits: limits[index], toolCalls: 0, profile: input.profile.name,
+        createdAt: Date.now(), endedAt: null, status: "queued", writerLease: false, limits: limits[index], toolCalls: 0, profile: input.profile.name, tools: [...input.profile.tools],
         outcome: validators[index] ? { validation: "awaiting", attempts: 0, errors: [], finalized: false } : undefined,
         assignment: input.assignment, activity: "Queued for capacity / writer admission", progress: "", result: "", disposed: false,
         model: { provider: selection.model!.provider, id: selection.model!.id }, effort: selection.thinkingLevel ?? null,
@@ -328,10 +336,13 @@ export class DelegationCoordinator {
       await loader.reload();
       resources.getExtensions = () => loader.getExtensions();
       const tools: ToolDefinition[] = input.profile.tools.map(name => {
-        const tool = input.context.tools.find(tool => tool.name === name)!;
+        const tool = input.context.tools.find(tool => tool.name === name);
+        if (!tool) throw new Error(`Admitted parent tool is no longer callable: ${name}`);
         return { name, label: name, description: tool.description, parameters: tool.parameters,
           execute: async (_id, args, signal, onUpdate) => {
             if (entry.cancelled || this.closing) throw new Error("Delegation cancelled");
+            if (!input.context.tools.some(tool => tool.name === name)) throw new Error(`Admitted parent tool is no longer callable: ${name}`);
+            input.assertTools([name]);
             // The public parent dispatcher preserves validation and permission hooks. Do not
             // call a raw create*Tool.execute here: that would bypass operator policy.
             const outcome = await input.context.executeTool(name, args, { signal, onUpdate });

@@ -299,7 +299,7 @@ test("descendant followup/revival retains exact live parent generation, consumes
     await config(f, { scheduling: { concurrency: 2, spawns: 2 }, general: { spawn: [], coordination: ["wait"] } });
     const revoked = await control(f, { action: "revive", target: first, assignment: "revoked parent role" });
     assert.equal(revoked.isError, true); assert.match(JSON.stringify(revoked), /Current ancestor spawn role denied/);
-    await config(f, { scheduling: { concurrency: 2, spawns: 2 }, general: { spawn: ["general"], tools: [], coordination: [] } });
+    await config(f, { scheduling: { concurrency: 2, spawns: 2 }, general: { spawn: ["general"], tools: ["grep"], coordination: [] } });
     const renewed = await control(f, { action: "revive", target: first, assignment: "fresh descendant" });
     assert.equal(renewed.isError, false, JSON.stringify(renewed));
     const second = await final(f, renewed.details as ChildSnapshot);
