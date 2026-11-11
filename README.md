@@ -4,13 +4,58 @@ Delegate work to sub-agents in Pi, follow their progress, and steer or stop them
 
 ## Installation
 
-Requires Node 22.19+ and Pi 1.5.2.
+Requires Node 22.19+; tested against Pi 1.5.2. Other Pi versions are not yet verified.
+
+Until the first npm release is published, install from Git:
 
 ```sh
 pi install git:github.com/howarewoo/pi-extended-subagents
 ```
 
+After the first npm release, the recommended install is:
+
+```sh
+pi install npm:pi-extended-subagents
+```
+
+Use only one source. When switching from Git to npm, remove the Git registration first with
+`pi remove git:github.com/howarewoo/pi-extended-subagents`.
+
 Restart Pi and run `/task-profiles` to check the installation. If you already installed a local checkout, remove that registration first with `pi remove /path/to/pi-extended-subagents` to avoid loading it twice.
+
+## Updates and rollback
+
+Let active sub-agents finish before updating, then restart Pi. Shutdown or `/reload` aborts
+and drains children; active tasks are not migrated to the new version. There is no extension-owned
+auto-updater.
+
+```sh
+# Update an unpinned npm installation
+pi update npm:pi-extended-subagents
+
+# Or update all installed extension packages
+pi update --extensions
+```
+
+Plain `pi update` updates Pi itself, not installed extension packages. For a Git installation,
+use `pi update git:github.com/howarewoo/pi-extended-subagents`; an unpinned Git source tracks
+the repository's default branch, including unreleased commits.
+
+For a reproducible npm installation or rollback, select an exact published version:
+
+```sh
+pi install npm:pi-extended-subagents@0.1.0
+```
+
+For Git, select a published tag, for example
+`pi install git:github.com/howarewoo/pi-extended-subagents@v0.1.0`.
+Version `0.1.0` and tag `v0.1.0` must be published before these examples can be used.
+Exact npm versions and Git tags stay pinned; updating does not advance them to the next release.
+Install a different version explicitly to change the pin.
+
+[CHANGELOG.md](CHANGELOG.md) lists user-facing changes and migrations. Pi shows new package
+changelog entries on the next fresh launch after a version increase. See the
+[maintainer release guide](docs/releases.md) for publishing and recovery.
 
 ## Feature comparison
 
@@ -185,7 +230,13 @@ npm run typecheck
 npm test
 npm run exercise
 npm pack --dry-run
+npm run test:package
 ```
+
+`npm run check` runs lint, formatting, typecheck, tests and the controlled SDK exercise.
+`npm run test:package` packs and installs the tarball in a temporary directory, then checks
+that Pi loads the production entrypoint and registers its tools. It needs registry access
+for runtime dependencies, does not use model credentials and leaves your Pi settings unchanged.
 
 Oxlint checks correctness rules; warnings fail the lint command. Control-character regexes are allowed in terminal rendering code and tests because they match ANSI escape sequences. Run `npm run lint:fix` for safe lint fixes and `npm run format` to apply Oxfmt formatting. Formatting skips the generated lockfile and the managed Pullfrog workflow.
 
