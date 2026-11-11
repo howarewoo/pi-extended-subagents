@@ -8,6 +8,7 @@ import {
   SessionManager,
   SettingsManager,
   type ExtensionFactory,
+  type ExtensionAPI,
   type ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -75,10 +76,12 @@ export async function fixture(
   const events: RegistryEvent[] = [];
   let context: ExtensionToolContext | undefined;
   let contextCallerId = "";
+  let toolMetadata!: ExtensionAPI["getAllTools"];
   let assertTools!: (names: readonly string[]) => void;
   const coordinator = new DelegationCoordinator(join(root, "direct"), "test-parent");
   coordinator.subscribe((event) => events.push(event));
   const observer: ExtensionFactory = (pi) => {
+    toolMetadata = () => pi.getAllTools();
     assertTools = (names) => {
       for (const name of names)
         if (
@@ -194,6 +197,7 @@ export async function fixture(
       skills,
       context: context!,
       assertTools,
+      toolMetadata,
       callerId: contextCallerId,
     });
   }

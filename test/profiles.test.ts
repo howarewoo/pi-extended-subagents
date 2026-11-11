@@ -17,10 +17,18 @@ test("explicit profiles deny missing/unsupported/broadened grants; project can o
   await mkdir(project);
   const resolve = (name = "general", trusted = true) =>
     resolveProfile(name, root, trusted, operator);
-  assert.deepEqual((await resolve()).profile.tools, ["read", "grep", "find", "ls"]);
+  assert.deepEqual((await resolve()).profile.tools, [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "write",
+    "edit",
+    "bash",
+  ]);
   await assert.rejects(resolve("unknown"), /Unknown/);
   for (const invalid of [
-    { tools: ["bash"] },
+    { tools: ["unknown"] },
     { extensions: ["/evil.ts"] },
     { mcp: ["server"] },
     { model: "different" },
@@ -141,4 +149,38 @@ test("only operator can mint recursive role grants; project may remove but never
     JSON.stringify({ general: { spawn: ["general"] } }),
   );
   await assert.rejects(resolve(), /mint spawn grants/);
+});
+
+test("restricted general leaf grants are operator-owned; project narrowing and renewal intersection cannot mint them", async (t) => {
+  const { root } = await fixture(t, { speed: 0 });
+  const operator = join(root, "operator");
+  await mkdir(operator, { recursive: true });
+  await mkdir(join(root, ".pi"));
+  await writeFile(
+    join(operator, "delegation.json"),
+    JSON.stringify({ general: { leafTools: ["reviewed"] } }),
+  );
+  await writeFile(
+    join(root, ".pi", "delegation.json"),
+    JSON.stringify({ general: { leafTools: [] } }),
+  );
+  assert.deepEqual((await resolveProfile("general", root, true)).profile.leafTools, []);
+  assert.deepEqual((await resolveProfile("general", root, false)).profile.leafTools, ["reviewed"]);
+  await writeFile(
+    join(root, ".pi", "delegation.json"),
+    JSON.stringify({ general: { leafTools: ["other"] } }),
+  );
+  await assert.rejects(resolveProfile("general", root, true), /mint leaf/);
+  await writeFile(
+    join(operator, "delegation.json"),
+    JSON.stringify({ scout: { leafTools: ["reviewed"] } }),
+  );
+  await assert.rejects(resolveProfile("scout", root, false), /mint leaf/);
+  const { intersectProfileGrants } = await import("../src/profiles.ts");
+  const profile = (await resolveProfile("general", root, false)).profile;
+  assert.deepEqual(
+    intersectProfileGrants({ ...profile, leafTools: ["new"] }, { ...profile, leafTools: [] })
+      .leafTools,
+    [],
+  );
 });

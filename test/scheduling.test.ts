@@ -194,6 +194,7 @@ test("default SDK child-local model-only tool spawns a scout grandchild, uses ro
       );
     },
   });
+  await configure(f, { general: { tools: ["read", "grep", "find", "ls"] } });
   const child = await f.launch("child", "general", false);
   const finals = f.events.filter((event) => event.child.disposed).map((event) => event.child);
   assert.equal(finals.length, 2);

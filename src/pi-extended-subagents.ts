@@ -12,6 +12,7 @@ import {
   type ToolDefinition,
   type ToolRenderers,
   type ExtensionAPI,
+  type BuildSystemPromptOptions,
 } from "@earendil-works/pi-coding-agent";
 import { resolveScheduling } from "./scheduling.ts";
 import {
@@ -32,6 +33,11 @@ import { createChildWidget, createHub, safe, taskCard } from "./hub.ts";
 export default function delegation(pi: ExtensionAPI) {
   let coordinator: DelegationCoordinator;
   let closing = false;
+  let parentPromptOptions: BuildSystemPromptOptions | undefined;
+  const availableSkills = () => parentPromptOptions?.skills ?? [];
+  pi.on("before_agent_start", (event) => {
+    parentPromptOptions = event.systemPromptOptions;
+  });
   let renderWidget: (() => void) | undefined;
   let unsubscribeWidget: (() => void) | undefined;
   const ref = (args: string): ChildRef => {
@@ -293,6 +299,8 @@ export default function delegation(pi: ExtensionAPI) {
           task.profile,
           ctx.cwd,
           ctx.isProjectTrusted(),
+          undefined,
+          availableSkills(),
         );
         if (task.spawn) {
           if (task.spawn.some((role) => !profile.spawn?.includes(role)))
@@ -333,6 +341,8 @@ export default function delegation(pi: ExtensionAPI) {
           skills,
           context: ctx,
           assertTools,
+          toolMetadata: () => pi.getAllTools(),
+          availableSkills,
           callerId: rootCallerId ?? callerId,
           parent,
           limits: task.limits,
@@ -487,13 +497,21 @@ export default function delegation(pi: ExtensionAPI) {
             state.profile,
             ctx.cwd,
             ctx.isProjectTrusted(),
+            undefined,
+            availableSkills(),
           );
           let ancestor = parent;
           let descendantRole = state.profile;
           while (ancestor) {
             const original = registry.snapshot(ancestor)!;
             const current = (
-              await resolveProfile(original.profile, ctx.cwd, ctx.isProjectTrusted())
+              await resolveProfile(
+                original.profile,
+                ctx.cwd,
+                ctx.isProjectTrusted(),
+                undefined,
+                availableSkills(),
+              )
             ).profile;
             if (!current.spawn?.includes(descendantRole))
               throw new Error("Current ancestor spawn role denied");
@@ -513,6 +531,8 @@ export default function delegation(pi: ExtensionAPI) {
             skills,
             context: ctx,
             assertTools,
+            toolMetadata: () => pi.getAllTools(),
+            availableSkills,
             callerId,
             parent,
             coordinationTools: (ref) => [coordinationTool(registry, ref)],
@@ -585,8 +605,8 @@ export default function delegation(pi: ExtensionAPI) {
     promptSnippet:
       "Native coding workers: launch, coordinate and resume work in existing task workspaces",
     promptGuidelines: [
-      "Use subagent for native worker delegation requested by the user or an active workflow; no extension-specific user instruction or enable call is needed. Use agent worker for implementation, scout for research, review for review, or general for read-only work.",
-      "Pass subagent the approved task handoff and existing workspace cwd. Preserve selected model routing; no model override is needed to inherit the parent. Pass accessible skill/reference paths in the task; do not assume ambient extensions, skills or project trust are inherited.",
+      "Use subagent for native worker delegation requested by the user or an active workflow; no extension-specific user instruction or enable call is needed. Use agent worker for implementation, scout for research, review for review, or general for restricted inherited capabilities.",
+      "Pass subagent the approved task handoff and existing workspace cwd. Preserve selected model routing; no model override is needed to inherit the parent. Pass accessible skill/reference paths in the task; general inherits available skills and callable builtins, plus operator-reviewed leaf tools only; parent instructions/history and project trust are not inherited.",
       "subagent launches are async by default and wake this session after actual drain. Continue independent work or yield; do not poll or sleep. Use the exact returned id (UUID@generation) for status, steer, stop or resume. Resume starts a fresh conversation in the same workspace; include needed context.",
     ],
     description:

@@ -2,7 +2,7 @@
 
 This document explains how `pi-extended-subagents` delegates work inside a live Pi session. It is intended for contributors who need to locate behavior, understand lifecycle and permission boundaries, or change the extension without bypassing its execution contract.
 
-It describes the implementation at revision `5dbf132`, not a proposed architecture. For exact tool inputs and operator configuration, use the [delegation contract](docs/delegation-contract.md); for installation and usage, start with the [README](README.md).
+It describes the current implementation, not a proposed architecture. For exact tool inputs and operator configuration, use the [delegation contract](docs/delegation-contract.md); for installation and usage, start with the [README](README.md).
 
 ## System boundary
 
@@ -26,7 +26,7 @@ flowchart TD
     Entry --> Policy
     Policy -->|Validated task inputs| Registry
     Registry -->|Admit, start, stop and drain| Child
-    Child -->|Granted builtin wrappers| Dispatch
+    Child -->|Granted builtin and reviewed leaf wrappers| Dispatch
     Child -->|Model runtime adapter| Models
     Child -->|SDK messages| Files
     Registry -->|Final outcome publication| Files
@@ -34,7 +34,7 @@ flowchart TD
     UI -->|Identity-pinned actions| Registry
 ```
 
-The original parent dispatcher remains the authority for child builtin calls. Selecting a workspace changes explicit tool arguments and the child session's cwd; it does not create a filesystem sandbox or transfer trust to that workspace.
+The original parent dispatcher remains the authority for child builtin and reviewed leaf calls. Selecting a workspace changes explicit tool arguments and the child session's cwd; it does not create a filesystem sandbox or transfer trust to that workspace.
 
 ## Source map
 
@@ -43,6 +43,7 @@ The original parent dispatcher remains the authority for child builtin calls. Se
 | [pi-extended-subagents.ts](src/pi-extended-subagents.ts) | Registers `delegate_task`, `delegate_coordinate`, and `subagent`; resolves requests and configuration; adapts compatibility calls; owns lifecycle hooks, completion messages, commands, and UI wiring.      |
 | [coordinator.ts](src/coordinator.ts)                     | Authoritative live registry, admission checks, FIFO dispatch, SDK session creation, writer ownership, budgets, cancellation/drain, messages, waits, immutable generation history, and outcome finalization. |
 | [profiles.ts](src/profiles.ts)                           | Bundled roles, operator/trusted-project configuration, explicit skill loading, and grant intersection for renewed assignments.                                                                              |
+| [capabilities.ts](src/capabilities.ts)                   | Fail-closed reviewed leaf classification, denial reasons, and public metadata provenance.                                                                                                                   |
 | [scheduling.ts](src/scheduling.ts)                       | Scheduling defaults, hard ceilings, configuration loading, and limit narrowing. Dispatch itself lives in the coordinator.                                                                                   |
 | [model-policy.ts](src/model-policy.ts)                   | Exact provider/model/effort selection, model-grant narrowing, availability, scope, and capability validation.                                                                                               |
 | [model-adapter.ts](src/model-adapter.ts)                 | Creates a child `ModelRuntime` that forwards requests to the parent's public model registry without copying credentials.                                                                                    |
@@ -118,11 +119,13 @@ Parent `tool_call` and `tool_execution_end` hooks reserve and release in-flight 
 
 ### Profiles and configuration
 
-The bundled `general`, `scout`, and `review` roles have read-only tool ceilings (`read`, `grep`, `find`, `ls`). `implementation` also permits `write`, `edit`, and `bash`. A ceiling does not activate tools: admission grants only the intersection with the parent's callable builtins and rejects profiles with no usable tools. Overridden tools with incompatible builtin provenance are rejected.
+The bundled `scout` and `review` roles have read-only tool ceilings (`read`, `grep`, `find`, `ls`). `general` and `implementation` also permit `write`, `edit`, and `bash`. A ceiling does not activate tools: admission grants only the intersection with the parent's callable builtins and rejects profiles with no usable tools. Overridden tools with incompatible builtin provenance are rejected.
 
 All bundled profiles default to `scout`/`review` spawn targets, bounded at absolute depth two (root 0, child 1, grandchild 2). Operator configuration in the agent directory's `delegation.json` can grant explicit skills, additional spawn roles, coordination actions, and exact model selections, or revoke nesting with `spawn: []`. Trusted root-project `.pi/delegation.json` may narrow those grants. Descendants cannot broaden ancestor tool, skill, spawn, coordination, model, or execution-limit authority.
 
-Child resources are constructed explicitly. They include the role prompt, assignment, and granted skills, but no ambient parent conversation, project context files, prompt templates, themes, extensions, or MCP resources. The child loader disables ambient discovery and uses an internal extension factory for model-policy hooks. Configured skills are exact validated files, not discovery directories.
+Child resources are constructed explicitly. They include the role prompt, assignment, and granted skills, but no parent instructions/history, project context files, prompt templates, themes, or reloaded extension/MCP runtimes. General receives available parent skill paths via the public `before_agent_start.systemPromptOptions.skills` metadata and only reviewed leaf tools via the root dispatcher. The child loader disables ambient discovery and uses an internal extension factory for model-policy hooks. Configured and inherited skills are exact validated files, not discovery directories.
+
+`capabilities.ts` denies owned controls and declared tool-reaching paths independently of operator grants. `leafTools` is an explicit operator review assertion about trusted code, not enforcement against hostile or undeclared orchestration. Public SDK dispatch has no child-specific nested-tool scope. Thus unknown non-builtin tools are denied; installed code must be reviewed to be a true leaf. Admission records leaf provenance and denials separately from the existing builtin snapshot set. Calls recheck live inventory, classification/provenance and current ancestor configuration; root hooks remain in the execution path. Leaf tools cannot be rebound to another cwd and always reserve the global writer lease.
 
 ### Tool execution and workspaces
 

@@ -404,7 +404,7 @@ for (const mode of ["steer", "followUp"] as const)
 test("actual running identities reject self/cycle/queued waits and stop wakes a retained-permit waiter", async (t) => {
   const f = await fixture(t, { speed: 100 });
   f.coordinator.configure({ ...DEFAULT_POLICY, concurrency: 2 });
-  await config(f, { general: { coordination: ["wait", "message", "inbox"] } });
+  await config(f, { general: { tools: ["read"], coordination: ["wait", "message", "inbox"] } });
   const a = await f.direct("a".repeat(2000));
   const b = await f.direct("b".repeat(2000));
   const c = await f.direct("queued");
@@ -569,7 +569,7 @@ test("descendant followup/revival retains exact live parent generation, consumes
   });
   await config(f, {
     scheduling: { concurrency: 2, spawns: 2 },
-    general: { spawn: ["general"], coordination: ["wait"] },
+    general: { tools: ["read", "grep", "find", "ls"], spawn: ["general"], coordination: ["wait"] },
   });
   try {
     const parent = await f.launch("parent-hold");
@@ -727,7 +727,11 @@ test("real grandchild cannot message unrelated family, wait on ancestor, or read
   f = await fixture(t, { speed: 0, response: scripted });
   await config(f, {
     scheduling: { concurrency: 3 },
-    general: { spawn: ["general"], coordination: ["message", "wait"] },
+    general: {
+      tools: ["read", "grep", "find", "ls"],
+      spawn: ["general"],
+      coordination: ["message", "wait"],
+    },
   });
   sibling = await f.launch("receive");
   await eventually(() =>

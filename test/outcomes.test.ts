@@ -186,7 +186,10 @@ test("ordered root batch and nested schema submissions use independent registry 
   await mkdir(join(f.root, "operator"), { recursive: true });
   await writeFile(
     join(f.root, "operator", "delegation.json"),
-    JSON.stringify({ general: { spawn: ["general"] }, scheduling: { concurrency: 3 } }),
+    JSON.stringify({
+      general: { tools: ["read", "grep", "find", "ls"], spawn: ["general"] },
+      scheduling: { concurrency: 3 },
+    }),
   );
   await launch(f, { tasks: [task("nested"), task("sibling")] });
   const final = f.events.filter((event) => event.child.disposed).map((event) => event.child);
@@ -295,7 +298,7 @@ test("taskFile literal content flows through actual parent read permission hooks
   await writeFile(join(f.root, "assignment.txt"), literal);
   await symlink("assignment.txt", join(f.root, "ordinary-alias.txt"));
   for (const taskFile of ["assignment.txt", "ordinary-alias.txt"]) {
-    const state = await launch(f, { taskFile, profile: "general" });
+    const state = await launch(f, { taskFile, profile: "scout" });
     assert.equal(state.assignment, literal);
     assert.equal(state.status, "settled");
     const transcript = await readFile(state.transcript!, "utf8");
@@ -506,7 +509,7 @@ test("submitted parent waits for nested descendant drain and subtree shutdown ca
   await mkdir(join(f.root, "operator"), { recursive: true });
   await writeFile(
     join(f.root, "operator", "delegation.json"),
-    JSON.stringify({ general: { spawn: ["general"] } }),
+    JSON.stringify({ general: { tools: ["read", "grep", "find", "ls"], spawn: ["general"] } }),
   );
   const ref = await launch(f, task("parent", { background: true }));
   await eventually(

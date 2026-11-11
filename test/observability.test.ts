@@ -217,7 +217,7 @@ test("real SDK selected generation retains full outcomes/transcript/artifacts ac
     },
   });
   const admission = await captureAdmission(t, f);
-  const warmup = await f.direct("warmup");
+  const warmup = await f.direct("warmup", "scout");
   await f.coordinator.wait(warmup);
   const [ref] = f.coordinator.admit([
     {
@@ -314,7 +314,7 @@ test(
     let hub: ReturnType<typeof createHub> | undefined;
     let stopping: Promise<void> | undefined;
     try {
-      const warmup = await f.direct("warmup");
+      const warmup = await f.direct("warmup", "scout");
       await f.coordinator.wait(warmup);
       const [first, second] = f.coordinator.admit([
         { ...admission(), assignment: "first" },
