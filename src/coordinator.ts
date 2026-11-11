@@ -37,6 +37,7 @@ import { parentModelRuntime } from "./model-adapter.ts";
 import { resolveWorkspace, workspaceArguments } from "./workspace.ts";
 import {
   DEFAULT_POLICY,
+  resolveScheduling,
   narrowLimits,
   validatePolicy,
   type ExecutionLimits,
@@ -74,7 +75,7 @@ export type CoordinationWait =
   | { status: "message"; message: DelegationMessage }
   | {
       status: "outcome";
-      outcome: Pick<ChildSnapshot, "id" | "generation" | "status" | "limitReason">;
+      outcome: Pick<ChildSnapshot, "id" | "generation" | "status" | "limitReason" | "pauseReason">;
     };
 export type ChildRef = Readonly<{ id: string; generation: number }>;
 export type ChildSnapshot = Readonly<
@@ -86,7 +87,20 @@ export type ChildSnapshot = Readonly<
     limits: ExecutionLimits;
     limitReason?: string;
     toolCalls: number;
-    status: "queued" | "setup" | "running" | "draining" | "settled" | "failed" | "cancelled";
+    spawned?: number;
+    pauseReason?: string;
+    retainedContext?: boolean;
+    window?: number;
+    status:
+      | "queued"
+      | "setup"
+      | "running"
+      | "pausing"
+      | "paused"
+      | "draining"
+      | "settled"
+      | "failed"
+      | "cancelled";
     profile: string;
     tools: readonly BuiltinTool[];
     leafTools?: readonly string[];
@@ -160,6 +174,12 @@ type Entry = {
   run?: Promise<void>;
   session?: AgentSession;
   unsubscribe?: () => void;
+  paused?: boolean;
+  resuming?: boolean;
+  pauseDrain?: Promise<void>;
+  prompt?: (text: string) => Promise<void>;
+  resumeText?: string;
+  prompted?: boolean;
   cancelled: boolean;
   callerId: string;
 };
@@ -197,7 +217,10 @@ export class DelegationCoordinator {
   private entries = new Map<string, Entry>();
   private queue = new Set<Entry>();
   private history = new Map<string, { state: ChildSnapshot; messages: AgentSession["messages"] }>();
-  private presence = new Map<string, "active" | "idle" | "parked" | "stopped">();
+  private presence = new Map<
+    string,
+    "active" | "pausing" | "paused" | "idle" | "parked" | "stopped"
+  >();
   private coordinationListeners = new Set<() => void>();
   private coordinationMessages: DelegationMessage[] = [];
   private mailboxes = new Map<string, DelegationMessage[]>();
@@ -291,7 +314,8 @@ export class DelegationCoordinator {
   }
   private active(): Entry[] {
     return [...this.entries.values()].filter(
-      (entry) => !entry.state.disposed && entry.state.status !== "queued",
+      (entry) =>
+        !entry.state.disposed && entry.state.status !== "queued" && entry.state.status !== "paused",
     );
   }
   private validate(input: StartTask): ChildSelection {
@@ -334,7 +358,7 @@ export class DelegationCoordinator {
       throw new Error("Shared checkout writer conflict: in-flight parent mutation");
     if (input.parent) {
       const parent = this.entry(input.parent);
-      if (parent.cancelled || parent.state.disposed)
+      if (parent.cancelled || parent.paused || parent.state.disposed)
         throw new Error("Delegating parent is no longer active");
       if (
         !admittedModel(parent, effective) ||
@@ -465,18 +489,7 @@ export class DelegationCoordinator {
       return narrowLimits(maximum, input.limits ?? {});
     });
     const queued = this.queue.size;
-    const pending = [...this.queue].map((entry) => entry.input).concat(inputs);
-    let slots = Math.max(0, this.policy.concurrency - this.active().length);
-    let writerBusy = !!this.writer || !!this.parentMutations.size;
-    let dispatchable = 0;
-    for (const input of pending) {
-      if (!slots || (isWriter(input.profile) && writerBusy)) break;
-      slots--;
-      dispatchable++;
-      if (isWriter(input.profile)) writerBusy = true;
-    }
-    if (pending.length - dispatchable > this.policy.queue)
-      throw new Error("Delegation queue capacity limit");
+    this.assertQueueCapacity(inputs);
     const parents = new Map<Entry, number>();
     for (const input of inputs)
       if (input.parent) {
@@ -523,6 +536,9 @@ export class DelegationCoordinator {
           writerLease: false,
           limits: limits[index],
           toolCalls: 0,
+          spawned: previous?.spawned ?? 0,
+          window: 1,
+          retainedContext: false,
           profile: input.profile.name,
           tools: [...input.profile.tools],
           leafTools: [...(input.profile.leafTools ?? [])],
@@ -558,7 +574,10 @@ export class DelegationCoordinator {
       };
       return entry;
     });
-    for (const [parent, count] of parents) parent.spawned += count;
+    for (const [parent, count] of parents) {
+      parent.spawned += count;
+      this.update(parent, { spawned: parent.spawned });
+    }
     if (previous)
       this.history.set(this.key(previous.state), {
         state: structuredClone(previous.state),
@@ -618,6 +637,20 @@ export class DelegationCoordinator {
       this.update(this.entry(next), { prewalk: previous.state.prewalk });
     return next;
   }
+  private assertQueueCapacity(inputs: StartTask[]): void {
+    const pending = [...this.queue].map((entry) => entry.input).concat(inputs);
+    let slots = Math.max(0, this.policy.concurrency - this.active().length);
+    let writerBusy = !!this.writer || !!this.parentMutations.size;
+    let dispatchable = 0;
+    for (const input of pending) {
+      if (!slots || (isWriter(input.profile) && writerBusy)) break;
+      slots--;
+      dispatchable++;
+      if (isWriter(input.profile)) writerBusy = true;
+    }
+    if (pending.length - dispatchable > this.policy.queue)
+      throw new Error("Delegation queue capacity limit");
+  }
   private pump(): void {
     if (this.closing) return;
     for (const entry of this.queue) {
@@ -633,9 +666,213 @@ export class DelegationCoordinator {
         writerLease: writer,
         activity: "Preparing SDK child",
       };
-      entry.setup = this.create(entry, entry.input, entry.selection);
+      entry.setup = entry.session
+        ? Promise.resolve().then(() => {
+            if (!entry.paused && !entry.cancelled) return entry.prompt!(entry.resumeText!);
+          })
+        : this.create(entry, entry.input, entry.selection);
       this.update(entry, {});
       void entry.setup.catch(() => {});
+    }
+  }
+  /** Mark the entire active subtree before aborting any SDK or releasing any permit. */
+  private pause(ref: ChildRef): Promise<void> {
+    const root = this.entry(ref);
+    if (root.pauseDrain) return root.pauseDrain;
+    const entries: Entry[] = [];
+    const collect = (entry: Entry) => {
+      if (entry.cancelled || entry.state.disposed || entry.paused) return;
+      entries.push(entry);
+      for (const child of this.children(entry)) collect(child);
+    };
+    collect(root);
+    for (const entry of entries) {
+      entry.paused = true;
+      this.presence.set(entry.state.id, "pausing");
+      clearTimeout(entry.timer);
+      this.queue.delete(entry);
+    }
+    for (const entry of entries)
+      this.update(entry, {
+        status: "pausing",
+        pauseReason: entry === root ? "deadline" : "ancestor deadline",
+        activity: "Deadline reached; aborting and draining before pause",
+      });
+    const drain = async (entry: Entry) => {
+      await entry.setup?.catch(() => {});
+      await entry.session?.abort();
+      await entry.run;
+    };
+    // Start aborts concurrently: an ancestor may be awaiting its descendant's outcome.
+    const drains = new Map(entries.map((entry) => [entry, drain(entry)]));
+    const completions = new Map<Entry, Promise<void>>();
+    const complete = (entry: Entry): Promise<void> => {
+      const existing = completions.get(entry);
+      if (existing) return existing;
+      const completion = Promise.all([
+        drains.get(entry),
+        // Independently pausing children already own their abort and subtree drain.
+        ...this.children(entry).map((child) =>
+          drains.has(child) ? complete(child) : child.pauseDrain,
+        ),
+      ]).then(() => {
+        if (entry.cancelled || this.closing || entry.state.disposed) return;
+        if (this.writer === entry.state.id) this.writer = undefined;
+        this.presence.set(entry.state.id, "paused");
+        this.update(entry, {
+          status: "paused",
+          writerLease: false,
+          retainedContext: !!entry.session,
+          activity: "Paused; explicitly resume to continue retained conversation",
+        });
+        entry.finish();
+        this.pump();
+      });
+      completions.set(entry, completion);
+      entry.pauseDrain = completion;
+      return completion;
+    };
+    const paused = Promise.all(entries.map(complete)).then(() => {});
+    return paused;
+  }
+  /** Continue a drained window without replacing the identity or SDK conversation. */
+  async resume(ref: ChildRef, text: string): Promise<ChildRef> {
+    const entry = this.entry(ref);
+    if (entry.resuming || entry.state.status !== "paused" || entry.cancelled || this.closing)
+      throw new Error("Resume requires a drained paused assignment; duplicate resume rejected");
+    if (!text.trim()) throw new Error("Nonempty continuation text is required");
+    entry.resuming = true;
+    try {
+      const parent = this.renewalParent(ref);
+      const input = entry.input;
+      const policy = await resolveScheduling(input.context.cwd, input.context.isProjectTrusted());
+      this.configure(policy);
+      const limits = { ...entry.state.limits };
+      for (const key of Object.keys(limits) as (keyof ExecutionLimits)[])
+        limits[key] = Math.min(
+          limits[key],
+          policy[key],
+          parent ? this.entry(parent).state.limits[key] : Infinity,
+        );
+      let current: Entry | undefined = entry;
+      let descendant: Entry | undefined;
+      const selected: ModelSelection = {
+        ...entry.state.model,
+        effort: entry.state.effort as ModelSelection["effort"],
+      };
+      while (current) {
+        const { profile } = await resolveProfile(
+          current.input.profile.name,
+          input.context.cwd,
+          input.context.isProjectTrusted(),
+          undefined,
+          current.input.availableSkills?.() ?? current.input.skills,
+        );
+        if (
+          (current.input.profile.models !== undefined && profile.models === undefined) ||
+          !allowsModel(profile, selected) ||
+          !admittedModel(current, selected)
+        )
+          throw new Error("Resume denied: current or admitted model policy revoked");
+        if (descendant && !profile.spawn?.includes(descendant.input.profile.name))
+          throw new Error("Resume denied: ancestor spawn role revoked");
+        // Reject revoked grants instead of rebuilding an SDK tool/resource graph. This never
+        // broadens the original admission and leaves the paused conversation recoverable.
+        for (const key of ["tools", "skills", "leafTools", "spawn", "coordination"] as const)
+          if (
+            (input.profile[key] ?? []).some(
+              (grant) => !(profile[key] as readonly string[] | undefined)?.includes(grant),
+            )
+          )
+            throw new Error(`Resume denied: current ${key} grant revoked`);
+        if (
+          current === entry &&
+          entry.state.prewalk?.status === "armed" &&
+          (!profile.prewalk || !sameSelection(profile.prewalk, entry.state.prewalk.target))
+        )
+          throw new Error("Resume denied: prewalk grant revoked");
+        descendant = current;
+        current = current.input.parent ? this.entry(current.input.parent) : undefined;
+      }
+      validateModelSelection(input.context, selected);
+      const auth = await input.context.modelRegistry.getApiKeyAndHeaders(
+        validateModelSelection(input.context, selected),
+      );
+      if (!auth.ok) throw new Error(auth.error);
+      if (entry.state.prewalk?.status === "armed") {
+        const target = validateModelSelection(input.context, entry.state.prewalk.target);
+        const targetAuth = await input.context.modelRegistry.getApiKeyAndHeaders(target);
+        if (!targetAuth.ok) throw new Error(targetAuth.error);
+      }
+      input.assertTools(input.profile.tools);
+      for (const name of [...input.profile.tools, ...(input.profile.leafTools ?? [])]) {
+        if (!input.context.tools.some((tool) => tool.name === name))
+          throw new Error(`Resume denied: admitted tool no longer callable: ${name}`);
+        if (input.profile.leafTools?.includes(name)) {
+          const metadata = input.toolMetadata?.().find((tool) => tool.name === name);
+          if (
+            !metadata ||
+            leafDenial(
+              metadata,
+              input.profile.leafTools,
+              entry.selection.cwd === resolveWorkspace(undefined, input.context.cwd),
+            ) ||
+            toolProvenance(metadata) !== input.leafProvenance?.[name]
+          )
+            throw new Error(`Resume denied: leaf capability revoked or reclassified: ${name}`);
+        }
+      }
+      if (
+        (entry.state.telemetry.requests ?? 0) >= limits.requests ||
+        entry.state.toolCalls >= limits.tools ||
+        entry.spawned > limits.spawns
+      )
+        throw new Error("Resume denied: cumulative execution budget exhausted");
+      if (entry.state.depth > limits.depth)
+        throw new Error("Resume denied: delegation depth limit");
+      // Reuse the original admission's writer and nested no-lending checks, without
+      // admitting another task or charging another spawn.
+      this.validate(input);
+      this.renewalParent(ref);
+      const available =
+        this.active().length < policy.concurrency &&
+        (!isWriter(input.profile) || (!this.writer && !this.parentMutations.size));
+      if (parent && (this.queue.size || !available))
+        throw new Error("Nested capacity unavailable; no permit lending");
+      this.assertQueueCapacity([input]);
+      if (
+        entry.cancelled ||
+        this.closing ||
+        entry.state.disposed ||
+        entry.state.status !== "paused"
+      )
+        throw new Error("Resume cancelled by stop or shutdown");
+      entry.done = new Promise<void>((resolve) => {
+        entry.finish = resolve;
+      });
+      entry.paused = false;
+      this.presence.set(entry.state.id, "active");
+      entry.pauseDrain = undefined;
+      entry.resumeText =
+        !entry.prompted && entry.resumeText ? entry.resumeText + "\n\n" + text : text;
+      entry.run = undefined;
+      this.queue.add(entry);
+      this.update(entry, {
+        status: "queued",
+        pauseReason: undefined,
+        error: undefined,
+        limits,
+        window: (entry.state.window ?? 1) + 1,
+        activity: "Continuation queued for admission",
+      });
+      const window = entry.state.window;
+      entry.timer = setTimeout(() => {
+        if (entry.state.window === window) this.limit(entry, "deadline");
+      }, limits.deadlineMs);
+      this.pump();
+      return { id: ref.id, generation: ref.generation };
+    } finally {
+      entry.resuming = false;
     }
   }
   private limit(entry: Entry, reason: string): void {
@@ -646,6 +883,10 @@ export class DelegationCoordinator {
       ["settled", "failed", "cancelled"].includes(entry.state.status)
     )
       return;
+    if (reason === "deadline") {
+      void this.pause(entry.state);
+      return;
+    }
     this.update(entry, { limitReason: reason, error: `Execution limit: ${reason}` });
     void this.stop(entry.state);
   }
@@ -704,7 +945,8 @@ export class DelegationCoordinator {
         () => {
           if (policyError) throw new Error(policyError);
           validateModelSelection(input.context, effective());
-          if (entry.cancelled || this.closing) throw new Error("Delegation cancelled");
+          if (entry.cancelled || entry.paused || this.closing)
+            throw new Error("Delegation cancelled");
           if ((entry.state.telemetry.requests ?? 0) >= entry.state.limits.requests) {
             this.limit(entry, "requests");
             throw new Error("Direct request limit");
@@ -743,6 +985,7 @@ export class DelegationCoordinator {
             pi.on("turn_start", async () => {
               try {
                 await revalidate(effective(), entry.state.prewalk?.status === "armed");
+                policyError = undefined;
               } catch (error) {
                 policyError = String(error);
               }
@@ -750,6 +993,7 @@ export class DelegationCoordinator {
             pi.on("turn_end", async (event) => {
               if (
                 !entry.cancelled &&
+                !entry.paused &&
                 !this.closing &&
                 entry.state.prewalk?.status === "armed" &&
                 event.toolResults.some(
@@ -761,7 +1005,7 @@ export class DelegationCoordinator {
                 try {
                   const next = entry.state.prewalk.target;
                   await revalidate(next, true);
-                  if (entry.cancelled || this.closing) return;
+                  if (entry.cancelled || entry.paused || this.closing) return;
                   await entry.session!.setModel(target!);
                   entry.session!.setThinkingLevel(next.effort);
                   if (entry.session!.thinkingLevel !== next.effort)
@@ -793,7 +1037,8 @@ export class DelegationCoordinator {
           description: tool.description,
           parameters: tool.parameters,
           execute: async (_id, args, signal, onUpdate) => {
-            if (entry.cancelled || this.closing) throw new Error("Delegation cancelled");
+            if (entry.cancelled || entry.paused || this.closing)
+              throw new Error("Delegation cancelled");
             if (!input.context.tools.some((tool) => tool.name === name))
               throw new Error(`Admitted parent tool is no longer callable: ${name}`);
             const builtin = input.profile.tools.includes(name as BuiltinTool);
@@ -815,7 +1060,8 @@ export class DelegationCoordinator {
                 throw new Error(`Current capability grant revoked: ${name}`);
               current = current.input.parent ? this.entry(current.input.parent) : undefined;
             }
-            if (entry.cancelled || this.closing) throw new Error("Delegation cancelled");
+            if (entry.cancelled || entry.paused || this.closing)
+              throw new Error("Delegation cancelled");
             if (builtin) input.assertTools([name]);
             else {
               const metadata = input.toolMetadata?.().find((tool) => tool.name === name);
@@ -912,7 +1158,8 @@ export class DelegationCoordinator {
       for (const tool of tools) {
         const execute = tool.execute;
         tool.execute = async (...args) => {
-          if (entry.cancelled || this.closing) throw new Error("Delegation cancelled");
+          if (entry.cancelled || entry.paused || this.closing)
+            throw new Error("Delegation cancelled");
           if (entry.state.toolCalls >= entry.state.limits.tools) {
             this.limit(entry, "tools");
             throw new Error("Tool call limit");
@@ -949,14 +1196,11 @@ export class DelegationCoordinator {
         session.model?.provider !== selection.model?.provider
       )
         throw new Error("SDK did not preserve selected model");
-      let markStarted!: () => void;
-      const started = new Promise<void>((resolve) => {
-        markStarted = resolve;
-      });
+      let markStarted = () => {};
       entry.unsubscribe = session.subscribe((event) => {
         const patch: { -readonly [K in keyof ChildSnapshot]?: ChildSnapshot[K] } = {};
         if (event.type === "agent_start") {
-          patch.status = entry.cancelled ? "draining" : "running";
+          patch.status = entry.cancelled ? "draining" : entry.paused ? "pausing" : "running";
           markStarted();
         }
         if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
@@ -999,71 +1243,90 @@ export class DelegationCoordinator {
         this.dispose(entry);
         return;
       }
-      entry.run = session
-        .prompt(input.assignment, { expandPromptTemplates: false })
-        .then(async () => {
-          await this.stopMany(this.children(entry).map((child) => child.state));
-          const last = session.messages.filter((message) => message.role === "assistant").at(-1);
-          const failed = !last || last.stopReason === "error";
-          const stats = session.getSessionStats();
-          this.update(entry, { status: "draining", activity: "Finalizing outcome artifacts" });
-          const result = session.getLastAssistantText() ?? "";
-          const artifacts: NonNullable<ChildSnapshot["artifacts"]> = {};
-          try {
-            artifacts.text = await saveOutcomeArtifact(
-              taskDir,
-              "result.txt",
-              last?.content
-                .filter((block) => block.type === "text")
-                .map((block) => block.text)
-                .join("") ?? "",
-            );
-            if (entry.state.outcome?.validation === "submitted")
-              artifacts.structured = await saveOutcomeArtifact(
+      entry.prompt = (text) => {
+        if (!entry.prompted) {
+          text = entry.resumeText ? input.assignment + "\n\n" + entry.resumeText : input.assignment;
+          entry.prompted = true;
+        }
+        const started = new Promise<void>((resolve) => {
+          markStarted = resolve;
+        });
+        entry.run = session
+          .prompt(text, { expandPromptTemplates: false })
+          .then(async () => {
+            if (entry.paused && !entry.cancelled && !this.closing) return;
+            await this.stopMany(this.children(entry).map((child) => child.state));
+            if (entry.paused && !entry.cancelled && !this.closing) return;
+            clearTimeout(entry.timer); // Work has drained; artifact publication is finalization.
+            const last = session.messages.filter((message) => message.role === "assistant").at(-1);
+            const failed = !last || last.stopReason === "error";
+            const stats = session.getSessionStats();
+            this.update(entry, { status: "draining", activity: "Finalizing outcome artifacts" });
+            const result = session.getLastAssistantText() ?? "";
+            const artifacts: NonNullable<ChildSnapshot["artifacts"]> = {};
+            try {
+              artifacts.text = await saveOutcomeArtifact(
                 taskDir,
-                "structured.json",
-                JSON.stringify(entry.state.outcome.value),
+                "result.txt",
+                last?.content
+                  .filter((block) => block.type === "text")
+                  .map((block) => block.text)
+                  .join("") ?? "",
               );
-          } catch (error) {
-            artifacts.error = `Outcome artifact persistence failed: ${String(error)}`;
-          }
-          const missing = entry.validator && entry.state.outcome?.validation !== "submitted";
-          this.update(entry, {
-            artifacts,
-            outcome: entry.state.outcome ? { ...entry.state.outcome, finalized: true } : undefined,
-            status:
-              entry.cancelled || last?.stopReason === "aborted"
-                ? "cancelled"
-                : failed || missing || artifacts.error
-                  ? "failed"
-                  : "settled",
-            result,
-            error: entry.state.limitReason
-              ? entry.state.error
-              : failed
-                ? (last?.errorMessage ?? "No final assistant outcome")
-                : missing
-                  ? "Required structured result was not submitted successfully"
-                  : artifacts.error,
-            activity: "Prompt completed",
-            telemetry: {
-              requests: entry.state.telemetry.requests,
-              tokens: stats.assistantMessages ? stats.tokens : null,
-              cost: stats.assistantMessages ? stats.cost : null,
-              context: session.getContextUsage() ?? null,
-            },
+              if (entry.state.outcome?.validation === "submitted")
+                artifacts.structured = await saveOutcomeArtifact(
+                  taskDir,
+                  "structured.json",
+                  JSON.stringify(entry.state.outcome.value),
+                );
+            } catch (error) {
+              artifacts.error = `Outcome artifact persistence failed: ${String(error)}`;
+            }
+            const missing = entry.validator && entry.state.outcome?.validation !== "submitted";
+            this.update(entry, {
+              artifacts,
+              outcome: entry.state.outcome
+                ? { ...entry.state.outcome, finalized: true }
+                : undefined,
+              status:
+                entry.cancelled || last?.stopReason === "aborted"
+                  ? "cancelled"
+                  : failed || missing || artifacts.error
+                    ? "failed"
+                    : "settled",
+              result,
+              error: entry.state.limitReason
+                ? entry.state.error
+                : failed
+                  ? (last?.errorMessage ?? "No final assistant outcome")
+                  : missing
+                    ? "Required structured result was not submitted successfully"
+                    : artifacts.error,
+              activity: "Prompt completed",
+              telemetry: {
+                requests: entry.state.telemetry.requests,
+                tokens: stats.assistantMessages ? stats.tokens : null,
+                cost: stats.assistantMessages ? stats.cost : null,
+                context: session.getContextUsage() ?? null,
+              },
+            });
+          })
+          .catch(async (error) => {
+            if (entry.paused && !entry.cancelled && !this.closing) return;
+            await this.stopMany(this.children(entry).map((child) => child.state));
+            this.update(entry, {
+              status: entry.cancelled ? "cancelled" : "failed",
+              error: entry.state.limitReason ? entry.state.error : String(error),
+            });
+          })
+          .finally(() => {
+            if (!entry.paused || entry.cancelled || this.closing) this.dispose(entry);
           });
-        })
-        .catch(async (error) => {
-          await this.stopMany(this.children(entry).map((child) => child.state));
-          this.update(entry, {
-            status: entry.cancelled ? "cancelled" : "failed",
-            error: entry.state.limitReason ? entry.state.error : String(error),
-          });
-        })
-        .finally(() => this.dispose(entry));
-      // prompt preparation precedes abort-signal ownership; acknowledge only abortable work.
-      await Promise.race([started, entry.run]);
+        // Prompt preparation precedes abort-signal ownership in every execution window.
+        return Promise.race([started, entry.run]);
+      };
+      if (entry.paused) return;
+      await entry.prompt(entry.resumeText ?? input.assignment);
     } catch (error) {
       this.update(entry, {
         status: entry.cancelled || this.closing ? "cancelled" : "failed",
@@ -1093,11 +1356,17 @@ export class DelegationCoordinator {
     // Retain immutable evidence, not the disposed SDK session graph, while idle/parked.
     entry.unsubscribe = undefined;
     entry.session = undefined;
+    entry.prompt = undefined;
+    entry.resumeText = undefined;
+    entry.setup = undefined;
+    entry.run = undefined;
+    entry.pauseDrain = undefined;
     if (this.writer === entry.state.id) this.writer = undefined;
     this.closeDescendantPresence(entry);
     this.presence.set(entry.state.id, entry.cancelled || this.closing ? "stopped" : "idle");
     this.update(entry, {
       disposed: true,
+      retainedContext: false,
       endedAt: Date.now(),
       writerLease: false,
       outcome: entry.state.outcome ? { ...entry.state.outcome, finalized: true } : undefined,
@@ -1297,6 +1566,7 @@ export class DelegationCoordinator {
         if (
           sender &&
           (sender.cancelled ||
+            sender.paused ||
             sender.state.disposed ||
             this.entries.get(sender.state.id) !== sender)
         )
@@ -1318,7 +1588,7 @@ export class DelegationCoordinator {
               });
           }
         } else if (destination) {
-          if (destination.state.disposed)
+          if (destination.state.disposed || destination.state.status === "paused")
             return finish({
               status: "outcome",
               outcome: {
@@ -1326,6 +1596,9 @@ export class DelegationCoordinator {
                 generation: destination.state.generation,
                 status: destination.state.status,
                 limitReason: destination.state.limitReason,
+                ...(destination.state.pauseReason
+                  ? { pauseReason: destination.state.pauseReason }
+                  : {}),
               },
             });
         } else if ((this.mailboxes.get(sourceKey)?.length ?? 0) > 0)
@@ -1351,6 +1624,7 @@ export class DelegationCoordinator {
     const entry = this.entry(ref);
     if (
       entry.cancelled ||
+      entry.paused ||
       entry.state.disposed ||
       this.closing ||
       !entry.input.profile.tools.includes("read")
@@ -1401,6 +1675,7 @@ export class DelegationCoordinator {
     await Promise.all([descendants, entry.state.disposed ? undefined : entry.session?.abort()]);
     if (entry.state.disposed) return;
     await entry.run;
+    if (!entry.state.disposed) this.update(entry, { status: "cancelled" });
     this.dispose(entry);
   }
   async wait(ref: ChildRef): Promise<ChildSnapshot> {

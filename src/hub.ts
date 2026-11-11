@@ -26,9 +26,11 @@ const assignmentHeadline = (child: ChildSnapshot) =>
     ?.replace(/^#{1,6}\s+/, "") || "Assignment";
 export const agentLabel = (child: ChildSnapshot) =>
   `${assignmentHeadline(child)} · ${lineText(child.profile)}`;
-const active = (child: ChildSnapshot) => !child.disposed;
+const active = (child: ChildSnapshot) => !child.disposed && child.status !== "paused";
 const activity = (child: ChildSnapshot) =>
-  child.error ||
+  (child.status === "paused"
+    ? `Paused: ${child.pauseReason ?? "deadline"} · context ${child.retainedContext ? "retained" : "not yet available"} · resume via model or stop in Hub`
+    : child.error) ||
   (active(child) ? child.activity || child.progress : child.result) ||
   child.progress ||
   "Waiting for SDK activity";
@@ -38,6 +40,8 @@ const statuses = [
   "setup",
   "running",
   "draining",
+  "pausing",
+  "paused",
   "settled",
   "failed",
   "cancelled",
@@ -63,7 +67,7 @@ export function createChildWidget(
       if (!children.length) return [];
       const queued = children.filter((child) => child.status === "queued").length;
       const priority = (child: ChildSnapshot) =>
-        child.status === "draining"
+        child.status === "draining" || child.status === "pausing"
           ? 0
           : child.status === "running"
             ? 1
@@ -74,14 +78,17 @@ export function createChildWidget(
         .filter(
           (child) =>
             !child.disposed &&
-            (child.status === "setup" || child.status === "running" || child.status === "draining"),
+            (child.status === "setup" ||
+              child.status === "running" ||
+              child.status === "draining" ||
+              child.status === "pausing"),
         )
         .sort((a, b) => priority(a) - priority(b));
       const writer = children.some((child) => child.writerLease);
       const budget = Math.max(1, Math.min(5, Math.floor(availableRows() / 4)));
       const counts =
         width < 60
-          ? `${live.length} active · ${queued} queued`
+          ? `${live.filter(active).length} active · ${children.filter((child) => child.status === "paused").length} paused · ${queued} queued`
           : statuses
               .flatMap((status) => {
                 const count = children.filter((child) => child.status === status).length;
@@ -103,7 +110,8 @@ export function createChildWidget(
       const shown = live.slice(0, Math.max(0, slots - (overflow ? 1 : 0)));
       shown.forEach((child, index) => {
         const last = index === shown.length - 1 && shown.length === live.length;
-        const color = child.status === "draining" ? "warning" : "accent";
+        const color =
+          child.status === "draining" || child.status === "pausing" ? "warning" : "accent";
         const role = lineText(child.profile);
         const indent = "  ".repeat(Math.min(3, Math.max(0, child.depth - 1)));
         const prefix =
@@ -181,6 +189,12 @@ export function taskCard(child: ChildSnapshot | undefined, expanded = false): st
         ]
       : []),
     ...(child.limitReason ? [`Limit: ${child.limitReason}`] : []),
+    ...(child.pauseReason
+      ? [
+          `Pause: ${child.pauseReason} · context ${child.retainedContext ? "retained" : "not yet available"} · resume via model control after drain`,
+        ]
+      : []),
+    `Window ${child.window ?? 1} · cumulative requests ${child.telemetry.requests ?? 0}/${child.limits.requests} · tools ${child.toolCalls}/${child.limits.tools} · spawns ${child.spawned ?? 0}/${child.limits.spawns}`,
     ...(child.artifacts ? [`Artifacts: ${JSON.stringify(child.artifacts)}`] : []),
     ...(expanded
       ? [
@@ -337,6 +351,7 @@ export function createHub(
         !child ||
         child.disposed ||
         child.status === "draining" ||
+        child.status === "pausing" ||
         (text !== undefined && child.status !== "running")
       )
         throw new Error(
@@ -539,7 +554,7 @@ export function createHub(
             `Effective builtin tools: ${child.tools.join(", ")}`,
             `${child.model.provider}/${child.model.id} · effort ${child.effort ?? "unavailable"}`,
             `Prewalk ${child.prewalk ? JSON.stringify(child.prewalk) : "off"} · advisor unavailable`,
-            `Presence ${coordinator.agents().find((agent) => agent.id === child.id && agent.generation === child.generation)?.presence ?? "historical"} · resources ${child.disposed ? "disposed" : "live"}`,
+            `Presence ${coordinator.agents().find((agent) => agent.id === child.id && agent.generation === child.generation)?.presence ?? "historical"} · resources ${child.disposed ? "disposed" : child.status === "paused" ? "idle SDK; context retained; model resume required" : "live"}`,
             `Elapsed ${Math.max(0, Math.floor(((child.endedAt ?? Date.now()) - child.createdAt) / 1000))}s`,
             `Direct requests ${metric(child.telemetry.requests)} · cost ${metric(child.telemetry.cost)}`,
             `Direct tokens ${metric(child.telemetry.tokens)}`,
@@ -798,6 +813,7 @@ export function createHub(
           child &&
           !child.disposed &&
           child.status !== "draining" &&
+          child.status !== "pausing" &&
           (data === "x" || child.status === "running")
         ) {
           mode = data === "s" ? "steer" : data === "m" ? "message" : "stop";
