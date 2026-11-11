@@ -8,7 +8,7 @@ import { fixture, eventually } from "./fixtures.ts";
 import type { ChildSnapshot } from "../src/coordinator.ts";
 
 const text = (context: Parameters<import("@earendil-works/pi-ai").FauxResponseFactory>[0]) => {
-  const user = context.messages.find(message => message.role === "user");
+  const user = context.messages.filter(message => message.role === "user").at(-1);
   return typeof user?.content === "string" ? user.content : user?.content.filter(block => block.type === "text").map(block => block.text).join("") ?? "";
 };
 
@@ -43,6 +43,35 @@ test("aborted active parent-dispatched tool drains before writer lease or schedu
     const disposed = f.events.filter(event => event.child.disposed).map(event => event.child);
     assert.deepEqual(disposed.map(state => state.status), ["cancelled", "settled"]);
     assert.match(await readFile(disposed[1].transcript!, "utf8"), /written/);
+    assert.equal(await readFile(join(f.root, "second.txt"), "utf8"), "written");
+  } finally { release(); }
+});
+
+test("root writer admission queues while the current writer's forwarded write is in flight", { timeout: 10000 }, async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let entered = false;
+  const f = await fixture(t, { extra: pi => {
+    pi.on("tool_call", async event => {
+      if (event.toolName === "write" && !entered) { entered = true; await gate; }
+    });
+  }, response: context => {
+    const assignment = text(context);
+    if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
+    return fauxAssistantMessage(fauxToolCall(assignment.startsWith("LAUNCH ") ? "delegate_task" : "write", assignment.startsWith("LAUNCH ") ? JSON.parse(assignment.slice(7)) : { path: assignment + ".txt", content: "written" }), { stopReason: "toolUse" });
+  } });
+  try {
+    const first = await f.launch("first", "implementation");
+    await eventually(() => entered);
+    const second = await f.launch("second", "implementation");
+    const latest = (id: string) => f.events.filter(event => event.child.id === id).at(-1)!.child;
+    assert.equal(latest(first.id).writerLease, true);
+    assert.equal(latest(second.id).status, "queued");
+    assert.equal(latest(second.id).transcript, undefined);
+    release();
+    await eventually(() => latest(second.id).disposed);
+    assert.equal(latest(first.id).status, "settled");
+    assert.equal(latest(second.id).status, "settled");
     assert.equal(await readFile(join(f.root, "second.txt"), "utf8"), "written");
   } finally { release(); }
 });
@@ -97,6 +126,35 @@ test("parent cancellation drains the actual nested tree before finalizing the an
   assert.ok(disposed.every(state => state.status === "cancelled"));
   assert.equal(disposed[0].parentId, child.id);
   for (const state of disposed) assert.match(await readFile(state.transcript!, "utf8"), /"stopReason":"aborted"/);
+});
+
+test("subtree stop aborts an ancestor tool before draining a descendant queued in the sequential root dispatcher", { timeout: 10000 }, async t => {
+  let bashStarted = false;
+  const f = await fixture(t, { extra: pi => {
+    pi.on("tool_execution_start", event => { if (event.toolName === "bash") bashStarted = true; });
+  }, response: context => {
+    const assignment = text(context);
+    if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
+    if (assignment.startsWith("LAUNCH ")) return fauxAssistantMessage(fauxToolCall("delegate_task", JSON.parse(assignment.slice(7))), { stopReason: "toolUse" });
+    if (assignment === "grandchild") return fauxAssistantMessage(fauxToolCall("read", { path: "input.txt" }), { stopReason: "toolUse" });
+    return fauxAssistantMessage([
+      fauxToolCall("bash", { command: "sleep 3" }),
+      fauxToolCall("delegate_task", { assignment: "grandchild", profile: "general" }),
+    ], { stopReason: "toolUse" });
+  } });
+  f.session.agent.toolExecution = "sequential";
+  await writeFile(join(f.root, "input.txt"), "input");
+  await mkdir(join(f.root, "operator"), { recursive: true });
+  await writeFile(join(f.root, "operator", "delegation.json"), JSON.stringify({ implementation: { spawn: ["general"] } }));
+  const child = await f.launch("child", "implementation");
+  await eventually(() => bashStarted && f.events.some(event => event.child.depth === 2 && event.event?.type === "tool_execution_start" && event.event.toolName === "read"));
+  const start = Date.now();
+  await f.session.prompt(`/task-stop ${child.id} ${child.generation}`);
+  assert.ok(Date.now() - start < 1500, "stop must abort bash rather than wait for its natural exit");
+  const disposed = f.events.filter(event => event.child.disposed).map(event => event.child);
+  assert.deepEqual(disposed.map(state => state.depth), [2, 1]);
+  assert.ok(disposed.every(state => state.status === "cancelled"));
+  assert.equal(disposed.at(-1)!.writerLease, false);
 });
 
 test("reload cancels queued and active batch assignments and suppresses old-runtime final delivery", async t => {

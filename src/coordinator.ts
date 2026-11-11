@@ -96,7 +96,8 @@ export class DelegationCoordinator {
       scopedModels: input.context.scopedModels, thinkingLevel: input.context.thinkingLevel, cwd: input.context.cwd };
     if (!selection.model) throw new Error("A selected parent model is required");
     for (const name of input.profile.tools) if (!input.context.tools.some(tool => tool.name === name)) throw new Error(`Parent tool grant unavailable: ${name}`);
-    if (isWriter(input.profile) && this.parentMutations.size) throw new Error("Shared checkout writer conflict: in-flight parent mutation");
+    const writer = this.writer ? this.entries.get(this.writer) : undefined;
+    if (isWriter(input.profile) && [...this.parentMutations].some(id => !writer || !id.startsWith(writer.callerId + "/"))) throw new Error("Shared checkout writer conflict: in-flight parent mutation");
     if (input.parent) {
       const parent = this.entry(input.parent);
       if (parent.cancelled || parent.state.disposed) throw new Error("Delegating parent is no longer active");
@@ -301,10 +302,12 @@ export class DelegationCoordinator {
     entry.cancelled = true;
     if (entry.state.status === "queued") { this.update(entry, { status: "cancelled", activity: "Cancelled before setup" }); this.dispose(entry); return; }
     this.update(entry, { status: "draining", activity: "Cancelling and draining" });
-    await this.stopMany(this.children(entry).map(child => child.state));
+    // Start subtree cancellation without waiting for tools queued behind this session.
+    const descendants = this.stopMany(this.children(entry).map(child => child.state));
     await entry.setup?.catch(() => {});
+    await Promise.all([descendants, entry.state.disposed ? undefined : entry.session?.abort()]);
     if (entry.state.disposed) return;
-    await entry.session?.abort(); await entry.run;
+    await entry.run;
     this.dispose(entry);
   }
   async wait(ref: ChildRef): Promise<ChildSnapshot> { const entry = this.entry(ref); await entry.done; return this.snapshot(ref)!; }
