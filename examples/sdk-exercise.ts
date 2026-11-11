@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import delegation from "../src/extension.ts";
+import delegation from "../src/pi-extended-subagents.ts";
 import { createControlledProvider } from "./controlled-parent.ts";
 import type { RegistryEvent } from "../src/coordinator.ts";
 

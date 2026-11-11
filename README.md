@@ -18,7 +18,7 @@ npm run exercise
 npm pack --dry-run
 ```
 
-Load only the production extension with `pi -e /absolute/path/to/src/extension.ts`. Select a physical model using Pi's normal `/login` and `/model` setup. **Production delegation uses that provider and may incur charges.** It does not automatically switch to a cheaper/different model or use scripted responses. Explicit operator-granted exact model/effort selection and one-way prewalk are available; see [advanced policies and capability boundaries](docs/advanced-policies.md). Missing authentication, unsupported virtual routing, an empty effective builtin tool set or forbidden resource grants fail visibly. Role tool lists are maximum allowlists, not requirements to activate every listed tool. Custom overrides of tools that would be forwarded are deliberately rejected rather than bypassed.
+Load only the production extension with `pi -e /absolute/path/to/src/pi-extended-subagents.ts`. Select a physical model using Pi's normal `/login` and `/model` setup. **Production delegation uses that provider and may incur charges.** It does not automatically switch to a cheaper/different model or use scripted responses. Explicit operator-granted exact model/effort selection and one-way prewalk are available; see [advanced policies and capability boundaries](docs/advanced-policies.md). Missing authentication, unsupported virtual routing, an empty effective builtin tool set or forbidden resource grants fail visibly. Role tool lists are maximum allowlists, not requirements to activate every listed tool. Custom overrides of tools that would be forwarded are deliberately rejected rather than bypassed.
 
 Ask the parent model, for example:
 
@@ -140,7 +140,7 @@ mkdir -p "$root/home" "$root/workspace"
     "$node_bin" "$repo/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
     --offline --no-extensions --no-mcp --no-skills --no-prompt-templates \
     --no-themes --no-context-files --tools read,grep,find,ls,delegate_task \
-    --session-dir "$root/sessions" -e "$repo/src/extension.ts" \
+    --session-dir "$root/sessions" -e "$repo/src/pi-extended-subagents.ts" \
     -e "$repo/examples/controlled-parent.ts" -p 'delegate example' </dev/null
 )
 # Inspect only these new files before removing the temporary walkthrough root:
@@ -170,4 +170,4 @@ No live provider inference, credential changes, global Pi installation/config ch
 
 ### Offline fleet UI exercise (synthetic workspace only)
 
-Create `input.txt` in a disposable cwd and run this checkout’s local Pi CLI with `--offline --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files`, explicit `-e /absolute/path/src/extension.ts -e /absolute/path/examples/controlled-fleet.ts`, and tools `read,grep,find,ls,write,edit,bash,delegate_task,delegate_coordinate`. The controlled example selects its own offline provider; do not use it in a real project (its writer creates `fleet-output.txt`). Enter `fleet example`, then `/task-hub`. `/fleet-theme dark` and `/fleet-theme light` exercise live theme changes. `fleet coordinate <JSON>` explicitly model-calls native `delegate_coordinate` for synthetic park/followup/revive. This is controlled SDK/terminal evidence, not live inference or human visual acceptance. The example is not loaded by the package manifest.
+Create `input.txt` in a disposable cwd and run this checkout’s local Pi CLI with `--offline --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files`, explicit `-e /absolute/path/src/pi-extended-subagents.ts -e /absolute/path/examples/controlled-fleet.ts`, and tools `read,grep,find,ls,write,edit,bash,delegate_task,delegate_coordinate`. The controlled example selects its own offline provider; do not use it in a real project (its writer creates `fleet-output.txt`). Enter `fleet example`, then `/task-hub`. `/fleet-theme dark` and `/fleet-theme light` exercise live theme changes. `fleet coordinate <JSON>` explicitly model-calls native `delegate_coordinate` for synthetic park/followup/revive. This is controlled SDK/terminal evidence, not live inference or human visual acceptance. The example is not loaded by the package manifest.

@@ -1,5 +1,11 @@
 # Delegation verification
 
+## Recognizable local extension name
+
+The production entrypoint is now `src/pi-extended-subagents.ts`, declared in the package manifest and used by current examples/tests/docs. Pi labels local extensions from their filenames, so this replaces the generic `extension.ts` startup label. Entrypoint contents are byte-identical to the prior module; no compatibility shim or runtime change was added.
+
+A real public `DefaultResourceLoader` test loads the local package through its manifest and verifies the named entrypoint with zero loader errors. Focused CLI/package tests **3/3**, default suite **133/133**, typecheck, SDK exercise, 18-file package dry run and diff checks pass. No live-provider calls or current-session reload were needed. Source/test digest: `ef76002358cdbb8c02eabd5a7211d526b58e0e4f18ffb06fbf98d177c96927c9` (sorted top-level source/test TypeScript files, then package manifests). Earlier verification below records the entrypoint's historical name.
+
 ## Hub navigation and compact agent tree — user follow-up
 
 Admitted clean source HEAD **bdc4460e3858a29521e863cb6a7224d326434edb**. Only Hub/widget presentation, tests and docs change; native main-chat components, registry/permission/scheduler/model authority, exact UUID+generation actions and the short-height visible-original-target-or-refuse guard remain intact. Reference: `tintinweb/pi-subagents` **8df7fa7d8e8130151a8fbfa991a1d3fa6b443739**, README UI section/widget hierarchy and actual screenshot, read-only. The widget is an independent visual interpretation, not copied runtime/source/assets or a reference plugin.

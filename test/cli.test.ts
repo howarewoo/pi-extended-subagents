@@ -6,12 +6,27 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
+
+test("local package manifest loads the recognizably named production extension", async () => {
+  const root = await mkdtemp(join(tmpdir(), "extended-subagents-package-"));
+  try {
+    const repo = fileURLToPath(new URL("..", import.meta.url));
+    const loader = new DefaultResourceLoader({ cwd: root, agentDir: join(root, "agent"),
+      settingsManager: SettingsManager.inMemory({packages: [repo]}),
+      noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
+    await loader.reload();
+    const loaded = loader.getExtensions();
+    assert.deepEqual(loaded.errors, []);
+    assert.deepEqual(loaded.extensions.map(extension => extension.path), [join(repo, "src", "pi-extended-subagents.ts")]);
+  } finally { await rm(root, {recursive: true, force: true}); }
+});
 
 test("isolated real Pi CLI exit aborts the delegated child before scripted completion", { timeout: 15000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "extended-subagents-cli-"));
   try {
     const cli = fileURLToPath(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js", import.meta.url));
-    const extension = fileURLToPath(new URL("../src/extension.ts", import.meta.url));
+    const extension = fileURLToPath(new URL("../src/pi-extended-subagents.ts", import.meta.url));
     const controlled = fileURLToPath(new URL("../examples/controlled-parent.ts", import.meta.url));
     const invocation = promisify(execFile)(process.execPath, [cli,
       "--offline", "--no-extensions", "--no-mcp", "--no-skills", "--no-prompt-templates",
@@ -41,7 +56,7 @@ test("isolated ordinary-default Pi CLI launches two scouts with read only, witho
   const root = await mkdtemp(join(tmpdir(), "extended-subagents-default-cli-"));
   try {
     const cli = fileURLToPath(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js", import.meta.url));
-    const extension = fileURLToPath(new URL("../src/extension.ts", import.meta.url));
+    const extension = fileURLToPath(new URL("../src/pi-extended-subagents.ts", import.meta.url));
     const ai = new URL("../node_modules/@earendil-works/pi-ai/dist/index.js", import.meta.url).href;
     const controlled = join(root, "controlled-default.ts");
     await writeFile(join(root, "input.txt"), "default CLI real read payload");

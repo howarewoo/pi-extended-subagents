@@ -5,7 +5,7 @@ import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager
 import { fauxProvider, fauxAssistantMessage, fauxToolCall, InMemoryCredentialStore, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { TestContext } from "node:test";
-import extension from "../src/extension.ts";
+import extension from "../src/pi-extended-subagents.ts";
 import { DelegationCoordinator, type RegistryEvent } from "../src/coordinator.ts";
 import { resolveProfile } from "../src/profiles.ts";
 

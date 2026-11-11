@@ -1,6 +1,6 @@
 # Delegation contract (Pi 1.5.2)
 
-Reference for operators and extension/UI consumers. Authoritative types and execution registry: [`src/coordinator.ts`](../src/coordinator.ts); profiles/grants: [`src/profiles.ts`](../src/profiles.ts); finite policy: [`src/scheduling.ts`](../src/scheduling.ts); public model/auth adapter: [`src/model-adapter.ts`](../src/model-adapter.ts); model tool/lifecycle: [`src/extension.ts`](../src/extension.ts). These are native interfaces, not OMP/pi-subagents compatibility.
+Reference for operators and extension/UI consumers. Authoritative types and execution registry: [`src/coordinator.ts`](../src/coordinator.ts); profiles/grants: [`src/profiles.ts`](../src/profiles.ts); finite policy: [`src/scheduling.ts`](../src/scheduling.ts); public model/auth adapter: [`src/model-adapter.ts`](../src/model-adapter.ts); model tool/lifecycle: [`src/pi-extended-subagents.ts`](../src/pi-extended-subagents.ts). These are native interfaces, not OMP/pi-subagents compatibility.
 
 ## Input and atomic preflight
 

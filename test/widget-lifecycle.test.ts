@@ -7,7 +7,7 @@ import { createAgentSession, DefaultResourceLoader, initTheme, ModelRuntime, Ses
   type AgentSession, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { fauxProvider, fauxAssistantMessage, fauxToolCall, InMemoryCredentialStore, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { colorToRgb, indexedColor, rgbColor, ProcessTerminal, TuiMainScreen, visibleWidth, type Component } from "@earendil-works/pi-tui";
-import extension from "../src/extension.ts";
+import extension from "../src/pi-extended-subagents.ts";
 import { createHub } from "../src/hub.ts";
 import { DelegationCoordinator, type RegistryEvent } from "../src/coordinator.ts";
 
