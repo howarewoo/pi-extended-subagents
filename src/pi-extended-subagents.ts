@@ -2,6 +2,7 @@ import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { EFFORTS, sameSelection } from "./model-policy.ts";
 import { clippedText } from "./outcomes.ts";
 import { readTaskInput } from "./task-input.ts";
+import { resolveWorkspace } from "./workspace.ts";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { truncateHead, type ExtensionToolContext, type ToolDefinition, type ToolRenderers, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -32,7 +33,8 @@ export default function delegation(pi: ExtensionAPI) {
     const clipped = truncateHead((references.length ? `References: ${JSON.stringify(references)}\n` : transcript ? `Transcript: ${transcript}\n` : "") + text);
     return `${clipped.content}${clipped.truncated ? "\n[Preview truncated; inspect full artifact/transcript references or task-status for one identity]" : ""}`;
   };
-  const show = (value: unknown, transcript?: string) => pi.sendMessage({ customType: "delegation", content: preview(value, transcript), display: true });
+  const compatible = (state: ChildSnapshot) => ({ ...state, taskId: state.id, id: `${state.id}@${state.generation}` });
+  const show = (value: unknown, transcript?: string, wake = false) => pi.sendMessage({ customType: "delegation", content: preview(value, transcript), display: true }, wake ? { triggerTurn: true, deliverAs: "followUp" } : undefined);
   pi.on("session_start", (_event, ctx) => {
     coordinator = new DelegationCoordinator(join(ctx.sessionManager.getSessionDir(), "delegation", ctx.sessionManager.getSessionId()), ctx.sessionManager.getSessionId());
     unsubscribeWidget = coordinator.subscribe(event => { renderWidget?.(); pi.events.emit("delegation:registry", event); });
@@ -52,7 +54,10 @@ export default function delegation(pi: ExtensionAPI) {
   pi.on("tool_call", event => {
     try {
       const builtinRead = READ_TOOLS.includes(event.toolName as typeof READ_TOOLS[number]) && pi.getAllTools().some(tool => tool.name === event.toolName && tool.sourceInfo.path === `builtin:${event.toolName}`);
-      coordinator.parentToolStart(event.toolCallId, event.toolName, builtinRead);
+      const tools = pi.getAllTools();
+      const ownSource = tools.find(tool => tool.name === "delegate_task")?.sourceInfo.path;
+      const ownCompatibilityCall = event.toolName === "subagent" && ownSource !== undefined && tools.some(tool => tool.name === "subagent" && tool.sourceInfo.path === ownSource);
+      coordinator.parentToolStart(event.toolCallId, event.toolName, builtinRead || ownCompatibilityCall);
     }
     catch (error) { return { block: true, reason: String(error) }; }
   });
@@ -65,16 +70,18 @@ export default function delegation(pi: ExtensionAPI) {
   };
   const role = Type.Union([Type.Literal("general"), Type.Literal("scout"), Type.Literal("review"), Type.Literal("implementation")]);
   const limits = Type.Object({ depth: Type.Optional(Type.Integer({ minimum: 0 })), spawns: Type.Optional(Type.Integer({ minimum: 0 })), deadlineMs: Type.Optional(Type.Integer({ minimum: 1 })), requests: Type.Optional(Type.Integer({ minimum: 1 })), tools: Type.Optional(Type.Integer({ minimum: 1 })) }, { additionalProperties: false });
-  const modelSelection = Type.Object({ provider: Type.String({ minLength: 1 }), id: Type.String({ minLength: 1 }), effort: Type.Union(EFFORTS.map(level => Type.Literal(level))) }, { additionalProperties: false });
-  const assignment = { models: Type.Optional(Type.Array(modelSelection, { maxItems: 64 })), model: Type.Optional(modelSelection), assignment: Type.Optional(Type.String({ minLength: 1 })), taskFile: Type.Optional(Type.String({ minLength: 1 })), resultSchema: Type.Optional(Type.Unknown()), profile: role, spawn: Type.Optional(Type.Array(role)), coordination: Type.Optional(Type.Array(Type.Union(COORDINATION_ACTIONS.map(action => Type.Literal(action))))), limits: Type.Optional(limits) };
+  const modelSelection = Type.Object({ provider: Type.String({ minLength: 1 }), id: Type.String({ minLength: 1 }), effort: Type.Enum(EFFORTS) }, { additionalProperties: false });
+  const assignment = { cwd: Type.Optional(Type.String({ minLength: 1, description: "Existing workspace; absolute or relative to root parent cwd. No new permissions or sandbox." })), models: Type.Optional(Type.Array(modelSelection, { maxItems: 64 })), model: Type.Optional(modelSelection), assignment: Type.Optional(Type.String({ minLength: 1 })), taskFile: Type.Optional(Type.String({ minLength: 1 })), resultSchema: Type.Optional(Type.Unknown()), profile: role, spawn: Type.Optional(Type.Array(role)), coordination: Type.Optional(Type.Array(Type.Union(COORDINATION_ACTIONS.map(action => Type.Literal(action))))), limits: Type.Optional(limits) };
   const item = Type.Object(assignment, { additionalProperties: false });
   const parameters = Type.Union([
     Type.Object({ ...assignment, background: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
     Type.Object({ tasks: Type.Array(item, { minItems: 1, maxItems: 64 }), background: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
   ]);
-  const taskTool = (parent?: ChildRef, rootContext?: ExtensionToolContext, rootCallerId?: string): ToolDefinition<typeof parameters> => ({
+  const taskTool = (parent?: ChildRef, rootContext?: ExtensionToolContext, rootCallerId?: string, compatibility = false): ToolDefinition<typeof parameters> => ({
     name: "delegate_task", label: "Delegate task", exposure: "model-only",
-    description: "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model by default. Optional exact model {provider,id,effort} requires an operator profile models grant and stays exact, suppressing inherited role prewalk; models may only narrow that grant list. No aliases/fallback/coercion. Configured role-default prewalk switches once after first edit/write, not a repository scan. Advisor/probes/speculation/workers/history/executable resource inheritance remain unavailable. Role tools are ceilings intersected with callable parent builtins; inactive tools stay inactive. Snapshots report effective tools. Bounded FIFO capacity; effective implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits; background delivers one final batch message. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
+    promptSnippet: "Delegate coding, review or research to native sub-agents in supplied workspaces",
+    promptGuidelines: ["Use delegate_task for authorized native delegation with explicit profiles. When subagent is available, prefer subagent for orchestration task owners and its async completion wake-ups. Supply the existing task workspace cwd; do not substitute inline implementation when a workflow requires a worker."],
+    description: "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model by default. Optional exact model {provider,id,effort} requires an operator profile models grant and stays exact, suppressing inherited role prewalk; models may only narrow that grant list. No aliases/fallback/coercion. Configured role-default prewalk switches once after first edit/write, not a repository scan. Coding workers are supported through implementation; advisor/probes/speculation/history/executable resource inheritance remain unavailable. Optional cwd selects an existing workspace: root hooks see explicitly resolved builtin paths and a cwd-prefixed shell command; this is not sandboxing or transparent hook-cwd rebinding. Role tools are ceilings intersected with callable parent builtins; inactive tools stay inactive. Snapshots report effective tools. Bounded FIFO capacity; effective implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits; background delivers one final batch message. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
     parameters,
     renderCall(args, theme) {
       return { render: width => [theme.fg("toolTitle", `Delegate · ${"tasks" in args ? `batch ${args.tasks?.length ?? 0}` : safe(args.profile ?? "profile pending")} · ${args.background ? "background" : "foreground"}`),
@@ -102,6 +109,7 @@ export default function delegation(pi: ExtensionAPI) {
       const inputs: StartTask[] = [];
       for (const task of items) {
         if ((task.assignment === undefined) === (task.taskFile === undefined)) throw new Error("Supply exactly one of assignment or taskFile");
+        const cwd = resolveWorkspace(task.cwd ?? (parent ? owner.snapshot(parent)?.cwd : undefined), ctx.cwd);
         let { profile, skills } = await resolveProfile(task.profile, ctx.cwd, ctx.isProjectTrusted());
         if (task.spawn) {
           if (task.spawn.some(role => !profile.spawn?.includes(role))) throw new Error("Request cannot mint spawn grants");
@@ -118,9 +126,9 @@ export default function delegation(pi: ExtensionAPI) {
         let text = task.assignment;
         if (task.taskFile !== undefined) {
           assertTools(["read"]);
-          text = await readTaskInput(task.taskFile, ctx, signal, parent ? () => owner.taskInputRead(parent) : undefined);
+          text = await readTaskInput(task.taskFile, ctx, signal, parent ? () => owner.taskInputRead(parent) : undefined, cwd);
         }
-        inputs.push({ model: task.model, assignment: text!, resultSchema: task.resultSchema, profile, skills, context: ctx, assertTools, callerId: rootCallerId ?? callerId, parent, limits: task.limits,
+        inputs.push({ cwd, model: task.model, assignment: text!, resultSchema: task.resultSchema, profile, skills, context: ctx, assertTools, callerId: rootCallerId ?? callerId, parent, limits: task.limits,
           coordinationTools: actor => [coordinationTool(owner, actor)],
           nestedTool: (ref: ChildRef) => taskTool(ref, ctx, rootCallerId ?? callerId) });
       }
@@ -132,6 +140,7 @@ export default function delegation(pi: ExtensionAPI) {
       if (signal?.aborted) await stop();
       const states = () => children.map(child => owner.snapshot(child)!);
       const result = (snapshots: ChildSnapshot[]) => {
+        if (compatibility) snapshots = snapshots.map(compatible);
         const value = "tasks" in args ? snapshots : snapshots[0];
         return { content: [{ type: "text" as const, text: preview(value, snapshots.length === 1 ? snapshots[0].transcript : undefined) }],
           details: "tasks" in args ? { children: snapshots } : snapshots[0],
@@ -140,7 +149,10 @@ export default function delegation(pi: ExtensionAPI) {
       const completed = Promise.all(children.map(child => owner.wait(child)));
       if (args.background) {
         signal?.removeEventListener("abort", abort);
-        void completed.then(snapshots => { if (!closing && coordinator === owner) show("tasks" in args ? snapshots : snapshots[0], snapshots.length === 1 ? snapshots[0].transcript : undefined); });
+        void completed.then(snapshots => {
+          if (compatibility) snapshots = snapshots.map(compatible);
+          if (!closing && coordinator === owner) show("tasks" in args ? snapshots : snapshots[0], snapshots.length === 1 ? snapshots[0].transcript : undefined, compatibility);
+        });
         return result(states());
       }
       const unsubscribe = owner.subscribe(event => { if (children.some(child => child.id === event.child.id)) onUpdate?.(result(states())); });
@@ -190,7 +202,7 @@ export default function delegation(pi: ExtensionAPI) {
             ancestor = original.parentGeneration === undefined ? undefined : { id: original.parentId, generation: original.parentGeneration };
           }
           signal?.throwIfAborted();
-          const next = registry.renew(args.target, { assignment: args.assignment, resultSchema: args.resultSchema, profile, skills, context: ctx, assertTools, callerId, parent,
+          const next = registry.renew(args.target, { cwd: state.cwd, assignment: args.assignment, resultSchema: args.resultSchema, profile, skills, context: ctx, assertTools, callerId, parent,
             coordinationTools: ref => [coordinationTool(registry, ref)], nestedTool: ref => taskTool(ref, ctx, callerId) });
           value = registry.snapshot(next);
         }
@@ -201,6 +213,66 @@ export default function delegation(pi: ExtensionAPI) {
   pi.registerTool(coordinationTool());
   const taskDefinition = taskTool();
   pi.registerTool(taskDefinition);
+  const compatibleTaskDefinition = taskTool(undefined, undefined, undefined, true);
+  const worker = Type.Union([role, Type.Literal("worker")]);
+  const compatibleItem = Type.Object({ agent: worker, task: Type.String({ minLength: 1 }), cwd: Type.Optional(Type.String({ minLength: 1, description: "Existing workspace; absolute or relative to root parent cwd. Omit to inherit the call default." })), model: Type.Optional(Type.Union([modelSelection, Type.String({ minLength: 1 })])), limits: Type.Optional(limits) }, { additionalProperties: false });
+  const compatibleParameters = Type.Union([
+    Type.Object({ ...compatibleItem.properties, async: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
+    Type.Object({ tasks: Type.Array(compatibleItem, { minItems: 1, maxItems: 64 }), async: Type.Optional(Type.Boolean()), cwd: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: false }),
+    Type.Object({ action: Type.Union([Type.Literal("list"), Type.Literal("agents")]) }, { additionalProperties: false }),
+    Type.Object({ action: Type.Union([Type.Literal("status"), Type.Literal("stop")]), id: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+    Type.Object({ action: Type.Union([Type.Literal("steer"), Type.Literal("resume")]), id: Type.String({ minLength: 1 }), message: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+  ]);
+  pi.registerTool({
+    name: "subagent", label: "Sub-agent", exposure: "model-only",
+    promptSnippet: "Native coding workers: launch, coordinate and resume work in existing task workspaces",
+    promptGuidelines: [
+      "Use subagent for native worker delegation requested by the user or an active workflow; no extension-specific user instruction or enable call is needed. Use agent worker for implementation, scout for research, review for review, or general for read-only work.",
+      "Pass subagent the approved task handoff and existing workspace cwd. Preserve selected model routing; no model override is needed to inherit the parent. Pass accessible skill/reference paths in the task; do not assume ambient extensions, skills or project trust are inherited.",
+      "subagent launches are async by default and wake this session after actual drain. Continue independent work or yield; do not poll or sleep. Use the exact returned id (UUID@generation) for status, steer, stop or resume. Resume starts a fresh conversation in the same workspace; include needed context.",
+    ],
+    description: "Native delegation for orchestration and coding task owners. Launch {agent,task,cwd?,model?,async?} or an ordered {tasks:[...],async?,cwd?} batch. worker maps explicitly to the implementation profile; unknown/custom agent names reject. Model strings require exact provider/id[:effort] and operator grants. Actions: agents, list, status/stop with exact returned id, steer/resume with id and message. Uses the same registry, parent permissions, limits and global writer lease as delegate_task. Existing workspaces only: file paths and shell cwd are explicitly adapted through root builtin hooks. No automatic worktree creation/commits/apply/deletion, detached survival, script workflows or blanket competing API parity. Do not load another provider of the subagent tool alongside this extension.",
+    parameters: compatibleParameters,
+    async execute(callerId, args, signal, onUpdate, ctx) {
+      const owner = coordinator;
+      if (!("action" in args)) {
+        const items = "tasks" in args ? args.tasks : [args];
+        const tasks = items.map(task => {
+          let model = typeof task.model === "object" ? task.model : undefined;
+          if (typeof task.model === "string") {
+            const slash = task.model.indexOf("/");
+            if (slash < 1 || slash === task.model.length - 1) throw new Error("Model strings require exact provider/id[:effort]");
+            let id = task.model.slice(slash + 1);
+            const colon = id.lastIndexOf(":");
+            const effort = colon >= 0 ? EFFORTS.find(level => level === id.slice(colon + 1)) : undefined;
+            if (effort) id = id.slice(0, colon);
+            model = { provider: task.model.slice(0, slash), id, effort: effort ?? ctx.thinkingLevel ?? "off" };
+          }
+          return { assignment: task.task, profile: task.agent === "worker" ? "implementation" as const : task.agent, cwd: task.cwd ?? args.cwd, model, limits: task.limits };
+        });
+        // Internal reuse: the outer subagent call has its own public validation/hooks;
+        // every executed builtin still traverses the original root dispatcher.
+        return compatibleTaskDefinition.execute(callerId, "tasks" in args ? { tasks, background: args.async ?? true } : { ...tasks[0], background: args.async ?? true }, signal, onUpdate, ctx);
+      }
+      const result = (value: unknown) => ({ content: [{ type: "text" as const, text: preview(value) }], details: value });
+      if (!("id" in args)) return result(args.action === "agents" ? { agents: [...bundledProfiles(), { name: "worker", profile: "implementation" }] } : owner.list().map(compatible));
+      const match = /^([0-9a-f-]{36})@([1-9][0-9]*)$/.exec(args.id);
+      if (!match || !Number.isSafeInteger(Number(match[2]))) throw new Error("Use the exact subagent id returned by launch: UUID@generation");
+      const target = { id: match[1], generation: Number(match[2]) };
+      if (args.action === "status") return result({ snapshot: compatible(owner.snapshot(target)!), generations: owner.generations(target.id).map(compatible) });
+      signal?.throwIfAborted();
+      if (args.action === "stop") await owner.stop(target);
+      else if (args.action === "steer") await owner.steer(target, args.message);
+      else if ("message" in args) {
+        const presence = owner.agents().find(state => state.id === target.id && state.generation === target.generation)?.presence;
+        const response = await coordinationTool().execute(callerId, { action: presence === "parked" ? "revive" : "followup", target, assignment: args.message }, signal, undefined, ctx);
+        const next = response.details as ChildSnapshot;
+        void owner.wait(next).then(state => { if (!closing && coordinator === owner) show(compatible(state), state.transcript, true); });
+        return result(compatible(next));
+      }
+      return result(compatible(owner.snapshot(target)!));
+    },
+  });
   pi.registerCommand("task-profiles", { description: "List bundled profile ceilings (actual tools depend on parent session)", handler: async () => show({ toolPolicy: "Profile tools are maximum allowlists, not requirements. Admission intersects callable parent builtins without activating tools. Inspect each task snapshot tools for its effective grants.", profiles: bundledProfiles() }) });
   pi.registerCommand("task-status", { description: "List delegation identities, states and final results", handler: async args => show(args.trim() ? coordinator.snapshot(ref(args)) : coordinator.list()) });
   pi.registerCommand("task-stop", { description: "Stop <task-id> <generation> and drain it", handler: async args => { await coordinator.stop(ref(args)); } });

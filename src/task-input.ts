@@ -7,10 +7,10 @@ function hasDeniedTaskComponent(path: string): boolean {
 }
 
 /** Content is obtained only through the effective public read dispatcher, never raw filesystem reads. */
-export async function readTaskInput(path: string, ctx: ExtensionToolContext, signal?: AbortSignal, beforeRead?: () => void): Promise<string> {
+export async function readTaskInput(path: string, ctx: ExtensionToolContext, signal?: AbortSignal, beforeRead?: () => void, cwd = ctx.cwd): Promise<string> {
   if (!path || isAbsolute(path) || path.includes("\0") || hasDeniedTaskComponent(path)) throw new Error("taskFile must be an explicit non-hidden workspace-relative path without traversal");
   if (!ctx.tools.some(tool => tool.name === "read")) throw new Error("taskFile requires a callable parent read tool");
-  const base = await realpath(ctx.cwd);
+  const base = await realpath(cwd);
   const target = resolve(base, path);
   const checkedPath = await realpath(target);
   const inside = relative(base, checkedPath);

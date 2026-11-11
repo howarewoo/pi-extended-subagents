@@ -52,7 +52,7 @@ test("isolated real Pi CLI exit aborts the delegated child before scripted compl
 });
 
 
-test("isolated ordinary-default Pi CLI launches two scouts with read only, without activating grep/find/ls", {timeout: 15000}, async () => {
+for (const tool of ["delegate_task", "subagent"]) test(`isolated ordinary-default Pi CLI ${tool} launches two scouts without activating grep/find/ls`, {timeout: 15000}, async () => {
   const root = await mkdtemp(join(tmpdir(), "extended-subagents-default-cli-"));
   try {
     const cli = fileURLToPath(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js", import.meta.url));
@@ -65,6 +65,7 @@ test("isolated ordinary-default Pi CLI launches two scouts with read only, witho
       import { writeFile } from "node:fs/promises";
       import { join } from "node:path";
       export default function(pi) {
+        const delegated = ${JSON.stringify(tool)};
         const provider = fauxProvider({provider:"default-cli-controlled", tokensPerSecond:0});
         const children = new Map(); let reads = 0; let complete;
         const drained = new Promise(resolve => {complete = resolve;});
@@ -72,8 +73,9 @@ test("isolated ordinary-default Pi CLI launches two scouts with read only, witho
           provider.appendResponses([respond]);
           const user = context.messages.find(message => message.role === "user");
           const text = typeof user?.content === "string" ? user.content : user?.content.filter(block => block.type === "text").map(block => block.text).join("") ?? "";
-          if (context.messages.at(-1)?.role === "toolResult" || (text === "default fleet" && context.messages.some(message => message.role === "toolResult" && message.toolName === "delegate_task"))) return fauxAssistantMessage("done");
-          return fauxAssistantMessage(fauxToolCall(text === "default fleet" ? "delegate_task" : "read", text === "default fleet" ? {background:true,tasks:[{profile:"scout",assignment:"alpha"},{profile:"scout",assignment:"beta"}]} : {path:"input.txt"}), {stopReason:"toolUse"});
+          if (context.messages.at(-1)?.role === "toolResult" || (text === "default fleet" && context.messages.some(message => message.role === "toolResult" && message.toolName === delegated))) return fauxAssistantMessage("done");
+          const tasks = delegated === "subagent" ? {async:false,tasks:[{agent:"scout",task:"alpha"},{agent:"scout",task:"beta"}]} : {background:true,tasks:[{profile:"scout",assignment:"alpha"},{profile:"scout",assignment:"beta"}]};
+          return fauxAssistantMessage(fauxToolCall(text === "default fleet" ? delegated : "read", text === "default fleet" ? tasks : {path:"input.txt"}), {stopReason:"toolUse"});
         };
         provider.setResponses([respond]); pi.registerProvider(provider.provider);
         pi.events.on("delegation:registry", event => {
@@ -97,6 +99,7 @@ test("isolated ordinary-default Pi CLI launches two scouts with read only, witho
     invocation.child.stdin?.end(); await invocation;
     const observed = JSON.parse(await readFile(join(root, "observed.json"), "utf8")) as {active: string[]; reads: number; children: import("../src/coordinator.ts").ChildSnapshot[]};
     assert.equal(observed.reads, 2, JSON.stringify(observed));
+    assert.ok(observed.active.includes("subagent"), "compatibility tool is available at ordinary startup without an enable call");
     for (const name of ["read", "bash", "edit", "write"]) assert.ok(observed.active.includes(name));
     for (const name of ["grep", "find", "ls"]) assert.ok(!observed.active.includes(name));
     assert.equal(observed.children.length, 2);
