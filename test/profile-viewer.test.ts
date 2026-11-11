@@ -7,7 +7,11 @@ import { visibleWidth, oklchColor } from "@earendil-works/pi-tui";
 import { createProfileViewer, resolvedProfiles } from "../src/profile-viewer.ts";
 import { bundledProfiles } from "../src/profiles.ts";
 import extension from "../src/pi-extended-subagents.ts";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+  loadSkills,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 const keys = {
   matches: (data: string, action: string) =>
     data ===
@@ -35,6 +39,18 @@ test("resolved command uses operator/trusted project settings and preserves non-
   try {
     await mkdir(join(root, "operator"));
     await mkdir(join(root, ".pi"));
+    const skillPath = join(root, "SKILL.md");
+    await writeFile(
+      skillPath,
+      "---\nname: inherited\ndescription: Synthetic inherited skill\n---\nSkill body",
+    );
+    const { skills } = loadSkills({
+      cwd: root,
+      agentDir: join(root, "operator"),
+      skillPaths: [skillPath],
+      includeDefaults: false,
+    });
+    assert.equal(skills.length, 1);
     await writeFile(
       join(root, "operator", "delegation.json"),
       JSON.stringify({
@@ -69,6 +85,11 @@ test("resolved command uses operator/trusted project settings and preserves non-
     } as unknown as ExtensionAPI);
     const ctx = {
       cwd: root,
+      getSystemPromptOptions: () => ({
+        skills,
+        contextFiles: [{ path: "/private/AGENTS.md", content: "PRIVATE PARENT INSTRUCTIONS" }],
+        customPrompt: "PRIVATE PARENT PROMPT",
+      }),
       isProjectTrusted: () => true,
       mode: "json",
       ui: {
@@ -80,6 +101,19 @@ test("resolved command uses operator/trusted project settings and preserves non-
     await commands.get("subagent-profiles")!.handler("", ctx);
     const value = JSON.parse(messages[0].content);
     assert.match(value.toolPolicy, /unknown/);
+    assert.deepEqual(value.profiles[0].skills, [skillPath]);
+    assert.deepEqual(value.profiles[0].tools, [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "write",
+      "edit",
+      "bash",
+    ]);
+    assert.deepEqual(value.profiles[0].spawn, ["scout", "review"]);
+    assert.deepEqual(value.profiles[1].skills, []);
+    assert.doesNotMatch(messages[0].content, /PRIVATE PARENT|private\/AGENTS/);
     assert.equal(value.profiles[1].prompt, "project prompt");
     assert.equal(value.profiles[1].description, "operator description");
     assert.deepEqual(value.profiles[1].tools, []);
@@ -97,6 +131,16 @@ test("resolved command uses operator/trusted project settings and preserves non-
     } as unknown as ExtensionCommandContext);
     assert.ok(opened);
     assert.equal(messages.length, 1);
+    await writeFile(
+      join(root, ".pi", "delegation.json"),
+      JSON.stringify({ general: { skills: [], tools: ["read"], leafTools: [], spawn: [] } }),
+    );
+    await commands.get("subagent-profiles")!.handler("", ctx);
+    const narrowed = JSON.parse(messages[1].content).profiles[0];
+    assert.deepEqual(narrowed.skills, []);
+    assert.deepEqual(narrowed.tools, ["read"]);
+    assert.deepEqual(narrowed.leafTools, []);
+    assert.deepEqual(narrowed.spawn, []);
     await writeFile(join(root, ".pi", "delegation.json"), "{bad");
     await assert.rejects(() => resolvedProfiles(root, true), /Invalid delegation config/);
     assert.equal((await resolvedProfiles(root, false)).length, 4);
@@ -130,6 +174,10 @@ test("viewer selects arbitrary roles, scrolls complete sanitized details, stacks
   );
   const render = (width: number) => viewer.render(width).join("\n");
   assert.match(render(120), /general.*│.*general/);
+  assert.match(render(120), /Tools ceiling:.*write, edit, bash/);
+  assert.match(render(120), /Inheritance: available parent skills and callable builtins/);
+  assert.match(render(120), /Reviewed leaf ceiling: none.*writer lease/);
+  assert.match(render(120), /Spawn ceiling: scout, review/);
   for (let i = 0; i < 4; i++) viewer.handleInput!("down");
   assert.match(render(120), /future role/);
   viewer.handleInput!("pgdown");

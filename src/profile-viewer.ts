@@ -1,4 +1,4 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Skill, Theme } from "@earendil-works/pi-coding-agent";
 import {
   matchesKey,
   truncateToWidth,
@@ -11,17 +11,19 @@ import { safe } from "./thread.ts";
 import { bundledProfiles, resolveProfile, type Profile } from "./profiles.ts";
 
 export const profileToolPolicy =
-  "Profile tools are maximum allowlists, not requirements. Admission intersects callable parent builtins without activating tools. Command context has no callable-tool dispatcher: effective tools are unknown here. Active declarations are not proof of callability. Inspect task snapshot tools for admitted grants.";
+  "Profile tools are maximum allowlists, not requirements. Admission intersects callable parent builtins without activating tools. Command context has no callable-tool dispatcher: effective tools are unknown here. Active declarations are not proof of callability. General inherits available parent skills and callable builtins within its ceiling, not parent instructions/history; only operator-reviewed leaf tools may be forwarded and all require a writer lease. Leaf grants assert trusted code, not a sandbox. Inspect task snapshot tools, leafTools, skills and capabilityDenials for admitted grants.";
 
 /** Resolve through the same trust/config/skill validation boundary used by admission. */
 export async function resolvedProfiles(
   cwd: string,
   trusted: boolean,
   operatorDir?: string,
+  availableSkills: readonly Skill[] = [],
 ): Promise<Profile[]> {
   return Promise.all(
     bundledProfiles().map(
-      async ({ name }) => (await resolveProfile(name, cwd, trusted, operatorDir)).profile,
+      async ({ name }) =>
+        (await resolveProfile(name, cwd, trusted, operatorDir, availableSkills)).profile,
     ),
   );
 }
@@ -35,6 +37,7 @@ function details(profile: Profile): string[] {
     "prompt",
     "tools",
     "skills",
+    "leafTools",
     "spawn",
     "coordination",
     "models",
@@ -50,6 +53,12 @@ function details(profile: Profile): string[] {
     `Tools ceiling: ${list(profile.tools)}`,
     "Callable tools: unknown in command context; inspect admitted task tools.",
     `Skills (exact paths): ${list(profile.skills)}`,
+    ...(profile.name === "general"
+      ? [
+          "Inheritance: available parent skills and callable builtins; no parent instructions/history.",
+        ]
+      : []),
+    `Reviewed leaf ceiling: ${list(profile.leafTools)} (writer lease; trusted code, not sandboxed)`,
     `Spawn ceiling: ${list(profile.spawn)}`,
     `Coordination: ${list(profile.coordination)}`,
     `Model default: ${profile.model ? JSON.stringify(profile.model) : "selected parent model"}`,

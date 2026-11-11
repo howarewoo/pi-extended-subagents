@@ -704,7 +704,12 @@ export default function delegation(pi: ExtensionAPI) {
   pi.registerCommand("subagent-profiles", {
     description: "Subagent Profiles: inspect resolved workspace profiles (read-only)",
     handler: async (_args, ctx) => {
-      const profiles = await resolvedProfiles(ctx.cwd, ctx.isProjectTrusted());
+      const profiles = await resolvedProfiles(
+        ctx.cwd,
+        ctx.isProjectTrusted(),
+        undefined,
+        ctx.getSystemPromptOptions().skills ?? [],
+      );
       if (ctx.mode !== "tui") {
         show({ toolPolicy: profileToolPolicy, profiles });
         return;

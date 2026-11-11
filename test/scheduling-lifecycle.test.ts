@@ -371,7 +371,10 @@ test(
     await mkdir(join(f.root, "operator"), { recursive: true });
     await writeFile(
       join(f.root, "operator", "delegation.json"),
-      JSON.stringify({ implementation: { spawn: ["general"] }, general: { tools: ["read"], spawn: [] } }),
+      JSON.stringify({
+        implementation: { spawn: ["general"] },
+        general: { tools: ["read"], spawn: [] },
+      }),
     );
     const child = await f.launch("child", "implementation");
     await eventually(
