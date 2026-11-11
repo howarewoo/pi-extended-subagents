@@ -31,10 +31,10 @@ Sources: [our contract](docs/delegation-contract.md); nicobailon's [README](http
 
 ## Native orchestration
 
-WooStack Orchestrate can use the native `subagent` tool without a provider-specific instruction. It is declared at startup with coding-worker guidance; no enable call is needed. For replacement use, load only one extension providing `subagent`: Pi uses the first registration, not an automatic provider preference. Switching providers does not migrate or remove old runs.
+Pi discovers the native `subagent` tool at startup through its tool description and coding-worker guidance; no enable call is needed. For replacement use, load only one extension providing `subagent`: Pi uses the first registration, not an automatic provider preference. Switching providers does not migrate or remove old runs.
 
 ```json
-{"agent":"worker","task":"Implement the approved change; follow the supplied repository and woostack-execute references","cwd":"/absolute/path/to/task-worktree"}
+{"agent":"worker","task":"Implement the approved change; follow the supplied repository guidelines and task references","cwd":"/absolute/path/to/task-worktree"}
 ```
 
 `worker` uses the configured `implementation` profile. `scout`, `review` and `general` are also available. Calls are async by default and wake the parent after drain; set `async:false` to wait. Batches use `tasks:[{agent,task,cwd?}]`. Use the returned `id` with `action:"status"`, `"steer"`, `"stop"` or `"resume"`; steer/resume also need `message`.

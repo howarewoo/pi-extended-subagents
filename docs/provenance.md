@@ -10,4 +10,4 @@ The extension/coordinator/tests are Pi-native code. The complete-resource-loader
 
 Session creation/storage, streaming, extension lifecycle and overlay usage follow the corresponding Pi 1.5.2 SDK/extension/TUI documentation and examples; those facilities are consumed as dependencies, not extracted into this package. Production children forward through the parent's public `ModelRegistry` using an extension-owned `ModelRuntime` adapter; no Pi internals or keys are copied. Controlled `fauxProvider`/`fauxAssistantMessage` implementations appear only in test/example fixtures, not production execution. Installed test dependencies are resolved normally from npm with a lockfile; nothing is symlinked from another checkout.
 
-No Woostack product/source code or pi-subagents implementation is inherited. Workflow documentation informed the execution process only. This document does not select a license for newly authored repository code; upstream dependency/example licenses remain their own.
+No pi-subagents implementation is inherited. This document does not select a license for newly authored repository code; upstream dependency/example licenses remain their own.

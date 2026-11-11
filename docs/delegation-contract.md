@@ -4,7 +4,7 @@ Reference for operators and extension/UI consumers. Authoritative types and exec
 
 ## Native orchestration compatibility
 
-The model-only `subagent` tool is registered and described through Pi's public `promptSnippet`/`promptGuidelines` at startup. WooStack Orchestrate is already provider-agnostic; no Woostack source/configuration change or user reminder to select this provider is needed. With an explicit tool allowlist, include `subagent`. Load only one provider of that name: Pi uses the first registered extension, and this package does not disable, reprioritize or uninstall other providers.
+The model-only `subagent` tool is registered and described through Pi's public `promptSnippet`/`promptGuidelines` at startup. These describe native worker delegation to the model without requiring any external workflow package or provider-specific user reminder. With an explicit tool allowlist, include `subagent`. Load only one provider of that name: Pi uses the first registered extension, and this package does not disable, reprioritize or uninstall other providers.
 
 - Launch: `{agent,task,cwd?,model?,limits?,async?}`. `agent` is required: `general`, `scout`, `review`, `implementation`, or explicit compatibility name `worker` for the configured `implementation` profile. Unknown/custom agent definitions are rejected, not silently mapped. Authority and prompts still resolve through the existing profiles; no ambient Markdown agent loading or role/model fallback is added.
 - Batch: `{tasks:[{agent,task,cwd?,model?,limits?}],cwd?,async?}`. Shared cwd is the default for items lacking one. Existing whole-batch preflight, FIFO limits, ordered outcomes and global writer serialization apply.

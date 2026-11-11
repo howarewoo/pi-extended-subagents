@@ -54,7 +54,7 @@ test("native discovery and worker tools operate in a real supplied Git worktree 
   git("worktree", "add", "--quiet", "--detach", cwd, commit);
   await writeFile(join(f.root, "input.txt"), "parent-input");
   await writeFile(join(cwd, "input.txt"), "worker-input");
-  const result = await call(f, { agent: "worker", task: "WORKER: implement the approved task using supplied woostack-execute references", cwd, async: false });
+  const result = await call(f, { agent: "worker", task: "WORKER: implement the approved task using supplied repository guidelines and task references", cwd, async: false });
   assert.equal(result.isError, false, JSON.stringify(result));
   const state = result.details as ChildSnapshot & { taskId: string };
   assert.match(state.id, /^[0-9a-f-]{36}@1$/); assert.equal(state.cwd, await realpath(cwd)); assert.equal(state.status, "settled");

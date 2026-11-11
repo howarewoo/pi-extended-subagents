@@ -227,7 +227,7 @@ export default function delegation(pi: ExtensionAPI) {
     name: "subagent", label: "Sub-agent", exposure: "model-only",
     promptSnippet: "Native coding workers: launch, coordinate and resume work in existing task workspaces",
     promptGuidelines: [
-      "Use subagent for native worker delegation requested by the user or an active workflow, including WooStack Orchestrate; no extension-specific user instruction or enable call is needed. Use agent worker for implementation, scout for research, review for review, or general for read-only work.",
+      "Use subagent for native worker delegation requested by the user or an active workflow; no extension-specific user instruction or enable call is needed. Use agent worker for implementation, scout for research, review for review, or general for read-only work.",
       "Pass subagent the approved task handoff and existing workspace cwd. Preserve selected model routing; no model override is needed to inherit the parent. Pass accessible skill/reference paths in the task; do not assume ambient extensions, skills or project trust are inherited.",
       "subagent launches are async by default and wake this session after actual drain. Continue independent work or yield; do not poll or sleep. Use the exact returned id (UUID@generation) for status, steer, stop or resume. Resume starts a fresh conversation in the same workspace; include needed context.",
     ],
