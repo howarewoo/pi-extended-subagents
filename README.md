@@ -127,7 +127,7 @@ Or submit a batch:
 }
 ```
 
-The default is two concurrent tasks, a 32-item queue and up to 16 tasks per batch. Every item passes preflight before any starts. One failed task does not cancel its siblings.
+The default is 16 concurrent tasks, a 32-item queue and up to 16 tasks per batch. Every item passes preflight before any starts. One failed task does not cancel its siblings.
 
 `general`, `scout` and `review` allow up to `read`, `grep`, `find` and `ls`. `implementation` also allows `write`, `edit` and `bash`. Each role receives only the builtins already callable in the parent. With Pi's default tools, scouts get `read` only. Tool calls retain the parent's permission hooks; incompatible tool overrides are rejected.
 
@@ -214,7 +214,7 @@ No configuration is needed for the bundled roles. To change prompts or narrow to
 }
 ```
 
-Skills, nested delegation and child messaging need explicit operator grants. Trusted project configuration in `.pi/delegation.json` can narrow those grants, never expand them. Children do not inherit ambient extensions, MCP tools or context files.
+All bundled profiles may delegate to `scout` and `review` by default, within a total depth of two (root 0, child 1, grandchild 2). Other nested targets, skills and child messaging need explicit operator grants. Set `spawn: []` to revoke nesting. Trusted project configuration in `.pi/delegation.json` can narrow those grants, never expand them. Children do not inherit ambient extensions, MCP tools or context files.
 
 Each task defaults to a 10-minute deadline, 100 model requests and 100 tool calls. Cancellation waits for actual tool/provider drain, so a deadline cannot forcibly end unresponsive code. See [limits and nesting](docs/delegation-contract.md#capacity-and-bounded-execution), [Subagent Profiles](docs/delegation-contract.md#subagent-profiles-and-explicit-spawn-grants), and [exact model selection and prewalk](docs/advanced-policies.md).
 

@@ -15,7 +15,7 @@ export type SchedulingPolicy = ExecutionLimits & {
   batch: number;
 };
 export const DEFAULT_POLICY: Readonly<SchedulingPolicy> = {
-  concurrency: 2,
+  concurrency: 16,
   queue: 32,
   batch: 16,
   depth: 2,

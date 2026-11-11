@@ -98,6 +98,31 @@ test("only operator can mint recursive role grants; project may remove but never
   await mkdir(operator);
   await mkdir(project);
   const resolve = () => resolveProfile("general", root, true, operator);
+  for (const name of ["general", "scout", "review", "implementation"])
+    assert.deepEqual((await resolveProfile(name, root, true, operator)).profile.spawn, [
+      "scout",
+      "review",
+    ]);
+  await writeFile(
+    join(project, "delegation.json"),
+    JSON.stringify({ general: { spawn: ["scout"] } }),
+  );
+  assert.deepEqual((await resolve()).profile.spawn, ["scout"]);
+  await writeFile(
+    join(operator, "delegation.json"),
+    JSON.stringify({ general: { spawn: ["scout"] } }),
+  );
+  await writeFile(
+    join(project, "delegation.json"),
+    JSON.stringify({ general: { spawn: ["review"] } }),
+  );
+  await assert.rejects(resolve(), /mint spawn grants/);
+  await writeFile(join(operator, "delegation.json"), JSON.stringify({ general: { spawn: [] } }));
+  await writeFile(
+    join(project, "delegation.json"),
+    JSON.stringify({ general: { spawn: ["scout"] } }),
+  );
+  await assert.rejects(resolve(), /mint spawn grants/);
   await writeFile(
     join(project, "delegation.json"),
     JSON.stringify({ general: { spawn: ["general"] } }),

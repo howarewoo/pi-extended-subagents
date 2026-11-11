@@ -11,6 +11,7 @@ import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { fixture, eventually } from "./fixtures.ts";
 import type { ChildRef, ChildSnapshot } from "../src/coordinator.ts";
 import { resolveProfile } from "../src/profiles.ts";
+import { DEFAULT_POLICY } from "../src/scheduling.ts";
 
 const text: (context: Parameters<FauxResponseFactory>[0]) => string = (context) => {
   const message = context.messages.find((message) => message.role === "user");
@@ -402,6 +403,7 @@ for (const mode of ["steer", "followUp"] as const)
 
 test("actual running identities reject self/cycle/queued waits and stop wakes a retained-permit waiter", async (t) => {
   const f = await fixture(t, { speed: 100 });
+  f.coordinator.configure({ ...DEFAULT_POLICY, concurrency: 2 });
   await config(f, { general: { coordination: ["wait", "message", "inbox"] } });
   const a = await f.direct("a".repeat(2000));
   const b = await f.direct("b".repeat(2000));

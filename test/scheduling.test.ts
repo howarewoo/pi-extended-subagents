@@ -168,7 +168,7 @@ test("multiple batch writers serialize, retain real parent permission hooks and 
   assert.ok(secondSetup > firstDisposed);
 });
 
-test("actual SDK child-local model-only tool spawns an authorized grandchild, uses root permission hooks and direct usage once", async (t) => {
+test("default SDK child-local model-only tool spawns a scout grandchild, uses root permission hooks and direct usage once", async (t) => {
   let reads = 0;
   const f = await fixture(t, {
     extra: (pi) => {
@@ -186,7 +186,7 @@ test("actual SDK child-local model-only tool spawns an authorized grandchild, us
       const call = text.startsWith("LAUNCH ")
         ? JSON.parse(text.slice(7))
         : text === "child"
-          ? task("grandchild")
+          ? task("grandchild", "scout")
           : undefined;
       return fauxAssistantMessage(
         fauxToolCall(call ? "delegate_task" : "read", call ?? { path: "never-read.txt" }),
@@ -194,7 +194,6 @@ test("actual SDK child-local model-only tool spawns an authorized grandchild, us
       );
     },
   });
-  await configure(f, { general: { spawn: ["general"] } });
   const child = await f.launch("child", "general", false);
   const finals = f.events.filter((event) => event.child.disposed).map((event) => event.child);
   assert.equal(finals.length, 2);
@@ -336,5 +335,48 @@ test("operator policy is finite and project can only narrow; queue and batch bou
   assert.equal((await resolveScheduling(f.root, false, join(f.root, "operator"))).concurrency, 1);
   await f.session.prompt("LAUNCH " + JSON.stringify({ tasks: [task("one"), task("two")] }));
   assert.equal(f.events.length, 0);
-  assert.deepEqual(DEFAULT_POLICY.concurrency, 2);
+  assert.deepEqual(DEFAULT_POLICY.concurrency, 16);
+});
+
+test("bundled nested targets obey default depth and request revocation without regaining ancestor grants", async (t) => {
+  for (const scenario of ["depth", "revoke", "subset"])
+    await t.test(scenario, async (t) => {
+      const f = await fixture(t, {
+        speed: 0,
+        response: (context) => {
+          const text = userText(context);
+          if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
+          return fauxAssistantMessage(
+            fauxToolCall(
+              "delegate_task",
+              text.startsWith("LAUNCH ")
+                ? JSON.parse(text.slice(7))
+                : task(text === "child" ? "grandchild" : "great-grandchild", "scout"),
+            ),
+            { stopReason: "toolUse" },
+          );
+        },
+      });
+      const [child] = await batch(f, [
+        {
+          ...task("child"),
+          ...(scenario === "depth" ? {} : { spawn: scenario === "revoke" ? [] : ["scout"] }),
+        },
+      ]);
+      const finals = f.events.filter((event) => event.child.disposed).map((event) => event.child);
+      assert.equal(finals.length, scenario === "depth" ? 2 : 1);
+      assert.ok(finals.every((state) => state.depth <= 2));
+      const denied =
+        scenario === "depth"
+          ? finals.find((state) => state.depth === 2)!
+          : finals.find((state) => state.id === child.id)!;
+      assert.match(
+        await readFile(denied.transcript!, "utf8"),
+        scenario === "depth"
+          ? /depth limit/
+          : scenario === "revoke"
+            ? /not found|Unknown tool|not available/i
+            : /broaden ancestor grants/,
+      );
+    });
 });
