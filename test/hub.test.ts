@@ -98,7 +98,7 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
   }
 });
 
-test("widget retains each child state, sanitizes terminal content and shows latest activity at narrow widths", () => {
+test("widget counts each child state, sanitizes terminal content and shows only active details", () => {
   let child: ChildSnapshot | undefined;
   const widget = createChildWidget(() => (child ? [child] : []), theme);
   for (const width of [0, 1, 8, 20, 80, 140])
@@ -138,10 +138,13 @@ test("widget retains each child state, sanitizes terminal content and shows late
     assert.ok(output.includes(status));
     assert.ok(widget.render(20)[0].startsWith("● Subagents"));
     assert.ok(!/[\x00-\x1f\x7f-\x9f]/.test(stripAnsi(output).replaceAll("\n", "")));
-    if (status === "running") {
+    if (["setup", "running", "draining"].includes(status)) {
       assert.ok(output.includes("test"));
       assert.match(output, /中文 👩‍💻 latest/);
-    } else if (child.disposed) assert.ok(output.includes("final result"));
+    } else {
+      assert.equal(widget.render(80).length, 1);
+      assert.doesNotMatch(output, /final result|latest|general/);
+    }
     for (const width of [0, 1, 2, 8, 20, 40])
       assert.ok(widget.render(width).every((line) => visibleWidth(line) <= width));
   }
@@ -154,7 +157,7 @@ test("widget retains each child state, sanitizes terminal content and shows late
   };
   assert.match(widget.render(100).join("\n"), /no conflicting manual !\/!! or external edits/);
   child = { ...child!, status: "failed", error: "Cannot start\u001b\u0007" };
-  assert.match(widget.render(140).join("\n"), /Cannot start/);
+  assert.doesNotMatch(widget.render(140).join("\n"), /Cannot start|implementation/);
   child = undefined;
   assert.deepEqual(widget.render(100), [], "an empty replacement registry hides the widget again");
 });
@@ -184,6 +187,57 @@ function snapshot(id: string, patch: Partial<ChildSnapshot> = {}): ChildSnapshot
     ...patch,
   };
 }
+test("widget removes details on completion while retaining full fleet counts", () => {
+  let children = [snapshot("transition", { activity: "Live preview" })];
+  const widget = createChildWidget(() => children, theme);
+  assert.match(widget.render(180).join("\n"), /inspect transition.*\n.*Live preview/);
+  children = [{ ...children[0], status: "settled", disposed: true, result: "Final preview" }];
+  assert.deepEqual(widget.render(180), ["● Subagents 1 · 1 settled"]);
+  assert.deepEqual(widget.render(40), ["● Subagents 1 · 0 active · 0 queued"]);
+});
+
+test("widget keeps queued and finished fleets summary-only, including undisposed terminal states", () => {
+  for (const statuses of [
+    ["queued", "queued"],
+    ["settled", "failed", "cancelled"],
+  ] as const) {
+    const children = statuses.map((status, index) =>
+      snapshot(String(index), { status, disposed: index === 0 && status !== "queued" }),
+    );
+    const widget = createChildWidget(() => children, theme);
+    assert.equal(widget.render(180).length, 1);
+    for (const status of new Set(statuses))
+      assert.match(
+        widget.render(180)[0],
+        new RegExp(`${statuses.filter((s) => s === status).length} ${status}`),
+      );
+    assert.deepEqual(widget.render(40), [
+      `● Subagents ${children.length} · 0 active · ${statuses[0] === "queued" ? 2 : 0} queued`,
+    ]);
+  }
+});
+
+test("widget overflow counts only non-disposed setup/running/draining tasks", () => {
+  const children = [
+    snapshot("done", { status: "settled", disposed: true }),
+    snapshot("queued", { status: "queued" }),
+    snapshot("disposed", { status: "running", disposed: true }),
+    snapshot("setup", { status: "setup" }),
+    snapshot("running"),
+    snapshot("draining", { status: "draining" }),
+    snapshot("extra", { status: "setup" }),
+  ];
+  const widget = createChildWidget(() => children, theme);
+  const lines = widget.render(180);
+  assert.equal(lines.length, 5);
+  assert.match(lines[0], /Subagents 7.*1 queued.*2 setup.*2 running.*1 draining.*1 settled/);
+  assert.match(lines[1], /inspect draining/);
+  assert.match(lines[3], /inspect running/);
+  assert.equal(lines[4], "└─ 2 more · /subagent-hub");
+  assert.doesNotMatch(lines.slice(1).join("\n"), /inspect done|inspect queued|inspect disposed/);
+  assert.match(widget.render(40)[0], /4 active · 1 queued/);
+});
+
 const effectiveKeys = {
   matches: (data: string, action: string) =>
     data ===
@@ -1182,7 +1236,8 @@ test("compact agent tree uses actual status/role/direct stats/activity with trut
   assert.match(text, /[├└]─/);
   assert.match(text, /scout.*Check drain/);
   assert.match(text, /└.*Tool: read/);
-  assert.match(text, /more/);
+  assert.match(text, /scout.*Audit parser/);
+  assert.doesNotMatch(text, /more|Finished check/);
   assert.match(text, /writer|Model-tool/);
   assert.doesNotMatch(text, /null|undefined|NaN|context.*%/);
   const measured = createChildWidget(
