@@ -484,7 +484,7 @@ export function createHub(
             Math.max(1, inner),
           )
         : [];
-      if (interactionTarget && (inner < 26 || height < targetLines.length + 5)) {
+      if (interactionTarget && (inner < 26 || height < targetLines.length + 6)) {
         return [
           frame("╭", " Resize / Esc cancel ", "╮"),
           ...targetLines.slice(0, height - 3).map(row),
@@ -519,7 +519,8 @@ export function createHub(
       const shownFooter =
         requiredFooter || height >= 8 ? footer.slice(-Math.max(2, height - 7, requiredFooter)) : [];
       if (interactionTarget) interactionVisibleAtHeight = height;
-      const paneHeight = Math.max(1, height - 2 - shownFooter.length);
+      const separatorRows = shownFooter.length ? 1 : 0;
+      const paneHeight = Math.max(1, height - 2 - shownFooter.length - separatorRows);
       viewport = Math.max(1, paneHeight - 3);
       let detail: string[] = [];
       let nativeLines: string[] | undefined;
@@ -708,6 +709,7 @@ export function createHub(
       return [
         frame("╭", " Subagent Hub ", "╮"),
         ...pane.slice(0, height - 2).map(row),
+        ...(separatorRows ? [paint(theme.fg("border", "├" + "─".repeat(width - 2) + "┤"))] : []),
         ...shownFooter.map(row),
         frame("╰", "", "╯"),
       ];
