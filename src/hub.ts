@@ -263,6 +263,7 @@ export function createHub(
             ...(child.error ? ["Error", safe(child.error), ""] : []),
             ...(child.outcome ? ["Structured outcome", JSON.stringify(child.outcome, null, 2), ""] : []),
             ...(child.artifacts ? ["Saved artifacts", JSON.stringify(child.artifacts, null, 2), ""] : []),
+            `Workspace: ${safe(child.cwd ?? "parent workspace")}`,
             `Effective builtin tools: ${child.tools.join(", ")}`,
             `${child.model.provider}/${child.model.id} · effort ${child.effort ?? "unavailable"}`,
             `Prewalk ${child.prewalk ? JSON.stringify(child.prewalk) : "off"} · advisor unavailable`,

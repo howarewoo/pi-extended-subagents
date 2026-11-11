@@ -1,6 +1,6 @@
 # Advanced policy support and capability boundaries (Pi 1.5.2)
 
-This is a capability ledger for operators and integrators, not a full-parity or readiness claim. OMP revision `eda28eff97cf7a352fd3057a03581be1686dbc7a` is a behavioral reference only. No OMP implementation, prompts, private Pi runtime, or pi-subagents compatibility is loaded.
+This is a capability ledger for operators and integrators, not a full-parity or readiness claim. OMP revision `eda28eff97cf7a352fd3057a03581be1686dbc7a` is a behavioral reference only. No OMP implementation, prompts, private Pi runtime, or pi-subagents runtime is loaded. The native orchestration compatibility surface is defined in the [delegation contract](delegation-contract.md#native-orchestration-compatibility), not a full competitor API port.
 
 ## Exact model and reasoning policy — implemented
 
@@ -54,7 +54,7 @@ A boundary-only one-shot review changes the product meaning and already overlaps
 
 ## Production isolation — deferred and unimplemented
 
-Production isolation is deferred. Shared cwd remains the supported behavior; no isolation adapter, copying/apply policy or path/cd transformation is implemented. This deferred capability is not a current release gate. The public dispatcher has no per-call cwd, and the existing model-tool writer boundary is not filesystem isolation or a sandbox.
+Filesystem isolation, automatic worktree management and copying/apply remain deferred. Existing caller-supplied workspaces are now supported through explicitly approved file-path and shell-cwd adaptation, preserving the original parent dispatcher and its hooks. Hooks see the actual transformed arguments, not a transparently rebound cwd. The public dispatcher still has no per-call cwd. This execution adapter and the global model-tool writer lease are not filesystem containment or an OS sandbox; see [the workspace contract](delegation-contract.md#explicit-working-directory).
 
 ## Bounded investigations — not enabled
 
@@ -73,4 +73,4 @@ The exact extension-path and busy-prompt counterexamples are in `test/advanced-c
 
 ## Joined fleet consumer
 
-The one registry still owns queued/setup/running/draining/terminal state, limits, identity/generation/history, artifacts and direct telemetry. The joined native fleet widget/cards/Hub display those alongside actual model/effort and prewalk armed/handed-off/suppressed-exact/no-op, immutable selected-generation history and separate presence. No inferred role fallback, subtree double billing, new provider call or advisor observer is added. Hub input/stop/message targets stay pinned to original UUID+generation. Native followup/revive remains model-issued only because Hub command context has no permission-preserving dispatcher. See the [supported surface table](delegation-contract.md#storage-and-fleet-observation). Production isolation/path transformation is deferred and unimplemented; retained advisor is excluded from current product scope. Neither is a current release gate. Other unsupported/parked capabilities above remain explicit gaps, not implied support.
+The one registry still owns queued/setup/running/draining/terminal state, limits, identity/generation/history, artifacts and direct telemetry. The joined native fleet widget/cards/Hub display those alongside actual model/effort and prewalk armed/handed-off/suppressed-exact/no-op, immutable selected-generation history and separate presence. No inferred role fallback, subtree double billing, new provider call or advisor observer is added. Hub input/stop/message targets stay pinned to original UUID+generation. Native followup/revive remains model-issued only because Hub command context has no permission-preserving dispatcher. See the [supported surface table](delegation-contract.md#storage-and-fleet-observation). Explicit workspace path/shell adaptation is supported; production filesystem isolation/apply remains deferred and retained advisor is excluded from current product scope. Neither excluded advisor nor deferred filesystem isolation is a current release gate. Other unsupported/parked capabilities above remain explicit gaps, not implied support.

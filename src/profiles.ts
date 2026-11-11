@@ -15,7 +15,7 @@ const bundled: Record<string, Profile> = {
   general: { name: "general", description: "General read-only delegation", prompt: "Complete the assigned analysis and report the evidence and limitations.", tools: READ_TOOLS, skills: [] },
   scout: { name: "scout", description: "Explore and locate evidence", prompt: "Explore the assignment using read-only tools. Report precise source locations and findings.", tools: READ_TOOLS, skills: [] },
   review: { name: "review", description: "Review without modifying files", prompt: "Review the assigned work. Report actionable findings with source locations; do not edit files.", tools: READ_TOOLS, skills: [] },
-  implementation: { name: "implementation", description: "Implement changes in the shared checkout (exclusive model-tool writer; manual shells are uncoordinated)", prompt: "Implement the assigned bounded change, verify it and report changed files and remaining risks. You share the parent checkout.", tools: WRITE_TOOLS, skills: [] },
+  implementation: { name: "implementation", description: "Implement changes in the supplied workspace (exclusive model-tool writer; manual shells are uncoordinated)", prompt: "Implement the assigned bounded change, verify it and report changed files and remaining risks. Work in your supplied cwd; root permissions and global model-tool writer coordination still apply.", tools: WRITE_TOOLS, skills: [] },
 };
 
 async function config(path: string): Promise<Record<string, unknown>> {

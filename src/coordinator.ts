@@ -9,6 +9,7 @@ import { resultValidator, submissionParameters, saveOutcomeArtifact, type Struct
 import type { Validator } from "@earendil-works/pi-schema";
 import { allowsModel, sameSelection, validateModelSelection, type ModelSelection } from "./model-policy.ts";
 import { parentModelRuntime } from "./model-adapter.ts";
+import { resolveWorkspace, workspaceArguments } from "./workspace.ts";
 import { DEFAULT_POLICY, narrowLimits, validatePolicy, type ExecutionLimits, type SchedulingPolicy } from "./scheduling.ts";
 import { resolveProfile, intersectProfileGrants, isWriter, READ_TOOLS, type Profile, type BuiltinTool, type CoordinationAction } from "./profiles.ts";
 
@@ -33,6 +34,7 @@ export type ChildSnapshot = Readonly<ChildRef & {
   status: "queued" | "setup" | "running" | "draining" | "settled" | "failed" | "cancelled";
   profile: string;
   tools: readonly BuiltinTool[];
+  cwd?: string;
   assignment: string;
   activity: string;
   progress: string;
@@ -50,7 +52,7 @@ export type ChildSnapshot = Readonly<ChildRef & {
   endedAt: number | null;
 }>;
 export type RegistryEvent = Readonly<{ type: "changed" | "sdk"; child: ChildSnapshot; event?: AgentSessionEvent }>;
-export type StartTask = { model?: ModelSelection; resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; assertTools: (names: readonly string[]) => void; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; coordinationTools?: (actor: ChildRef) => ToolDefinition[]; nestedTool?: (parent: ChildRef) => ToolDefinition };
+export type StartTask = { cwd?: string; model?: ModelSelection; resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; assertTools: (names: readonly string[]) => void; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; coordinationTools?: (actor: ChildRef) => ToolDefinition[]; nestedTool?: (parent: ChildRef) => ToolDefinition };
 type ChildSelection = Pick<ExtensionToolContext, "model" | "modelRegistry" | "scopedModels" | "thinkingLevel" | "cwd">;
 type Entry = { validator?: Validator; input: StartTask; selection: ChildSelection; done: Promise<void>; finish: () => void; timer?: ReturnType<typeof setTimeout>; spawned: number; state: ChildSnapshot; finalizedMessages?: AgentSession["messages"]; setup?: Promise<void>; run?: Promise<void>; session?: AgentSession; unsubscribe?: () => void; cancelled: boolean; callerId: string };
 
@@ -136,7 +138,7 @@ export class DelegationCoordinator {
     if (this.closing) throw new Error("Parent shut down");
     if (!input.assignment.trim()) throw new Error("A nonempty assignment is required");
     const selection = { model: input.context.model, modelRegistry: input.context.modelRegistry,
-      scopedModels: input.context.scopedModels, thinkingLevel: input.context.thinkingLevel, cwd: input.context.cwd };
+      scopedModels: input.context.scopedModels, thinkingLevel: input.context.thinkingLevel, cwd: input.cwd ?? input.context.cwd };
     if (!selection.model) throw new Error("A selected parent model is required");
     const requested = input.model ?? input.profile.model;
     const parentState = input.parent ? this.entry(input.parent).state : undefined;
@@ -167,15 +169,17 @@ export class DelegationCoordinator {
   }
   /** Whole-batch synchronous validation precedes registry insertion, disk setup or dispatch. */
   admit(inputs: StartTask[], replacement?: ChildRef): ChildRef[] {
+    const previous = replacement ? this.entry(replacement) : undefined;
     inputs = inputs.map(input => {
+      const cwd = resolveWorkspace(input.cwd ?? previous?.selection.cwd ?? (input.parent ? this.entry(input.parent).selection.cwd : undefined), input.context.cwd);
+      if (previous && cwd !== previous.selection.cwd) throw new Error("Follow-up must retain its original workspace");
       if (typeof input.assertTools !== "function") throw new Error("Delegation requires a parent builtin provenance validator");
       const callable = new Set(input.context.tools.map(tool => tool.name));
       const profile = { ...input.profile, tools: input.profile.tools.filter(name => callable.has(name)) };
       if (!profile.tools.length) throw new Error(`Profile ${profile.name} has no callable parent builtin tools; enable an allowed parent tool or choose a usable profile`);
       input.assertTools(profile.tools);
-      return { ...input, profile };
+      return { ...input, profile, cwd };
     });
-    const previous = replacement ? this.entry(replacement) : undefined;
     if (previous) {
       if (inputs.length !== 1 || !previous.state.disposed || !["idle", "parked"].includes(this.presence.get(previous.state.id) ?? "")) throw new Error("Assignment is not idle or parked");
       if (this.key(previous.input.parent) !== this.key(inputs[0].parent)) throw new Error("Follow-up must retain its exact original parent generation");
@@ -222,7 +226,7 @@ export class DelegationCoordinator {
       const entry: Entry = { validator: validators[index], input, selection, done, finish, spawned: previous?.spawned ?? 0, cancelled: false, callerId: input.callerId, state: {
         id: previous?.state.id ?? randomUUID(), generation: (previous?.state.generation ?? 0) + 1, parentGeneration: input.parent?.generation, parentId: input.parent?.id ?? this.parentId,
         depth: input.parent ? this.entry(input.parent).state.depth + 1 : 1,
-        createdAt: Date.now(), endedAt: null, status: "queued", writerLease: false, limits: limits[index], toolCalls: 0, profile: input.profile.name, tools: [...input.profile.tools],
+        createdAt: Date.now(), endedAt: null, status: "queued", writerLease: false, limits: limits[index], toolCalls: 0, profile: input.profile.name, tools: [...input.profile.tools], cwd: selection.cwd,
         outcome: validators[index] ? { validation: "awaiting", attempts: 0, errors: [], finalized: false } : undefined,
         assignment: input.assignment, activity: "Queued for capacity / writer admission", progress: "", result: "", disposed: false,
         model: { provider: selection.model!.provider, id: selection.model!.id }, effort: selection.thinkingLevel ?? null,
@@ -345,7 +349,7 @@ export class DelegationCoordinator {
             input.assertTools([name]);
             // The public parent dispatcher preserves validation and permission hooks. Do not
             // call a raw create*Tool.execute here: that would bypass operator policy.
-            const outcome = await input.context.executeTool(name, args, { signal, onUpdate });
+            const outcome = await input.context.executeTool(name, workspaceArguments(name, args, selection.cwd, input.context.cwd), { signal, onUpdate });
             return { ...outcome.result, isError: outcome.isError };
           } };
       });

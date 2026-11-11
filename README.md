@@ -24,10 +24,22 @@ Compared with two community alternatives using their documentation, checked on 2
 | Live UI | Sub-agents widget and Agent Hub with native Pi rendering and live follow | FleetView and live transcript inspector | Live widget, FleetView and conversation viewer |
 | Background work | Ends with the parent runtime; reload aborts and drains children | Detached runners can outlive the parent process | Background by default; session-scoped scheduled jobs |
 | Workflows | Bounded batches and scoped coordination; no workflow scripts or schedules | JavaScript workflows, chains, missions and schedules | `SubagentWorkflow` with parallel/pipeline composition and schedules |
-| Filesystem | Shared checkout with a model-tool writer lease; no worktrees | Managed Git worktrees for writing children | Git worktrees with automatic commits |
+| Filesystem | Existing caller-supplied workspaces; global writer lease; no managed worktrees | Managed Git worktrees for writing children | Git worktrees with automatic commits |
 | Results and checks | Per-task JSON Schema; results finalized after drain | Typed gates, structured outputs and acceptance checks | Workflow schemas and post-run command gates |
 
 Sources: [our contract](docs/delegation-contract.md); nicobailon's [README](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/README.md), [agents](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/agents.md) and [workflows](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/workflows.md); tintinweb's [README](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/README.md) and [workflows](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/docs/workflows.md).
+
+## Native orchestration
+
+WooStack Orchestrate can use the native `subagent` tool without a provider-specific instruction. It is declared at startup with coding-worker guidance; no enable call is needed. For replacement use, load only one extension providing `subagent`: Pi uses the first registration, not an automatic provider preference. Switching providers does not migrate or remove old runs.
+
+```json
+{"agent":"worker","task":"Implement the approved change; follow the supplied repository and woostack-execute references","cwd":"/absolute/path/to/task-worktree"}
+```
+
+`worker` uses the configured `implementation` profile. `scout`, `review` and `general` are also available. Calls are async by default and wake the parent after drain; set `async:false` to wait. Batches use `tasks:[{agent,task,cwd?}]`. Use the returned `id` with `action:"status"`, `"steer"`, `"stop"` or `"resume"`; steer/resume also need `message`.
+
+The coordinator supplies an existing workspace and the complete handoff, including accessible skill/reference paths. The extension does not create or manage worktrees. This is the [supported orchestration interface](docs/delegation-contract.md#native-orchestration-compatibility), not compatibility with every competing workflow script or custom agent definition.
 
 ## Use delegation
 
@@ -127,7 +139,7 @@ Each task defaults to a 10-minute deadline, 100 model requests and 100 tool call
 
 ## Shared checkout and lifetime
 
-Sub-agents share your checkout. Writing tasks serialize through a model-tool writer lease. It does not coordinate manually entered `!`/`!!` commands, external editors, other terminals, other Pi sessions or arbitrary extension JavaScript. Avoid conflicting edits while a sub-agent is writing. There is no worktree isolation or OS sandbox.
+Sub-agents use your checkout by default, or an existing directory selected by `cwd`. File paths and shell commands are explicitly adapted through the original parent permission hooks; hooks still run in the parent context and may deny the selected paths. Writing tasks serialize through one global model-tool writer lease, even across worktrees. It does not coordinate manually entered `!`/`!!` commands, external editors, other terminals, other Pi sessions or arbitrary extension JavaScript. Avoid conflicting edits while a sub-agent is writing. A supplied worktree is not an OS sandbox; there is no automatic copy/apply or cleanup.
 
 Work belongs to the live parent runtime. Shutdown or reload aborts and drains children; there is no restart recovery or cross-parent revival. Saved transcripts and results can contain sensitive task, tool and model output. Treat them like your main Pi transcripts.
 
