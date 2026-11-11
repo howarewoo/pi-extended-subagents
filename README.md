@@ -1,6 +1,6 @@
 # pi-extended-subagents
 
-Delegate work to sub-agents in Pi, follow their progress, and steer or stop them from Agent Hub. Sub-agents use your selected model by default, with their own assignments and explicit tool grants.
+Delegate work to subagents in Pi, follow their progress, and steer or stop them from Subagent Hub. Subagents use your selected model by default, with their own assignments and explicit tool grants.
 
 ## Installation
 
@@ -21,11 +21,11 @@ pi install npm:pi-extended-subagents
 Use only one source. When switching from Git to npm, remove the Git registration first with
 `pi remove git:github.com/howarewoo/pi-extended-subagents`.
 
-Restart Pi and run `/task-profiles` to check the installation. If you already installed a local checkout, remove that registration first with `pi remove /path/to/pi-extended-subagents` to avoid loading it twice.
+Restart Pi and run `/subagent-profiles` to check the installation. If you already installed a local checkout, remove that registration first with `pi remove /path/to/pi-extended-subagents` to avoid loading it twice.
 
 ## Updates and rollback
 
-Let active sub-agents finish before updating, then restart Pi. Shutdown or `/reload` aborts
+Let active subagents finish before updating, then restart Pi. Shutdown or `/reload` aborts
 and drains children; active tasks are not migrated to the new version. There is no extension-owned
 auto-updater.
 
@@ -66,7 +66,7 @@ Compared with two community alternatives using their documentation, checked on 2
 | Delegation          | Single tasks, ordered batches and opt-in nesting                               | Single tasks, parallel runs, chains and nesting                       | Foreground/background tasks and opt-in nesting                      |
 | Agent configuration | Four bundled roles; JSON prompt/resource configuration                         | Bundled and user/project Markdown agents                              | Bundled and custom Markdown types; Claude Code agent files          |
 | Tools and resources | Parent builtin grants and explicit skills; no extension/MCP inheritance        | Per-agent tools, extensions and skills                                | Per-agent tools, extensions and skills; MCP selectors               |
-| Live UI             | Sub-agents widget and Agent Hub with native Pi rendering and live follow       | FleetView and live transcript inspector                               | Live widget, FleetView and conversation viewer                      |
+| Live UI             | Subagents widget and Subagent Hub with native Pi rendering and live follow     | FleetView and live transcript inspector                               | Live widget, FleetView and conversation viewer                      |
 | Background work     | Ends with the parent runtime; reload aborts and drains children                | Detached runners can outlive the parent process                       | Background by default; session-scoped scheduled jobs                |
 | Workflows           | Bounded batches and scoped coordination; no workflow scripts or schedules      | JavaScript workflows, chains, missions and schedules                  | `SubagentWorkflow` with parallel/pipeline composition and schedules |
 | Filesystem          | Existing caller-supplied workspaces; global writer lease; no managed worktrees | Managed Git worktrees for writing children                            | Git worktrees with automatic commits                                |
@@ -127,28 +127,28 @@ The default is two concurrent tasks, a 32-item queue and up to 16 tasks per batc
 Foreground calls return the final results. Set `background:true` to return immediately and receive one ordered completion message after the batch drains. Use the returned task ID and generation for controls:
 
 ```text
-/task-profiles
-/task-status
-/task-status <id> <generation>
-/task-steer <id> <generation> <text>
-/task-stop <id> <generation>
-/agent-hub
+/subagent-profiles
+/subagent-status
+/subagent-status <id> <generation>
+/subagent-steer <id> <generation> <text>
+/subagent-stop <id> <generation>
+/subagent-hub
 ```
 
-## Agent Hub
+## Subagent Hub
 
-Agent Hub shows the sub-agent list beside the selected conversation, using Pi's native message and tool rendering. On narrow terminals, the conversation takes the full width. Details includes results, artifacts, grants and usage; Tools shows full sanitized arguments and result text.
+Subagent Hub shows the subagent list beside the selected conversation, using Pi's native message and tool rendering. On narrow terminals, the conversation takes the full width. Details includes results, artifacts, grants and usage; Tools shows full sanitized arguments and result text.
 
-The thread follows new output until you scroll up. Press End to follow again. The pinned Sub-agents widget appears after the first task starts. Closing Agent Hub does not stop the work.
+The thread follows new output until you scroll up. Press End to follow again. The pinned Subagents widget appears after the first task starts. Closing Subagent Hub does not stop the work.
 
 | Key                   | Action                                            |
 | --------------------- | ------------------------------------------------- |
-| ↑ / ↓                 | Select a sub-agent or historical generation       |
+| ↑ / ↓                 | Select a subagent or historical generation        |
 | j / k                 | Scroll down / up one line                         |
 | Ctrl+u/d or PgUp/PgDn | Scroll a page                                     |
 | Home / End            | Top / latest output                               |
 | Tab                   | Switch between thread, details and tools          |
-| /                     | Filter the sub-agent list                         |
+| /                     | Filter the subagent list                          |
 | s / m                 | Steer / send an inbox message                     |
 | x, then y             | Stop the selected subtree; Enter does not confirm |
 | w / p                 | Wait briefly for an outcome / park an idle task   |
@@ -158,7 +158,7 @@ Mouse-wheel scrolling works in fullscreen mode. In regular mode, use the keyboar
 
 ## Messages and follow-up work
 
-Use `delegate_coordinate` to message a running sub-agent, wait for an outcome or assign follow-up work. Include it in any explicit tool allowlist alongside `delegate_task`.
+Use `delegate_coordinate` to message a running subagent, wait for an outcome or assign follow-up work. Include it in any explicit tool allowlist alongside `delegate_task`.
 
 ```json
 {"action":"message","target":{"id":"<task-id>","generation":1},"text":"Check the shutdown path too","mode":"steer"}
@@ -166,7 +166,7 @@ Use `delegate_coordinate` to message a running sub-agent, wait for an outcome or
 {"action":"followup","target":{"id":"<task-id>","generation":1},"assignment":"Now review the cancellation path"}
 ```
 
-Each line is a separate call. An accepted or queued message is not a delivery confirmation; even a delivered receipt does not prove the model understood it. Follow-ups start a new generation without replaying the old conversation, so include the context it needs. Follow-up and revival are model-tool operations, unavailable directly in Agent Hub. Child messaging is off until explicitly granted. See the [coordination reference](docs/delegation-contract.md#live-parent-messaging-waits-and-presence).
+Each line is a separate call. An accepted or queued message is not a delivery confirmation; even a delivered receipt does not prove the model understood it. Follow-ups start a new generation without replaying the old conversation, so include the context it needs. Follow-up and revival are model-tool operations, unavailable directly in Subagent Hub. Child messaging is off until explicitly granted. See the [coordination reference](docs/delegation-contract.md#live-parent-messaging-waits-and-presence).
 
 ### Task files and structured results
 
@@ -203,11 +203,11 @@ No configuration is needed for the bundled roles. To change prompts or narrow to
 
 Skills, nested delegation and child messaging need explicit operator grants. Trusted project configuration in `.pi/delegation.json` can narrow those grants, never expand them. Children do not inherit ambient extensions, MCP tools or context files.
 
-Each task defaults to a 10-minute deadline, 100 model requests and 100 tool calls. Cancellation waits for actual tool/provider drain, so a deadline cannot forcibly end unresponsive code. See [limits and nesting](docs/delegation-contract.md#capacity-and-bounded-execution), [profiles](docs/delegation-contract.md#profiles-and-explicit-spawn-grants), and [exact model selection and prewalk](docs/advanced-policies.md).
+Each task defaults to a 10-minute deadline, 100 model requests and 100 tool calls. Cancellation waits for actual tool/provider drain, so a deadline cannot forcibly end unresponsive code. See [limits and nesting](docs/delegation-contract.md#capacity-and-bounded-execution), [Subagent Profiles](docs/delegation-contract.md#subagent-profiles-and-explicit-spawn-grants), and [exact model selection and prewalk](docs/advanced-policies.md).
 
 ## Shared checkout and lifetime
 
-Sub-agents use your checkout by default, or an existing directory selected by `cwd`. File paths and shell commands are explicitly adapted through the original parent permission hooks; hooks still run in the parent context and may deny the selected paths. Writing tasks serialize through one global model-tool writer lease, even across worktrees. It does not coordinate manually entered `!`/`!!` commands, external editors, other terminals, other Pi sessions or arbitrary extension JavaScript. Avoid conflicting edits while a sub-agent is writing. A supplied worktree is not an OS sandbox; there is no automatic copy/apply or cleanup.
+Subagents use your checkout by default, or an existing directory selected by `cwd`. File paths and shell commands are explicitly adapted through the original parent permission hooks; hooks still run in the parent context and may deny the selected paths. Writing tasks serialize through one global model-tool writer lease, even across worktrees. It does not coordinate manually entered `!`/`!!` commands, external editors, other terminals, other Pi sessions or arbitrary extension JavaScript. Avoid conflicting edits while a subagent is writing. A supplied worktree is not an OS sandbox; there is no automatic copy/apply or cleanup.
 
 Work belongs to the live parent runtime. Shutdown or reload aborts and drains children; there is no restart recovery or cross-parent revival. Saved transcripts and results can contain sensitive task, tool and model output. Treat them like your main Pi transcripts.
 
@@ -267,7 +267,7 @@ rm -rf -- "$root"
 
 The child's JSONL records `stopReason:aborted`. Do not install the controlled example as a production provider. This checks the SDK lifecycle, not live-provider reliability.
 
-For the UI exercise, create `input.txt` in a disposable cwd. Run the local CLI with `--offline --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files`, `-e /absolute/path/src/pi-extended-subagents.ts -e /absolute/path/examples/controlled-fleet.ts`, and tools `read,grep,find,ls,write,edit,bash,delegate_task,delegate_coordinate`. Enter `fleet example`, then `/agent-hub`. `/fleet-theme dark` and `/fleet-theme light` switch themes. `fleet coordinate <JSON>` calls the coordination tool. The example writes `fleet-output.txt`; it is not loaded by the package manifest.
+For the UI exercise, create `input.txt` in a disposable cwd. Run the local CLI with `--offline --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files`, `-e /absolute/path/src/pi-extended-subagents.ts -e /absolute/path/examples/controlled-fleet.ts`, and tools `read,grep,find,ls,write,edit,bash,delegate_task,delegate_coordinate`. Enter `fleet example`, then `/subagent-hub`. `/fleet-theme dark` and `/fleet-theme light` switch themes. `fleet coordinate <JSON>` calls the coordination tool. The example writes `fleet-output.txt`; it is not loaded by the package manifest.
 
 ### Saved output
 

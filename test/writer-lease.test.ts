@@ -62,7 +62,7 @@ test("production parent write/bash path visibly rejects while child holds writer
     unknown?.role === "toolResult" && unknown.isError,
     "unknown parent tools are not assumed read-only",
   );
-  await session.prompt(`/task-stop ${child.id} ${child.generation}`);
+  await session.prompt(`/subagent-stop ${child.id} ${child.generation}`);
 });
 
 test("production sibling parent mutation reserves ownership during preflight before writer launch", async (t) => {
@@ -140,7 +140,7 @@ test("manual shell events remain uncoordinated and do not disable production wri
       });
     },
   });
-  await session.prompt("/task-profiles");
+  await session.prompt("/subagent-profiles");
   assert.match(JSON.stringify(session.messages.at(-1)), /manual shells are uncoordinated/);
   await session.extensionRunner.emitUserBash({
     type: "user_bash",

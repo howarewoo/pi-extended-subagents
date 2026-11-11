@@ -436,7 +436,7 @@ test("prewalk cancellation holds writer ownership through real permission drain 
   try {
     const ref = await f.launch("held prewalk", "implementation");
     await writing;
-    stop = f.session.prompt(`/task-stop ${ref.id} ${ref.generation}`);
+    stop = f.session.prompt(`/subagent-stop ${ref.id} ${ref.generation}`);
     const { eventually } = await import("./fixtures.ts");
     await eventually(() => f.events.at(-1)!.child.status === "draining");
     const held = f.events.at(-1)!.child;

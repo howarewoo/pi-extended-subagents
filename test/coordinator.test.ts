@@ -189,12 +189,12 @@ test("real model task invocation returns foreground once and background identity
     ).length,
     1,
   );
-  await session.prompt("/task-status");
+  await session.prompt("/subagent-status");
 });
 
 test("real parent reload drains background children and RPC hub does not open terminal UI", async (t) => {
   const { launch, session, events } = await fixture(t, { speed: 400 });
-  await session.prompt("/agent-hub");
+  await session.prompt("/subagent-hub");
   const ref = await launch("long child ".repeat(60));
   await session.reload();
   const state = events.filter((event) => event.child.id === ref.id).at(-1)!.child;

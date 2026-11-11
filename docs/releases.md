@@ -126,7 +126,7 @@ release with the extracted notes. The `npm` environment can require human approv
 serialize; a later tag does not cancel an active publish.
 
 Verify both the npm version/integrity and the GitHub release before announcing it. Test a clean
-Pi install, then `/task-profiles`, and confirm the documented update path. No tag, registry publish,
+Pi install, then `/subagent-profiles`, and confirm the documented update path. No tag, registry publish,
 trusted-publisher setting or fresh installed-package user walkthrough is performed by local CI checks.
 
 ## Recover a partial or bad release

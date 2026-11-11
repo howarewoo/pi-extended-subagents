@@ -75,7 +75,7 @@ export default function delegation(pi: ExtensionAPI) {
           ? `Transcript: ${transcript}\n`
           : "") + text,
     );
-    return `${clipped.content}${clipped.truncated ? "\n[Preview truncated; inspect full artifact/transcript references or task-status for one identity]" : ""}`;
+    return `${clipped.content}${clipped.truncated ? "\n[Preview truncated; inspect full artifact/transcript references or subagent-status for one identity]" : ""}`;
   };
   const compatible = (state: ChildSnapshot) => ({
     ...state,
@@ -217,8 +217,7 @@ export default function delegation(pi: ExtensionAPI) {
     name: "delegate_task",
     label: "Delegate task",
     exposure: "model-only",
-    promptSnippet:
-      "Delegate coding, review or research to native sub-agents in supplied workspaces",
+    promptSnippet: "Delegate coding, review or research to native subagents in supplied workspaces",
     promptGuidelines: [
       "Use delegate_task for authorized native delegation with explicit profiles. When subagent is available, prefer subagent for orchestration task owners and its async completion wake-ups. Supply the existing task workspace cwd; do not substitute inline implementation when a workflow requires a worker.",
     ],
@@ -580,7 +579,7 @@ export default function delegation(pi: ExtensionAPI) {
   ]);
   pi.registerTool({
     name: "subagent",
-    label: "Sub-agent",
+    label: "Subagent",
     exposure: "model-only",
     promptSnippet:
       "Native coding workers: launch, coordinate and resume work in existing task workspaces",
@@ -681,8 +680,9 @@ export default function delegation(pi: ExtensionAPI) {
       return result(compatible(owner.snapshot(target)!));
     },
   });
-  pi.registerCommand("task-profiles", {
-    description: "List bundled profile ceilings (actual tools depend on parent session)",
+  pi.registerCommand("subagent-profiles", {
+    description:
+      "Subagent Profiles: list bundled tool ceilings (actual tools depend on parent session)",
     handler: async () =>
       show({
         toolPolicy:
@@ -690,27 +690,27 @@ export default function delegation(pi: ExtensionAPI) {
         profiles: bundledProfiles(),
       }),
   });
-  pi.registerCommand("task-status", {
+  pi.registerCommand("subagent-status", {
     description: "List delegation identities, states and final results",
     handler: async (args) =>
       show(args.trim() ? coordinator.snapshot(ref(args)) : coordinator.list()),
   });
-  pi.registerCommand("task-stop", {
+  pi.registerCommand("subagent-stop", {
     description: "Stop <task-id> <generation> and drain it",
     handler: async (args) => {
       await coordinator.stop(ref(args));
     },
   });
-  pi.registerCommand("task-steer", {
+  pi.registerCommand("subagent-steer", {
     description: "Steer <task-id> <generation> <text>",
     handler: async (args) => {
       const [id, generation, ...text] = args.trim().split(/\s+/);
       await coordinator.steer(ref(`${id} ${generation}`), text.join(" "));
     },
   });
-  pi.registerCommand("agent-hub", {
+  pi.registerCommand("subagent-hub", {
     description:
-      "Agent Hub: sub-agent roster, generation history, transcripts and pinned controls (TUI only)",
+      "Subagent Hub: subagent roster, generation history, transcripts and pinned controls (TUI only)",
     handler: async (_args, ctx) => {
       if (ctx.mode !== "tui") return;
       await ctx.ui.custom<void>(

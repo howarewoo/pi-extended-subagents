@@ -1,5 +1,7 @@
 # Delegation verification
 
+Current terminology is **Subagent Hub**, **Subagent Profiles** and **Subagents**. Current commands are `/subagent-hub`, `/subagent-profiles`, `/subagent-status`, `/subagent-steer` and `/subagent-stop`; no old aliases are registered. The verification records below describe their original candidates, including historical labels and commands, not current usage instructions. See the [current command reference](delegation-contract.md#registry-controls-and-final-delivery).
+
 ## Workflow-independent discovery
 
 Startup guidance, examples and compatibility tests describe native Pi delegation without naming or requiring an external workflow package. The compatibility suite is `test/compatibility.test.ts`. The full default suite passes **145/145**, with no failures, skips or cancellations; typecheck passes. Tested source/test manifest digest: `3c8877dc49ad7385e324bf90b4d16018861f99ee84b71c369b2c46a86c756163`. Live-model automatic tool selection remains unrun; controlled startup tests establish tool availability and guidance projection, not model choice.
@@ -20,9 +22,9 @@ The default suite passes 136/136, with zero failures, cancellations or skips. Ty
 
 The README was shortened from 3389 to 1519 words. All ten code blocks remain byte-identical and in order; existing link targets are retained and local links/anchors checked. Earlier verification records below describe their original candidates, not additional runs against this rebased head.
 
-## Agent Hub naming and unused-widget visibility
+## Historical: Agent Hub naming and unused-widget visibility
 
-The current command is `/agent-hub`, with the visible title **Agent Hub** throughout current UI/help/examples. It replaces the former Hub command without an alias; older verification sections below retain historical names. The pinned heading is **Sub-agents**. An empty current registry renders no widget rows; admitted queued/setup/running/draining work and retained terminal tasks still appear. No extra visibility flag, timer or lifecycle owner was introduced.
+At this verification point, the command was `/agent-hub`, with the visible title **Agent Hub** throughout UI/help/examples. It replaced the former Hub command without an alias. The pinned heading was **Sub-agents**. An empty current registry renders no widget rows; admitted queued/setup/running/draining work and retained terminal tasks still appear. No extra visibility flag, timer or lifecycle owner was introduced.
 
 The empty-widget regression was reproduced before the fix. Focused component/SDK lifecycle tests **27/27** and the default suite **133/133** pass with zero failures/skips/cancellations, as do typecheck, SDK exercise, 18-file package dry run and diff checks. Existing full-identity controls, short-geometry refusal, live-follow/scrolling, native renderer/privacy and writer-drain assertions remain. A fresh isolated offline CLI PTY exited **0**, observing no unused Sub-agents heading at startup, the heading after a controlled launch, and `/agent-hub` opening Agent Hub with its Sub-agents roster. These are actual emitted terminal fragments, not screenshots or a human visual-acceptance claim. No live-provider calls, user settings changes or active-session reload were needed. Source/test digest: `90662331e566749fdb9bcf355f2cb20835054416133d8635336054f4b268fb24`. The pending installation-first, standalone introduction and sourced feature-comparison README edits are preserved.
 

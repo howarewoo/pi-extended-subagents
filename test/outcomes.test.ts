@@ -247,7 +247,7 @@ test("submission while real parent permission work drains stays provisional; can
     f.events.some((event) => event.child.id === ref.id && event.child.disposed),
     false,
   );
-  const stopping = f.session.prompt(`/task-stop ${ref.id} ${ref.generation}`);
+  const stopping = f.session.prompt(`/subagent-stop ${ref.id} ${ref.generation}`);
   await eventually(() =>
     f.events.some((event) => event.child.id === ref.id && event.child.status === "draining"),
   );
@@ -516,7 +516,7 @@ test("submitted parent waits for nested descendant drain and subtree shutdown ca
         (event) => event.child.id === ref.id && event.child.outcome?.validation === "submitted",
       ),
   );
-  const stopping = f.session.prompt(`/task-stop ${ref.id} 1`);
+  const stopping = f.session.prompt(`/subagent-stop ${ref.id} 1`);
   await eventually(() =>
     f.events.some((event) => event.child.depth === 2 && event.child.status === "draining"),
   );
@@ -566,7 +566,7 @@ test("SDK abort during streamed submission prevents late acceptance", async (t) 
   await eventually(() =>
     f.events.some((event) => event.child.id === ref.id && event.event?.type === "message_update"),
   );
-  await f.session.prompt(`/task-stop ${ref.id} ${ref.generation}`);
+  await f.session.prompt(`/subagent-stop ${ref.id} ${ref.generation}`);
   const final = f.events.filter((event) => event.child.id === ref.id).at(-1)!.child;
   assert.equal(final.status, "cancelled");
   assert.equal(final.outcome?.attempts, 0);

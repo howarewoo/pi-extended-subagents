@@ -163,7 +163,7 @@ test(
         errors.push(error);
       },
     });
-    assert.deepEqual(widget!.render(80), [], "no pinned line before a sub-agent starts");
+    assert.deepEqual(widget!.render(80), [], "no pinned line before a subagent starts");
     const panelLevels: number[] = [];
     for (const name of ["dark", "light", "tinted-custom"] as const) {
       if (name !== "tinted-custom") initTheme(name, false);
@@ -217,7 +217,7 @@ test(
     await session.prompt("launch");
     // Background acknowledgment is setup/queued, not an SDK running acknowledgment.
     await Promise.all([running, delta]);
-    assert.match(widget!.render(80).join("\n"), /Sub-agents.*running/);
+    assert.match(widget!.render(80).join("\n"), /Subagents.*running/);
     assert.ok(rendersAtDelta > rendersAtStart, "actual child text delta requests widget renders");
     const task = session.messages.find(
       (message) => message.role === "toolResult" && message.toolName === "delegate_task",
@@ -225,7 +225,7 @@ test(
     assert.ok(task?.role === "toolResult");
     const identity = task.details as { id: string; generation: number };
     const callsBeforeStop = model.state.callCount;
-    await session.prompt(`/task-stop ${identity.id} ${identity.generation}`);
+    await session.prompt(`/subagent-stop ${identity.id} ${identity.generation}`);
     assert.equal(model.state.callCount, callsBeforeStop, "stop control makes no inference request");
     assert.match(widget!.render(80).join("\n"), /cancelled/);
     const oldWidget = widget!;
@@ -233,7 +233,7 @@ test(
     assert.deepEqual(calls, [true, false, true]);
     assert.notEqual(widget, oldWidget);
     assert.equal(model.state.callCount, callsBeforeStop, "reload makes no inference request");
-    assert.deepEqual(widget!.render(80), [], "fresh runtime hides the unused sub-agent widget");
+    assert.deepEqual(widget!.render(80), [], "fresh runtime hides the unused subagent widget");
     running = new Promise<void>((resolve) => {
       markRunning = resolve;
     });
