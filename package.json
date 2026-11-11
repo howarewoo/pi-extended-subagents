@@ -1,14 +1,31 @@
 {
   "name": "pi-extended-subagents",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Pi-native single-assignment delegation with explicit profiles and parent-owned SDK children",
+  "keywords": [
+    "pi-package"
+  ],
+  "homepage": "https://github.com/howarewoo/pi-extended-subagents#readme",
+  "bugs": {
+    "url": "https://github.com/howarewoo/pi-extended-subagents/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/howarewoo/pi-extended-subagents.git"
+  },
   "files": [
     "src",
     "docs",
     "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
@@ -16,7 +33,10 @@
     "lint:fix": "npm run lint -- --fix",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "exercise": "node examples/sdk-exercise.ts"
+    "exercise": "node examples/sdk-exercise.ts",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run exercise",
+    "test:package": "node scripts/test-package.mjs",
+    "release:check": "node scripts/release-notes.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-schema": "1.5.2"
