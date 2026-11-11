@@ -49,7 +49,7 @@ test(
       getCurrentTools(reopened.messages)
         .map((tool) => tool.name)
         .sort(),
-      ["find", "grep", "ls", "read"],
+      ["bash", "edit", "find", "grep", "ls", "read", "write"],
     );
     assert.ok(!JSON.stringify(reopened).includes("AMBIENT_CONTEXT_MUST_NOT_APPEAR"));
     assert.match(await readFile(state.transcript!, "utf8"), /queued steering/);

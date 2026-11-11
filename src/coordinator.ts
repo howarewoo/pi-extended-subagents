@@ -1,3 +1,9 @@
+import {
+  leafDenial,
+  toolProvenance,
+  type ToolMetadata,
+  type CapabilityDenial,
+} from "./capabilities.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -83,6 +89,9 @@ export type ChildSnapshot = Readonly<
     status: "queued" | "setup" | "running" | "draining" | "settled" | "failed" | "cancelled";
     profile: string;
     tools: readonly BuiltinTool[];
+    leafTools?: readonly string[];
+    skills?: readonly string[];
+    capabilityDenials?: readonly CapabilityDenial[];
     cwd?: string;
     assignment: string;
     activity: string;
@@ -123,6 +132,10 @@ export type StartTask = {
   skills: Skill[];
   context: ExtensionToolContext;
   assertTools: (names: readonly string[]) => void;
+  toolMetadata?: () => readonly ToolMetadata[];
+  availableSkills?: () => readonly Skill[];
+  capabilityDenials?: CapabilityDenial[];
+  leafProvenance?: Readonly<Record<string, string>>;
   callerId: string;
   parent?: ChildRef;
   limits?: Partial<ExecutionLimits>;
@@ -336,6 +349,7 @@ export class DelegationCoordinator {
       if (
         input.profile.tools.some((tool) => !parent.input.profile.tools.includes(tool)) ||
         input.profile.skills.some((skill) => !parent.input.profile.skills.includes(skill)) ||
+        input.profile.leafTools?.some((name) => !parent.input.profile.leafTools?.includes(name)) ||
         input.profile.spawn?.some((role) => !parent.input.profile.spawn?.includes(role)) ||
         input.profile.coordination?.some(
           (action) => !parent.input.profile.coordination?.includes(action),
@@ -366,8 +380,30 @@ export class DelegationCoordinator {
       if (typeof input.assertTools !== "function")
         throw new Error("Delegation requires a parent builtin provenance validator");
       const callable = new Set(input.context.tools.map((tool) => tool.name));
+      const capabilityDenials: CapabilityDenial[] = [];
+      const leafTools: string[] = [];
+      const leafProvenance: Record<string, string> = {};
+      if (input.profile.name === "general") {
+        const metadata = input.toolMetadata?.() ?? [];
+        const sameWorkspace = cwd === resolveWorkspace(undefined, input.context.cwd);
+        for (const tool of metadata) {
+          if (input.profile.tools.includes(tool.name as BuiltinTool)) continue;
+          const reason = !callable.has(tool.name)
+            ? "tool is not live callable"
+            : leafDenial(tool, input.profile.leafTools ?? [], sameWorkspace);
+          if (reason) capabilityDenials.push({ name: tool.name, reason });
+          else {
+            leafTools.push(tool.name);
+            leafProvenance[tool.name] = toolProvenance(tool);
+          }
+        }
+        for (const name of input.profile.leafTools ?? [])
+          if (!metadata.some((tool) => tool.name === name))
+            capabilityDenials.push({ name, reason: "tool metadata unavailable" });
+      }
       const profile = {
         ...input.profile,
+        leafTools,
         tools: input.profile.tools.filter((name) => callable.has(name)),
       };
       if (!profile.tools.length)
@@ -375,7 +411,7 @@ export class DelegationCoordinator {
           `Profile ${profile.name} has no callable parent builtin tools; enable an allowed parent tool or choose a usable profile`,
         );
       input.assertTools(profile.tools);
-      return { ...input, profile, cwd };
+      return { ...input, profile, cwd, capabilityDenials, leafProvenance };
     });
     if (previous) {
       if (
@@ -400,6 +436,7 @@ export class DelegationCoordinator {
         profile.name !== previous.input.profile.name ||
         profile.tools.some((tool) => !previous.input.profile.tools.includes(tool)) ||
         profile.skills.some((skill) => !previous.input.profile.skills.includes(skill)) ||
+        profile.leafTools?.some((name) => !previous.input.profile.leafTools?.includes(name)) ||
         profile.spawn?.some((role) => !previous.input.profile.spawn?.includes(role)) ||
         profile.coordination?.some(
           (action) => !previous.input.profile.coordination?.includes(action),
@@ -488,6 +525,9 @@ export class DelegationCoordinator {
           toolCalls: 0,
           profile: input.profile.name,
           tools: [...input.profile.tools],
+          leafTools: [...(input.profile.leafTools ?? [])],
+          skills: [...input.profile.skills],
+          capabilityDenials: input.capabilityDenials,
           cwd: selection.cwd,
           outcome: validators[index]
             ? { validation: "awaiting", attempts: 0, errors: [], finalized: false }
@@ -638,6 +678,8 @@ export class DelegationCoordinator {
               current.input.profile.name,
               input.context.cwd,
               input.context.isProjectTrusted(),
+              undefined,
+              current.input.availableSkills?.() ?? current.input.skills,
             )
           ).profile;
           if (
@@ -739,7 +781,10 @@ export class DelegationCoordinator {
       });
       await loader.reload();
       resources.getExtensions = () => loader.getExtensions();
-      const tools: ToolDefinition[] = input.profile.tools.map((name) => {
+      const tools: ToolDefinition[] = [
+        ...input.profile.tools,
+        ...(input.profile.leafTools ?? []),
+      ].map((name) => {
         const tool = input.context.tools.find((tool) => tool.name === name);
         if (!tool) throw new Error(`Admitted parent tool is no longer callable: ${name}`);
         return {
@@ -751,12 +796,49 @@ export class DelegationCoordinator {
             if (entry.cancelled || this.closing) throw new Error("Delegation cancelled");
             if (!input.context.tools.some((tool) => tool.name === name))
               throw new Error(`Admitted parent tool is no longer callable: ${name}`);
-            input.assertTools([name]);
+            const builtin = input.profile.tools.includes(name as BuiltinTool);
+            // Re-read configuration for this generation and every ancestor before dispatch.
+            let current: Entry | undefined = entry;
+            while (current) {
+              const { profile } = await resolveProfile(
+                current.input.profile.name,
+                input.context.cwd,
+                input.context.isProjectTrusted(),
+                undefined,
+                current.input.availableSkills?.() ?? current.input.skills,
+              );
+              if (
+                builtin
+                  ? !profile.tools.includes(name as BuiltinTool)
+                  : !profile.leafTools?.includes(name)
+              )
+                throw new Error(`Current capability grant revoked: ${name}`);
+              current = current.input.parent ? this.entry(current.input.parent) : undefined;
+            }
+            if (entry.cancelled || this.closing) throw new Error("Delegation cancelled");
+            if (builtin) input.assertTools([name]);
+            else {
+              const metadata = input.toolMetadata?.().find((tool) => tool.name === name);
+              if (
+                !metadata ||
+                leafDenial(
+                  metadata,
+                  input.profile.leafTools ?? [],
+                  selection.cwd === resolveWorkspace(undefined, input.context.cwd),
+                ) ||
+                toolProvenance(metadata) !== input.leafProvenance?.[name]
+              )
+                throw new Error(`Leaf capability revoked or reclassified: ${name}`);
+            }
+            if (!input.context.tools.some((tool) => tool.name === name))
+              throw new Error(`Admitted parent tool is no longer callable: ${name}`);
             // The public parent dispatcher preserves validation and permission hooks. Do not
             // call a raw create*Tool.execute here: that would bypass operator policy.
             const outcome = await input.context.executeTool(
               name,
-              workspaceArguments(name, args, selection.cwd, input.context.cwd),
+              builtin
+                ? workspaceArguments(name as BuiltinTool, args, selection.cwd, input.context.cwd)
+                : args,
               { signal, onUpdate },
             );
             return { ...outcome.result, isError: outcome.isError };

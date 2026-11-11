@@ -389,7 +389,7 @@ test("explicitly granted nested delegation inherits the immediate parent's works
   await mkdir(join(f.root, "operator"), { recursive: true });
   await writeFile(
     join(f.root, "operator", "delegation.json"),
-    JSON.stringify({ general: { spawn: ["general"] } }),
+    JSON.stringify({ general: { tools: ["read", "grep", "find", "ls"], spawn: ["general"] } }),
   );
   const cwd = join(f.root, "nested-lane");
   await mkdir(cwd);

@@ -113,7 +113,7 @@ test("read-only child cannot reach write or delegate_task even when model reques
       );
     },
   });
-  const ref = await direct("deny model attempts");
+  const ref = await direct("deny model attempts", "scout");
   await coordinator.wait(ref);
   await assert.rejects(readFile(join(root, "forbidden.txt")), /ENOENT/);
   const ended = events.filter(

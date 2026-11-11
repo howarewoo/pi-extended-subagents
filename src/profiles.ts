@@ -22,6 +22,8 @@ export type Profile = Readonly<
     prompt: string;
     tools: readonly BuiltinTool[];
     skills: readonly string[];
+    /** Operator-reviewed leaf tools; never a tool-to-tool forwarding grant. */
+    leafTools?: readonly string[];
     spawn?: readonly string[];
     coordination?: readonly CoordinationAction[];
   }
@@ -29,9 +31,9 @@ export type Profile = Readonly<
 const bundled: Record<string, Profile> = {
   general: {
     name: "general",
-    description: "General read-only delegation",
+    description: "General delegation with restricted parent capabilities",
     prompt: "Complete the assigned analysis and report the evidence and limitations.",
-    tools: READ_TOOLS,
+    tools: WRITE_TOOLS,
     skills: [],
     spawn: ["scout", "review"],
   },
@@ -92,6 +94,7 @@ function specialize(base: Profile, value: unknown, operator: boolean): Profile {
         "prompt",
         "tools",
         "skills",
+        "leafTools",
         "spawn",
         "coordination",
         "models",
@@ -108,6 +111,16 @@ function specialize(base: Profile, value: unknown, operator: boolean): Profile {
     throw new Error(
       `Profile ${base.name} cannot mint skill grants; operator paths must be absolute`,
     );
+  const leafTools =
+    input.leafTools === undefined
+      ? [...(base.leafTools ?? [])]
+      : strings(input.leafTools, "leafTools");
+  if (
+    leafTools.some(
+      (name) => !name || base.name !== "general" || (!operator && !base.leafTools?.includes(name)),
+    )
+  )
+    throw new Error("Cannot mint leaf tool grants");
   for (const field of ["description", "prompt"] as const)
     if (input[field] !== undefined && typeof input[field] !== "string")
       throw new Error(`${field} must be text`);
@@ -139,6 +152,7 @@ function specialize(base: Profile, value: unknown, operator: boolean): Profile {
     prompt: (input.prompt as string) ?? base.prompt,
     tools: tools as BuiltinTool[],
     skills,
+    leafTools,
   };
 }
 
@@ -148,9 +162,12 @@ export async function resolveProfile(
   cwd: string,
   trusted: boolean,
   operatorDir = getAgentDir(),
+  availableSkills: readonly Skill[] = [],
 ): Promise<{ profile: Profile; skills: Skill[] }> {
   let profile = bundled[name];
   if (!Object.hasOwn(bundled, name)) throw new Error(`Unknown delegation profile: ${name}`);
+  if (name === "general")
+    profile = { ...profile, skills: availableSkills.map((skill) => skill.filePath) };
   const user = await config(join(operatorDir, "delegation.json"));
   for (const key of Object.keys(user))
     if (key !== "scheduling" && !Object.hasOwn(bundled, key))
@@ -177,7 +194,10 @@ export async function resolveProfile(
   return { profile, skills: loaded.skills };
 }
 export function isWriter(profile: Profile): boolean {
-  return profile.tools.some((tool) => !READ_TOOLS.includes(tool as (typeof READ_TOOLS)[number]));
+  return (
+    !!profile.leafTools?.length ||
+    profile.tools.some((tool) => !READ_TOOLS.includes(tool as (typeof READ_TOOLS)[number]))
+  );
 }
 
 export function bundledProfiles(): Profile[] {
@@ -197,6 +217,7 @@ export function intersectProfileGrants(profile: Profile, maximum: Profile): Prof
         ? profile.prewalk
         : undefined,
     tools: profile.tools.filter((tool) => maximum.tools.includes(tool)),
+    leafTools: profile.leafTools?.filter((name) => maximum.leafTools?.includes(name)),
     skills: profile.skills.filter((skill) => maximum.skills.includes(skill)),
     spawn: profile.spawn?.filter((role) => maximum.spawn?.includes(role)),
     coordination: profile.coordination?.filter((action) => maximum.coordination?.includes(action)),

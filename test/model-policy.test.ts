@@ -541,7 +541,7 @@ test("default descendant inherits its actual immediate parent's alternate model/
   f.runtime.registerNativeProvider(alt.provider);
   await configure(f.root, {
     scout: { models: [alternate], spawn: ["general"] },
-    general: { spawn: [] },
+    general: { tools: ["read", "grep", "find", "ls"], spawn: [] },
   });
   await f.session.prompt(
     "LAUNCH " +
