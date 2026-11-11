@@ -1,3 +1,4 @@
+import { createProfileViewer, resolvedProfiles, profileToolPolicy } from "./profile-viewer.ts";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { EFFORTS, sameSelection } from "./model-policy.ts";
 import { clippedText } from "./outcomes.ts";
@@ -681,14 +682,26 @@ export default function delegation(pi: ExtensionAPI) {
     },
   });
   pi.registerCommand("subagent-profiles", {
-    description:
-      "Subagent Profiles: list bundled tool ceilings (actual tools depend on parent session)",
-    handler: async () =>
-      show({
-        toolPolicy:
-          "Profile tools are maximum allowlists, not requirements. Admission intersects callable parent builtins without activating tools. Inspect each task snapshot tools for its effective grants.",
-        profiles: bundledProfiles(),
-      }),
+    description: "Subagent Profiles: inspect resolved workspace profiles (read-only)",
+    handler: async (_args, ctx) => {
+      const profiles = await resolvedProfiles(ctx.cwd, ctx.isProjectTrusted());
+      if (ctx.mode !== "tui") {
+        show({ toolPolicy: profileToolPolicy, profiles });
+        return;
+      }
+      await ctx.ui.custom<void>(
+        (tui, theme, keys, done) =>
+          createProfileViewer(
+            profiles,
+            theme,
+            keys,
+            () => tui.requestRender(),
+            () => done(),
+            () => Math.max(1, Math.floor(tui.terminal.rows * 0.9)),
+          ),
+        { overlay: true, overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" } },
+      );
+    },
   });
   pi.registerCommand("subagent-status", {
     description: "List delegation identities, states and final results",

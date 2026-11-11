@@ -142,6 +142,18 @@ Foreground calls return the final results. Set `background:true` to return immed
 /subagent-hub
 ```
 
+## Subagent Profiles
+
+Run `/subagent-profiles` to inspect the resolved profiles for the current workspace: bundled definitions, operator `delegation.json`, then trusted-project narrowing. It opens a read-only list/details overlay, not an editor. Reopen it after configuration changes to refresh the snapshot.
+
+Use ↑/↓ to select a role; j/k, PgUp/PgDn and Home/End scroll details; Esc closes (configured selection bindings also apply). Narrow terminals stack the list above details; tiny terminals ask you to resize. Details show the description, prompt, builtin tool ceiling, exact skill paths, spawn/coordination ceilings and model/prewalk policy.
+
+**Ceilings are not callable tools.** Pi's command context has no callable-tool dispatcher, so the viewer reports effective tools as unknown rather than treating active declarations as executable grants. Admission performs the real intersection and remaining checks; inspect a task's `tools` in `/subagent-status` or Hub Details. RPC, JSON and print modes retain the structured `{toolPolicy, profiles}` message instead of opening an overlay. Invalid configuration or missing/invalid granted skills fails resolution, as at admission.
+
+![Native-renderer illustration of Subagent Profiles with a synthetic role list and selected general profile details.](docs/images/subagent-profiles.svg)
+
+_Synthetic native-component output; not a terminal screenshot or live-provider verification._
+
 ## Subagent Hub
 
 Subagent Hub shows the subagent list beside the selected conversation, using Pi's native message and tool rendering. On narrow terminals, the conversation takes the full width. A border-colored horizontal rule separates the conversation and task list from the visible footer; it is omitted when the footer is hidden at tiny sizes. Details includes results, artifacts, grants and usage; Tools shows full sanitized arguments and result text.
