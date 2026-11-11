@@ -224,6 +224,12 @@ Subagents use your checkout by default, or an existing directory selected by `cw
 
 Work belongs to the live parent runtime. Shutdown or reload aborts and drains children; there is no restart recovery or cross-parent revival. Saved transcripts and results can contain sensitive task, tool and model output. Treat them like your main Pi transcripts.
 
+### Why worktrees are managed externally
+
+The separation is intentional: the extension owns subagent execution, coordination and UI; an external coordinator or worktree tool owns worktree creation, branch and base selection, integration and cleanup.
+
+Worktrees are supported and useful for subagent orchestration. Create a worktree externally or select an existing workspace, then pass its path as `cwd` for the assigned subagent, as in the [native orchestration example](#native-orchestration). Separate worktrees do not bypass the global model-tool writer lease or provide an OS sandbox. The extension does not automatically commit, apply changes or clean up worktrees.
+
 ## Documentation
 
 - [Delegation contract](docs/delegation-contract.md): tools, permissions, lifecycle and storage.
