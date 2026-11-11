@@ -46,7 +46,7 @@ export function createFleetProvider(speed = 400) {
       return context.messages.some(
         (message) => message.role === "toolResult" && message.toolName === "delegate_task",
       )
-        ? fauxAssistantMessage("Fleet launched; open /agent-hub")
+        ? fauxAssistantMessage("Fleet launched; open /subagent-hub")
         : fauxAssistantMessage(
             [
               fauxToolCall("delegate_task", {

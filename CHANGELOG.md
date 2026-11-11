@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Subagent terminology and command migration
+
+- Standardize current UI and documentation on Subagent Hub, Subagent Profiles and one-word subagent terminology.
+- Replace `/agent-hub`, `/task-profiles`, `/task-status`, `/task-steer` and `/task-stop` with `/subagent-hub`, `/subagent-profiles`, `/subagent-status`, `/subagent-steer` and `/subagent-stop`, respectively. Update saved instructions and command invocations; the old commands are not registered as aliases.
+- Delegation APIs, permissions, lifecycle and control behavior are unchanged.
+
 ## [0.1.0]
 
 Initial versioned release.

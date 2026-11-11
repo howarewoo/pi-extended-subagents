@@ -89,12 +89,12 @@ export function createChildWidget(
               })
               .join(" · ");
       const rows = [
-        theme.fg("accent", `● Sub-agents ${children.length}`) + theme.fg("muted", ` · ${counts}`),
+        theme.fg("accent", `● Subagents ${children.length}`) + theme.fg("muted", ` · ${counts}`),
       ];
       if (writer && budget === 1)
         rows[0] = theme.fg(
           "warning",
-          `● Sub-agents ${children.length} · Model writer: !/!! + external unsafe · ${queued} queued`,
+          `● Subagents ${children.length} · Model writer: !/!! + external unsafe · ${queued} queued`,
         );
       const room = Math.max(0, budget - 1 - (writer && budget > 1 ? 1 : 0));
       const activityRows = candidates.length && room >= (candidates.length > 1 ? 3 : 2) ? 1 : 0;
@@ -158,7 +158,7 @@ export function createChildWidget(
         }
       });
       if (shown.length < candidates.length && room)
-        rows.push(theme.fg("muted", `└─ ${candidates.length - shown.length} more · /agent-hub`));
+        rows.push(theme.fg("muted", `└─ ${candidates.length - shown.length} more · /subagent-hub`));
       else if (!candidates.length && queued && room)
         rows.push(theme.fg("muted", `└─ ${queued} queued`));
       if (writer && budget > 1)
@@ -173,7 +173,10 @@ export function createChildWidget(
 
 export function taskCard(child: ChildSnapshot | undefined, expanded = false): string[] {
   if (!child)
-    return ["Task identity unavailable", "See tool error; /agent-hub lists current runtime tasks"];
+    return [
+      "Task identity unavailable",
+      "See tool error; /subagent-hub lists current runtime tasks",
+    ];
   return [
     `${truncateToWidth(agentLabel(child), 240, "… [preview truncated]")} #${child.generation} · ${child.status}`,
     `Identity ${child.id} #${child.generation}`,
@@ -201,8 +204,8 @@ export function taskCard(child: ChildSnapshot | undefined, expanded = false): st
         ]
       : []),
     child.transcript
-      ? `Full transcript: ${child.transcript} · /agent-hub`
-      : "Transcript unavailable (setup) · /agent-hub",
+      ? `Full transcript: ${child.transcript} · /subagent-hub`
+      : "Transcript unavailable (setup) · /subagent-hub",
   ].map(lineText);
 }
 
@@ -415,7 +418,9 @@ export function createHub(
       if (width < 4 || height < 3)
         return [
           paint(
-            interactionTarget ? "Resize · Esc cancels" : "Agent Hub " + coordinator.list().length,
+            interactionTarget
+              ? "Resize · Esc cancels"
+              : "Subagent Hub " + coordinator.list().length,
           ),
         ];
       const inner = Math.max(0, width - 4);
@@ -638,7 +643,7 @@ export function createHub(
         const slots = Math.max(1, Math.floor((paneHeight - 2) / 3));
         const start = Math.max(0, index - slots + 1);
         const left = [
-          theme.fg("accent", `SUB-AGENTS · ${children.length} generations`),
+          theme.fg("accent", `SUBAGENTS · ${children.length} generations`),
           ...children
             .slice(start, start + slots)
             .flatMap((item) => [
@@ -701,7 +706,7 @@ export function createHub(
           );
       }
       return [
-        frame("╭", " Agent Hub ", "╮"),
+        frame("╭", " Subagent Hub ", "╮"),
         ...pane.slice(0, height - 2).map(row),
         ...shownFooter.map(row),
         frame("╰", "", "╯"),

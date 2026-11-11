@@ -28,6 +28,13 @@ test("local package manifest loads the recognizably named production extension",
       loaded.extensions.map((extension) => extension.path),
       [join(repo, "src", "pi-extended-subagents.ts")],
     );
+    assert.deepEqual([...loaded.extensions[0].commands.keys()].sort(), [
+      "subagent-hub",
+      "subagent-profiles",
+      "subagent-status",
+      "subagent-steer",
+      "subagent-stop",
+    ]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

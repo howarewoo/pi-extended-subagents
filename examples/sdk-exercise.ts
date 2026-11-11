@@ -66,7 +66,7 @@ try {
     await session.prompt("delegate example");
     const ref = events.at(-1)!.child;
     assert.equal(ref.status, "running");
-    await session.prompt(`/task-steer ${ref.id} ${ref.generation} queued example steering`);
+    await session.prompt(`/subagent-steer ${ref.id} ${ref.generation} queued example steering`);
     await session.reload();
     const final = events.filter((event) => event.child.id === ref.id).at(-1)!.child;
     assert.equal(final.status, "cancelled");

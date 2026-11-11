@@ -56,7 +56,7 @@ try {
   assert.equal(extension.path, join(installed, "src", "pi-extended-subagents.ts"));
   for (const tool of ["delegate_task", "delegate_coordinate", "subagent"])
     assert.ok(extension.tools.has(tool), `Packed extension did not register ${tool}`);
-  assert.ok(extension.commands.has("agent-hub"));
+  assert.ok(extension.commands.has("subagent-hub"));
   console.log(`Installed tarball loads in Pi: ${pkg.name}@${pkg.version}`);
 } finally {
   await rm(root, { recursive: true, force: true });

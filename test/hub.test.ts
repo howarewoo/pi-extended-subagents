@@ -61,7 +61,7 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
       }
     }
     rows = 24;
-    assert.match(hub.render(80).join("\n"), /Agent Hub/);
+    assert.match(hub.render(80).join("\n"), /Subagent Hub/);
     assert.match(hub.render(80).join("\n"), /escape: close/);
     palette.colors.customMessageBg = oklchColor(0.9, 0.1, 330);
     hub.invalidate();
@@ -76,7 +76,7 @@ test("widget retains each child state, sanitizes terminal content and shows late
   let child: ChildSnapshot | undefined;
   const widget = createChildWidget(() => (child ? [child] : []), theme);
   for (const width of [0, 1, 8, 20, 80, 140])
-    assert.deepEqual(widget.render(width), [], "no pinned line before the first sub-agent");
+    assert.deepEqual(widget.render(width), [], "no pinned line before the first subagent");
   for (const status of [
     "queued",
     "setup",
@@ -110,7 +110,7 @@ test("widget retains each child state, sanitizes terminal content and shows late
     };
     const output = widget.render(80).join("\n");
     assert.ok(output.includes(status));
-    assert.ok(widget.render(20)[0].startsWith("● Sub-agents"));
+    assert.ok(widget.render(20)[0].startsWith("● Subagents"));
     assert.ok(!/[\x00-\x1f\x7f-\x9f]/.test(stripAnsi(output).replaceAll("\n", "")));
     if (status === "running") {
       assert.ok(output.includes("test"));
@@ -186,7 +186,7 @@ test("fleet counts every lifecycle, bounds height independently of task count, a
   ];
   const widget = createChildWidget(() => children, theme);
   const text = stripAnsi(widget.render(180).join("\n"));
-  assert.match(text, /● Sub-agents 6/);
+  assert.match(text, /● Subagents 6/);
   assert.match(text, /2 running/);
   assert.match(text, /1 failed/);
   assert.doesNotMatch(text, /no conflicting/);
@@ -1122,7 +1122,7 @@ test("compact agent tree uses actual status/role/direct stats/activity with trut
     () => 30,
   );
   const text = stripAnsi(widget.render(120).join("\n"));
-  assert.match(text, /● Sub-agents/);
+  assert.match(text, /● Subagents/);
   assert.match(text, /8 queued/);
   assert.match(text, /[├└]─/);
   assert.match(text, /scout.*Check drain/);

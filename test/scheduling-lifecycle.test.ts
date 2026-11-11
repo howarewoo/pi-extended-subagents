@@ -114,9 +114,11 @@ for (const cancellation of ["stop", "deadline"] as const)
         assert.equal(hookOwner.status, "running");
         assert.ok(hookCallId?.includes("/"), "actual public parent-dispatched nested tool call");
         if (cancellation === "stop")
-          stopping = f.session.prompt(`/task-stop ${refs[0].id} ${refs[0].generation}`).then(() => {
-            stopReturned = true;
-          });
+          stopping = f.session
+            .prompt(`/subagent-stop ${refs[0].id} ${refs[0].generation}`)
+            .then(() => {
+              stopReturned = true;
+            });
         else t.mock.timers.tick(100);
         await draining;
         const first = latest.get("first")!;
@@ -316,7 +318,7 @@ test(
       taskCard(nested).join("\n"),
       new RegExp(`Parent ${child.id} #${child.generation} · depth 2`),
     );
-    await f.session.prompt(`/task-stop ${child.id} ${child.generation}`);
+    await f.session.prompt(`/subagent-stop ${child.id} ${child.generation}`);
     const disposed = f.events.filter((event) => event.child.disposed).map((event) => event.child);
     assert.deepEqual(
       disposed.map((state) => state.depth),
@@ -383,7 +385,7 @@ test(
         ),
     );
     const start = Date.now();
-    await f.session.prompt(`/task-stop ${child.id} ${child.generation}`);
+    await f.session.prompt(`/subagent-stop ${child.id} ${child.generation}`);
     assert.ok(
       Date.now() - start < 1500,
       "stop must abort bash rather than wait for its natural exit",

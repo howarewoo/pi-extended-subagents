@@ -80,8 +80,8 @@ test("SDK batch queues FIFO at bounded concurrency, cancels before setup, preser
     accepted.map((state) => state.status),
     ["setup", "queued", "queued", "queued"],
   );
-  await f.session.prompt(`/task-stop ${accepted[1].id} 1`);
-  await f.session.prompt(`/task-stop ${accepted[0].id} 1`);
+  await f.session.prompt(`/subagent-stop ${accepted[1].id} 1`);
+  await f.session.prompt(`/subagent-stop ${accepted[0].id} 1`);
   await eventually(() =>
     f.events.some((event) => event.child.id === accepted[3].id && event.child.disposed),
   );
