@@ -9,6 +9,7 @@ export const WRITE_TOOLS = [...READ_TOOLS, "write", "edit", "bash"] as const;
 export type BuiltinTool = typeof WRITE_TOOLS[number];
 export const COORDINATION_ACTIONS = ["message", "inbox", "wait"] as const;
 export type CoordinationAction = typeof COORDINATION_ACTIONS[number];
+/** Tool arrays are ceilings; admission intersects callable parent builtins before writer/ancestry checks. */
 export type Profile = Readonly<ModelPolicy & { name: string; description: string; prompt: string; tools: readonly BuiltinTool[]; skills: readonly string[]; spawn?: readonly string[]; coordination?: readonly CoordinationAction[] }>;
 const bundled: Record<string, Profile> = {
   general: { name: "general", description: "General read-only delegation", prompt: "Complete the assigned analysis and report the evidence and limitations.", tools: READ_TOOLS, skills: [] },

@@ -5,11 +5,11 @@ import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager
 import { fauxProvider, fauxAssistantMessage, fauxToolCall, InMemoryCredentialStore, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { TestContext } from "node:test";
-import extension from "../src/extension.ts";
+import extension from "../src/pi-extended-subagents.ts";
 import { DelegationCoordinator, type RegistryEvent } from "../src/coordinator.ts";
 import { resolveProfile } from "../src/profiles.ts";
 
-export async function fixture(t: TestContext, options: { speed?: number; tokenSize?: { min: number; max: number }; extra?: ExtensionFactory; response?: FauxResponseFactory } = {}) {
+export async function fixture(t: TestContext, options: { tools?: string[] | "default"; speed?: number; tokenSize?: { min: number; max: number }; extra?: ExtensionFactory; response?: FauxResponseFactory } = {}) {
   const root = await mkdtemp(join(tmpdir(), "delegation-test-"));
   const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = join(root, "operator");
@@ -31,9 +31,13 @@ export async function fixture(t: TestContext, options: { speed?: number; tokenSi
   const events: RegistryEvent[] = [];
   let context: ExtensionToolContext | undefined;
   let contextCallerId = "";
+  let assertTools!: (names: readonly string[]) => void;
   const coordinator = new DelegationCoordinator(join(root, "direct"), "test-parent");
   coordinator.subscribe(event => events.push(event));
   const observer: ExtensionFactory = pi => {
+    assertTools = names => {
+      for (const name of names) if (pi.getAllTools().find(tool => tool.name === name)?.sourceInfo.path !== `builtin:${name}`) throw new Error(`Delegation requires an unmodified built-in parent tool: ${name}`);
+    };
     pi.on("tool_call", event => {
       const builtinRead = ["read", "grep", "find", "ls"].includes(event.toolName) && pi.getAllTools().some(tool => tool.name === event.toolName && tool.sourceInfo.path === `builtin:${event.toolName}`);
       try { coordinator.parentToolStart(event.toolCallId, event.toolName, builtinRead); }
@@ -48,7 +52,7 @@ export async function fixture(t: TestContext, options: { speed?: number; tokenSi
     extensionFactories: [extension, observer, ...(options.extra ? [options.extra] : [])] });
   await loader.reload();
   const { session } = await createAgentSession({ cwd: root, agentDir: join(root, "agent"), modelRuntime: runtime, model: model.getModel(),
-    resourceLoader: loader, tools: ["read", "grep", "find", "ls", "edit", "write", "bash", "capture_context", "delegate_task", "delegate_coordinate"],
+    resourceLoader: loader, tools: options.tools === "default" ? undefined : options.tools ?? ["read", "grep", "find", "ls", "edit", "write", "bash", "capture_context", "delegate_task", "delegate_coordinate"],
     settingsManager: settings, sessionManager: SessionManager.create(root, join(root, "parent")) });
   t.after(async () => {
     try { await coordinator.shutdown(); await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); }
@@ -72,7 +76,7 @@ export async function fixture(t: TestContext, options: { speed?: number; tokenSi
       await session.prompt("capture fixture context");
     }
     const { profile, skills } = await resolveProfile(profileName, root, false, join(root, "operator"));
-    return coordinator.start({ assignment, profile, skills, context: context!, callerId: contextCallerId });
+    return coordinator.start({ assignment, profile, skills, context: context!, assertTools, callerId: contextCallerId });
   }
   return { root, model, runtime, session, coordinator, events, launch, direct };
 }

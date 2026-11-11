@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { AgentSession, createAgentSession, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { AgentSession, createAgentSession, initTheme, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { fauxProvider, getCurrentTools, InMemoryCredentialStore, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { childResources } from "../src/coordinator.ts";
 import { createHub } from "../src/hub.ts";
-import { oklchColor, visibleWidth } from "@earendil-works/pi-tui";
+import { ProcessTerminal, TuiMainScreen, oklchColor, visibleWidth } from "@earendil-works/pi-tui";
 import { fixture, eventually } from "./fixtures.ts";
 
 test("SDK selected parent provider streams, steers, settles and reopens transcript with explicit resources", { timeout: 15000 }, async t => {
@@ -70,9 +70,11 @@ test("shutdown racing child construction drains setup without model execution", 
 
 test("view is width-safe, follows stream and closing never owns execution", async t => {
   const { coordinator, direct } = await fixture(t, { speed: 500 });
+  initTheme("dark", false);
   let renders = 0; let closed = false;
+  const tui = new TuiMainScreen(new ProcessTerminal()); t.mock.method(tui, "requestRender", () => {});
   const hub = createHub(coordinator, { fg: (_color, text) => text, style: text => text, colors: { customMessageBg: oklchColor(0.3, 0, 0) } },
-    { matches: (data, action) => data === "escape" && action === "tui.select.cancel", getKeys: () => ["escape"] }, () => { renders++; }, () => { closed = true; });
+    { matches: (data, action) => data === "escape" && action === "tui.select.cancel", getKeys: () => ["escape"] }, () => { renders++; }, () => { closed = true; }, {tui, cwd: process.cwd()});
   const ref = await direct("中文 👩‍💻 \u001b]52;c;bad\u0007");
   await eventually(() => !!coordinator.snapshot(ref)?.progress);
   for (const width of [0, 1, 2, 8, 40, 80]) assert.ok(hub.render(width).every(line => visibleWidth(line) <= width));
@@ -96,7 +98,7 @@ test("real model task invocation returns foreground once and background identity
 
 test("real parent reload drains background children and RPC hub does not open terminal UI", async t => {
   const { launch, session, events } = await fixture(t, { speed: 400 });
-  await session.prompt("/task-hub");
+  await session.prompt("/agent-hub");
   const ref = await launch("long child ".repeat(60));
   await session.reload();
   const state = events.filter(event => event.child.id === ref.id).at(-1)!.child;

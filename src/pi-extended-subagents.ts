@@ -1,13 +1,14 @@
+import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { EFFORTS, sameSelection } from "./model-policy.ts";
 import { clippedText } from "./outcomes.ts";
 import { readTaskInput } from "./task-input.ts";
 import { join } from "node:path";
 import { Type } from "typebox";
-import { truncateHead, type ExtensionToolContext, type ToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { truncateHead, type ExtensionToolContext, type ToolDefinition, type ToolRenderers, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveScheduling } from "./scheduling.ts";
 import { DelegationCoordinator, type ChildRef, type ChildSnapshot, type StartTask } from "./coordinator.ts";
 import { READ_TOOLS, resolveProfile, bundledProfiles, COORDINATION_ACTIONS, intersectProfileGrants } from "./profiles.ts";
-import { createChildWidget, createHub } from "./hub.ts";
+import { createChildWidget, createHub, safe, taskCard } from "./hub.ts";
 
 export default function delegation(pi: ExtensionAPI) {
   let coordinator: DelegationCoordinator;
@@ -38,7 +39,7 @@ export default function delegation(pi: ExtensionAPI) {
     if (ctx.mode !== "tui") return;
     ctx.ui.setWidget("delegation", (tui, theme) => {
       renderWidget = () => tui.requestRender();
-      return createChildWidget(() => coordinator.snapshot(), theme, () => coordinator.agents().at(-1)?.presence);
+      return createChildWidget(() => coordinator.list(), theme, () => tui.terminal.rows);
     }, { placement: "aboveEditor" });
   });
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -73,8 +74,24 @@ export default function delegation(pi: ExtensionAPI) {
   ]);
   const taskTool = (parent?: ChildRef, rootContext?: ExtensionToolContext, rootCallerId?: string): ToolDefinition<typeof parameters> => ({
     name: "delegate_task", label: "Delegate task", exposure: "model-only",
-    description: "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model by default. Optional exact model {provider,id,effort} requires an operator profile models grant and stays exact, suppressing inherited role prewalk; models may only narrow that grant list. No aliases/fallback/coercion. Configured role-default prewalk switches once after first edit/write, not a repository scan. Advisor/probes/speculation/workers/history/executable resource inheritance remain unavailable. Bounded FIFO capacity; implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits; background delivers one final batch message. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
+    description: "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model by default. Optional exact model {provider,id,effort} requires an operator profile models grant and stays exact, suppressing inherited role prewalk; models may only narrow that grant list. No aliases/fallback/coercion. Configured role-default prewalk switches once after first edit/write, not a repository scan. Advisor/probes/speculation/workers/history/executable resource inheritance remain unavailable. Role tools are ceilings intersected with callable parent builtins; inactive tools stay inactive. Snapshots report effective tools. Bounded FIFO capacity; effective implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits; background delivers one final batch message. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
     parameters,
+    renderCall(args, theme) {
+      return { render: width => [theme.fg("toolTitle", `Delegate · ${"tasks" in args ? `batch ${args.tasks?.length ?? 0}` : safe(args.profile ?? "profile pending")} · ${args.background ? "background" : "foreground"}`),
+        safe("tasks" in args ? "Ordered batch · expand results for each identity" : args.assignment ?? args.taskFile ?? "Receiving assignment…").replaceAll("\n", " ")].map(line => truncateToWidth(line, Math.max(0, width))), invalidate() {} };
+    },
+    renderResult(result, options, theme) {
+      const stored = result.details as ChildSnapshot | { children: ChildSnapshot[] } | undefined;
+      const children = stored && "children" in stored ? stored.children : stored && "id" in stored ? [stored] : [];
+      return { render(width) {
+        const lines = children.length ? children.flatMap(snapshot => {
+          let child = snapshot;
+          try { child = coordinator?.snapshot(snapshot) ?? snapshot; } catch { /* delivered snapshots survive runtime replacement */ }
+          return taskCard(child, options.expanded);
+        }) : [safe(result.content.filter(block => block.type === "text").map(block => block.text).join("\n"))];
+        return new Text(lines.map(line => theme.fg("text", line)).join("\n"), 0, 0).render(width);
+      }, invalidate() {} };
+    },
     async execute(callerId, args, signal, onUpdate, localContext) {
       const ctx = rootContext ?? localContext;
       const owner = coordinator;
@@ -98,13 +115,12 @@ export default function delegation(pi: ExtensionAPI) {
           if (task.models.some(selection => !profile.models?.some(grant => sameSelection(grant, selection)))) throw new Error("Request cannot mint model grants");
           profile = { ...profile, models: task.models };
         }
-        assertTools(profile.tools);
         let text = task.assignment;
         if (task.taskFile !== undefined) {
           assertTools(["read"]);
           text = await readTaskInput(task.taskFile, ctx, signal, parent ? () => owner.taskInputRead(parent) : undefined);
         }
-        inputs.push({ model: task.model, assignment: text!, resultSchema: task.resultSchema, profile, skills, context: ctx, callerId: rootCallerId ?? callerId, parent, limits: task.limits,
+        inputs.push({ model: task.model, assignment: text!, resultSchema: task.resultSchema, profile, skills, context: ctx, assertTools, callerId: rootCallerId ?? callerId, parent, limits: task.limits,
           coordinationTools: actor => [coordinationTool(owner, actor)],
           nestedTool: (ref: ChildRef) => taskTool(ref, ctx, rootCallerId ?? callerId) });
       }
@@ -173,9 +189,8 @@ export default function delegation(pi: ExtensionAPI) {
             descendantRole = original.profile;
             ancestor = original.parentGeneration === undefined ? undefined : { id: original.parentId, generation: original.parentGeneration };
           }
-          assertTools(profile.tools);
           signal?.throwIfAborted();
-          const next = registry.renew(args.target, { assignment: args.assignment, resultSchema: args.resultSchema, profile, skills, context: ctx, callerId, parent,
+          const next = registry.renew(args.target, { assignment: args.assignment, resultSchema: args.resultSchema, profile, skills, context: ctx, assertTools, callerId, parent,
             coordinationTools: ref => [coordinationTool(registry, ref)], nestedTool: ref => taskTool(ref, ctx, callerId) });
           value = registry.snapshot(next);
         }
@@ -184,17 +199,18 @@ export default function delegation(pi: ExtensionAPI) {
     },
   });
   pi.registerTool(coordinationTool());
-  pi.registerTool(taskTool());
-  pi.registerCommand("task-profiles", { description: "List bundled profiles and capability availability", handler: async () => show(bundledProfiles()) });
+  const taskDefinition = taskTool();
+  pi.registerTool(taskDefinition);
+  pi.registerCommand("task-profiles", { description: "List bundled profile ceilings (actual tools depend on parent session)", handler: async () => show({ toolPolicy: "Profile tools are maximum allowlists, not requirements. Admission intersects callable parent builtins without activating tools. Inspect each task snapshot tools for its effective grants.", profiles: bundledProfiles() }) });
   pi.registerCommand("task-status", { description: "List delegation identities, states and final results", handler: async args => show(args.trim() ? coordinator.snapshot(ref(args)) : coordinator.list()) });
   pi.registerCommand("task-stop", { description: "Stop <task-id> <generation> and drain it", handler: async args => { await coordinator.stop(ref(args)); } });
   pi.registerCommand("task-steer", { description: "Steer <task-id> <generation> <text>", handler: async args => {
     const [id, generation, ...text] = args.trim().split(/\s+/);
     await coordinator.steer(ref(`${id} ${generation}`), text.join(" "));
   } });
-  pi.registerCommand("task-hub", { description: "Observe the latest registry entry (TUI only)", handler: async (_args, ctx) => {
+  pi.registerCommand("agent-hub", { description: "Agent Hub: sub-agent roster, generation history, transcripts and pinned controls (TUI only)", handler: async (_args, ctx) => {
     if (ctx.mode !== "tui") return;
-    await ctx.ui.custom<void>((tui, theme, keys, done) => createHub(coordinator, theme, keys, () => tui.requestRender(), () => done(),
+    await ctx.ui.custom<void>((tui, theme, keys, done) => createHub(coordinator, theme, keys, () => tui.requestRender(), () => done(), {tui, cwd: ctx.cwd, toolRenderers: {delegate_task: {renderShell: taskDefinition.renderShell, renderCall: taskDefinition.renderCall, renderResult: taskDefinition.renderResult} as ToolRenderers}},
       () => Math.max(1, Math.floor(tui.terminal.rows * 0.9))), { overlay: true, overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" } });
   } });
 }

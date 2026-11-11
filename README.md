@@ -1,44 +1,59 @@
 # pi-extended-subagents
 
-Pi-native bounded batch, nested delegation and live-parent coordination for **Pi 1.5.2**. A model-callable `delegate_task` creates an actual SDK child using the parent's selected model by default and public provider/authentication API. OMP is a behavioral/UI reference, **not a port**. This working slice is not full OMP parity or a pi-subagents compatibility layer.
+Delegate work to sub-agents in Pi, follow their progress, and steer or stop them from Agent Hub. Sub-agents use your selected model by default, with their own assignments and explicit tool grants.
 
-- [Delegation contract](docs/delegation-contract.md): profiles, configuration, registry/events/control interfaces, authority and limitations.
-- [Verification and historical proof evidence](docs/verification.md).
-- [Pinned parity inventory](docs/parity-inventory.md), [provenance](docs/provenance.md), [third-party notices](THIRD_PARTY_NOTICES.md).
+## Installation
+
+Requires Node 22.19+ and Pi 1.5.2.
+
+```sh
+pi install git:github.com/howarewoo/pi-extended-subagents
+```
+
+Restart Pi and run `/task-profiles` to check the installation. If you already installed a local checkout, remove that registration first with `pi remove /path/to/pi-extended-subagents` to avoid loading it twice.
+
+## Feature comparison
+
+Compared with two community alternatives using their documentation, checked on 2026-11-11. This is a feature comparison, not a performance or reliability benchmark.
+
+| Capability | pi-extended-subagents | [nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents) | [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) |
+| --- | --- | --- | --- |
+| Delegation | Single tasks, ordered batches and opt-in nesting | Single tasks, parallel runs, chains and nesting | Foreground/background tasks and opt-in nesting |
+| Agent configuration | Four bundled roles; JSON prompt/resource configuration | Bundled and user/project Markdown agents | Bundled and custom Markdown types; Claude Code agent files |
+| Tools and resources | Parent builtin grants and explicit skills; no extension/MCP inheritance | Per-agent tools, extensions and skills | Per-agent tools, extensions and skills; MCP selectors |
+| Live UI | Sub-agents widget and Agent Hub with native Pi rendering and live follow | FleetView and live transcript inspector | Live widget, FleetView and conversation viewer |
+| Background work | Ends with the parent runtime; reload aborts and drains children | Detached runners can outlive the parent process | Background by default; session-scoped scheduled jobs |
+| Workflows | Bounded batches and scoped coordination; no workflow scripts or schedules | JavaScript workflows, chains, missions and schedules | `SubagentWorkflow` with parallel/pipeline composition and schedules |
+| Filesystem | Shared checkout with a model-tool writer lease; no worktrees | Managed Git worktrees for writing children | Git worktrees with automatic commits |
+| Results and checks | Per-task JSON Schema; results finalized after drain | Typed gates, structured outputs and acceptance checks | Workflow schemas and post-run command gates |
+
+Sources: [our contract](docs/delegation-contract.md); nicobailon's [README](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/README.md), [agents](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/agents.md) and [workflows](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/workflows.md); tintinweb's [README](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/README.md) and [workflows](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/docs/workflows.md).
 
 ## Use delegation
 
-Use Node **22.19+** and Pi **1.5.2**. From this checkout:
+Choose a model through Pi's `/login` and `/model` setup. Delegation uses that provider and may incur charges; it does not automatically switch to a cheaper model.
 
-```sh
-npm ci --ignore-scripts
-npm run typecheck
-npm test
-npm run exercise
-npm pack --dry-run
-```
-
-Load only the production extension with `pi -e /absolute/path/to/src/extension.ts`. Select a physical model using Pi's normal `/login` and `/model` setup. **Production delegation uses that provider and may incur charges.** It does not automatically switch to a cheaper/different model or use scripted responses. Explicit operator-granted exact model/effort selection and one-way prewalk are available; see [advanced policies and capability boundaries](docs/advanced-policies.md). Missing authentication, unsupported virtual routing, missing parent tools or forbidden resource grants fail visibly. Keep the required parent built-in tools active; custom overrides are deliberately unsupported rather than bypassed.
-
-Ask the parent model, for example:
+Ask Pi:
 
 > Use delegate_task with profile scout to locate the startup lifecycle code and report source locations. Run it in the foreground.
 
-The native tool input is:
+The corresponding tool call is:
 
 ```json
 {"assignment":"Locate startup lifecycle code and report source locations","profile":"scout","background":false}
 ```
 
-One call accepts one assignment or a fully preflighted ordered batch:
+Or submit a batch:
 
 ```json
 {"tasks":[{"assignment":"Locate startup code","profile":"scout"},{"assignment":"Review lifecycle tests","profile":"review","limits":{"requests":20}}],"background":false}
 ```
 
-Every item is validated before any launch. Default concurrency is **2**, with a **32-item FIFO queue** and **16-item batch bound**. Setup, running, nested waiting and draining consume capacity.  `general`, `scout` and `review` grant only `read`, `grep`, `find`, `ls`. `implementation` additionally grants `write`, `edit`, `bash` and reserves the exclusive **model-tool-mediated** shared-checkout writer. `/task-profiles` lists bundled definitions. The checkout is shared by default; there is **no filesystem isolation or OS sandbox**. Read-only profiles cannot run unrestricted shell. Tool calls run through the parent's public dispatcher, retaining validation and permission hooks.
+The default is two concurrent tasks, a 32-item queue and up to 16 tasks per batch. Every item passes preflight before any starts. One failed task does not cancel its siblings.
 
-Foreground returns final state/text once. With `background:true`, the tool returns accepted snapshots (including `{id,generation,status}`) and delivers one final custom message per call after all assignments drain, preserving input order. Batch details are `{children:[...]}`; single details are one snapshot. Failed assignments do not cancel unrelated batch siblings. Foreground abort cancels all unsettled assignments; settled outcomes remain unchanged. It does not create a detached process or survive parent reload. Use the returned identity for controls:
+`general`, `scout` and `review` allow up to `read`, `grep`, `find` and `ls`. `implementation` also allows `write`, `edit` and `bash`. Each role receives only the builtins already callable in the parent. With Pi's default tools, scouts get `read` only. Tool calls retain the parent's permission hooks; incompatible tool overrides are rejected.
+
+Foreground calls return the final results. Set `background:true` to return immediately and receive one ordered completion message after the batch drains. Use the returned task ID and generation for controls:
 
 ```text
 /task-profiles
@@ -46,14 +61,33 @@ Foreground returns final state/text once. With `background:true`, the tool retur
 /task-status <id> <generation>
 /task-steer <id> <generation> <text>
 /task-stop <id> <generation>
-/task-hub
+/agent-hub
 ```
 
-Steering queues after the current assistant/tool turn. Stop aborts and drains work, preserving its transcript. `/task-hub` observes the **latest task only**, is TUI-only and closes with configured Enter/Escape keys. Closing the view never stops execution. The compact widget retains that latest task's real state/activity; `/task-status` lists all entries. The existing opaque neutral, theme-adaptive surface is retained. This is not the planned roster/tree/transcript Hub.
+## Agent Hub
 
-### Coordinate and assign follow-up work
+Agent Hub shows the sub-agent list beside the selected conversation, using Pi's native message and tool rendering. On narrow terminals, the conversation takes the full width. Details includes results, artifacts, grants and usage; Tools shows full sanitized arguments and result text.
 
-Enable `delegate_coordinate` alongside `delegate_task` in an explicit tool allowlist. Root model controls use pinned `{id,generation}` references:
+The thread follows new output until you scroll up. Press End to follow again. The pinned Sub-agents widget appears after the first task starts. Closing Agent Hub does not stop the work.
+
+| Key | Action |
+| --- | --- |
+| ↑ / ↓ | Select a sub-agent or historical generation |
+| j / k | Scroll down / up one line |
+| Ctrl+u/d or PgUp/PgDn | Scroll a page |
+| Home / End | Top / latest output |
+| Tab | Switch between thread, details and tools |
+| / | Filter the sub-agent list |
+| s / m | Steer / send an inbox message |
+| x, then y | Stop the selected subtree; Enter does not confirm |
+| w / p | Wait briefly for an outcome / park an idle task |
+| Esc | Cancel input or close the Hub |
+
+Mouse-wheel scrolling works in fullscreen mode. In regular mode, use the keyboard controls because the terminal owns mouse scrollback. Actions stay pinned to the original task and generation; controls refuse to submit if the window cannot show the full target.
+
+## Messages and follow-up work
+
+Use `delegate_coordinate` to message a running sub-agent, wait for an outcome or assign follow-up work. Include it in any explicit tool allowlist alongside `delegate_task`.
 
 ```json
 {"action":"message","target":{"id":"<task-id>","generation":1},"text":"Check the shutdown path too","mode":"steer"}
@@ -61,43 +95,21 @@ Enable `delegate_coordinate` alongside `delegate_task` in an explicit tool allow
 {"action":"followup","target":{"id":"<task-id>","generation":1},"assignment":"Now review the cancellation path"}
 ```
 
-These are separate calls to `delegate_coordinate`. `message` accepts `inbox` (default), `steer` or `followUp`. Accepted/queued is **not acknowledgment**; delivered means recipient transcript or inbox-tool visibility, never proof the model read/understood it. `wait` selects one outcome, a known `messageId` receipt, or (with neither) the caller's own inbox. Every wait needs a 1–60000ms timeout and retains real capacity. Root can read its inbox with `{"action":"inbox"}`. Child messages to root do not automatically trigger a parent turn.
+Each line is a separate call. An accepted or queued message is not a delivery confirmation; even a delivered receipt does not prove the model understood it. Follow-ups start a new generation without replaying the old conversation, so include the context it needs. Follow-up and revival are model-tool operations, unavailable directly in Agent Hub. Child messaging is off until explicitly granted. See the [coordination reference](docs/delegation-contract.md#live-parent-messaging-waits-and-presence).
 
-Child coordination is **off by default**. Only operator profile config may grant selected `"coordination":["message","inbox","wait"]` actions; project/request arrays may only narrow them. Granted children address only supplied identities of their exact parent generation, direct children or siblings, not arbitrary registry peers or transcripts. Only direct children may omit `target` to message root. Sender identity is bound to the originating tool closure, never accepted from model input.
+### Task files and structured results
 
-Completion disposes the SDK session, permit and writer lease; presence becomes **idle**, independently of the immutable assignment outcome. Root `park` marks a disposed idle identity **parked**, without retaining a live session or writer. `followup` requires idle; `revive` requires parked. Both immediately acknowledge a fresh admitted generation (then use `wait`/`status`), re-resolve current grants/model/auth, and create a new session/transcript/artifact directory. They do **not** replay old history/tools: supply relevant context explicitly in the new assignment. The prior schema requirement is retained unless a new supported schema is supplied, with a fresh required submission. Old controls cannot retarget the new generation. `stop` closes presence, including idle/parked identities.
-
-A descendant can be renewed only while its **exact original parent UUID+generation** is still active and authorized, with immediate capacity and remaining parent lifetime spawn budget. Expired-parent revival rejects; delegate a new identity through an authorized live parent instead. This is in-memory, current-parent reassignment, **not restart recovery**. See the [coordination reference](docs/delegation-contract.md#live-parent-messaging-waits-and-presence) for bounds and terminal states.
-
-### File instructions, validated results and full output
-
-Each item may use `taskFile` **instead of** `assignment`, and may independently require a supported `resultSchema`:
+Use `taskFile` instead of `assignment` to read instructions from a workspace-relative text file. Add `resultSchema` when you need a validated JSON value:
 
 ```json
 {"taskFile":"tasks/review.txt","profile":"review","resultSchema":{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}}
 ```
 
-Task paths are explicit non-hidden workspace-relative regular UTF-8 files (1–50000 bytes, no traversal/escaping symlinks or `node_modules`). Hidden/`node_modules` exclusions apply to both the supplied path and resolved target; ordinary aliases to allowed in-workspace files remain supported. The actual parent builtin read dispatcher and permission hooks obtain the text; empty/denied/truncated/binary reads reject the whole batch before any child setup. Files contain task text, **never authority**. Do not change them during preflight; the public read API does not provide an atomic filesystem sandbox. Nested reads still require the ancestor's read grant/budget.
+Task files must be regular UTF-8 files of 1 to 50000 bytes, outside hidden paths and `node_modules`. Reads use the parent's permission hooks. Schema-required children call `submit_result({value:...})`; missing or invalid results fail visibly. See [supported schemas](docs/delegation-contract.md#required-structured-results) and [task-file checks](docs/delegation-contract.md#checked-task-file-input).
 
-Schema-required children must call their child-local **`submit_result({value:...})`**. Actual values are validated strictly with native Pi validation; final prose is not parsed as a result. Invalid submissions provide errors and can be corrected within normal limits. A valid submission is provisional until all work drains, cannot be replaced, and never overrides cancellation/provider failure. Missing/invalid required submissions fail visibly. Ordinary tasks need no schema. The [contract](docs/delegation-contract.md#required-structured-results) defines the deliberately finite, no-ref/no-regex supported schema subset.
+## Configuration
 
-New completed prompts retain exact last-assistant text in `result.txt` and any accepted value in `structured.json` alongside their SDK transcript. Snapshot `outcome` and `artifacts` distinguish submission/validation, terminal status and available full paths. Previews explicitly truncate large fields; tool details retain full detached snapshots. Persistence failures are errors, never successful full-output claims. Failed/cancelled output may be retained as evidence, not success. Treat these sensitive files like transcripts; no external logging/upload or historical migration is performed.
-
-### Exact model/effort and prewalk (opt-in)
-
-Operator profile `models` grants exact `{provider,id,effort}` alternatives. Optional profile or task `model` selects one; an explicit task selection stays exact and suppresses inherited prewalk across renewal. Task `models` may only narrow the admitted allowlist. Project/request/ancestor/revival cannot mint or restore grants. Unsupported/unavailable models, scopes or efforts fail before dispatch without fallback/coercion. Operator `prewalk` grants a one-way same-session switch after the first completed builtin edit/write, not a repository scan. The inherited physical parent remains the ordinary default; no advisor/extra inference is enabled. Full configuration, exclusions and bounded investigation results: [advanced policy ledger](docs/advanced-policies.md).
-
-### Shared-writer scope: model tools only
-
-The coordinator enforces one child writer against parent model-tool `bash`/`edit`/`write` and unknown tools, including in-flight parent mutations. Batch/root child writers queue and serialize; a conflicting parent model tool fails visibly. An already in-flight parent mutation rejects writer admission before any new launch. Read-only children may coexist within capacity. The implementation widget/overlay warns while a writer is active.
-
-**Manually entered `!`/`!!` commands are outside the writer guarantee**, like external terminals, editors and unrelated Pi sessions. Do not perform conflicting manual/external writes while a child writer is active. This operator responsibility is explicit: Pi 1.5.2 has no public interactive-shell completion notification, and wrapping operations would skip other permission hooks. The extension does not intercept, wrap, disable or reorder manual shell commands, and observing one does not disable later writers. It makes no global lock or OS sandbox claim. Arbitrary extension JavaScript is also outside tool-mediated coordination.
-
-## Explicit profiles and resources
-
-Built-in definitions have extension-owned role prompts. No ambient pi-subagents agents, extensions, MCP servers, context files, skills, prompts, themes, settings or credentials are loaded into children.
-
-Optional operator configuration lives at `<Pi agent dir>/delegation.json` (normally `~/.pi/agent/delegation.json`), keyed by bundled profile name. It can specialize descriptions/prompts, narrow bundled tools, grant exact absolute skill Markdown files, explicitly grant spawn roles, and choose bounded scheduler maximums:
+No configuration is needed for the bundled roles. To change prompts or narrow tools, use `~/.pi/agent/delegation.json`:
 
 ```json
 {
@@ -109,17 +121,40 @@ Optional operator configuration lives at `<Pi agent dir>/delegation.json` (norma
 }
 ```
 
-Nested delegation is **disabled by default**. For example, operator `"general":{"spawn":["general"]}` permits a general child to spawn a general grandchild, within default absolute depth 2 and cumulative direct spawn bound 8. Descendants cannot regain ancestor tools/skills/spawn grants. They use a child-local public SDK model-only tool, not a bypass of the root tool's exposure. A nested foreground batch must have enough immediately free capacity for every item; otherwise it fails visibly. Waiting parents retain capacity: no lending or hidden overcommit. Writer-under-writer nesting and nested background calls are explicitly unsupported.
+Skills, nested delegation and child messaging need explicit operator grants. Trusted project configuration in `.pi/delegation.json` can narrow those grants, never expand them. Children do not inherit ambient extensions, MCP tools or context files.
 
-Default per-task bounds are **10 minutes from admission**, **100 direct model-registry dispatches**, and **100 executable tool calls**. Optional request `limits` only narrows operator/project bounds. Limits cancel visibly with `limitReason`; deadlines initiate abort but **cannot force unabortable auth/provider/permission code to return**. Capacity and writer ownership remain held until real setup/tool drain. These are hard guards, not soft-yield prompts or provider-internal/token/cost precision promises. Full settings/ceilings and cancellation semantics: [delegation contract](docs/delegation-contract.md#capacity-and-bounded-execution).
+Each task defaults to a 10-minute deadline, 100 model requests and 100 tool calls. Cancellation waits for actual tool/provider drain, so a deadline cannot forcibly end unresponsive code. See [limits and nesting](docs/delegation-contract.md#capacity-and-bounded-execution), [profiles](docs/delegation-contract.md#profiles-and-explicit-spawn-grants), and [exact model selection and prewalk](docs/advanced-policies.md).
 
-Skills use Pi's standard loader, without default discovery. A trusted project's `.pi/delegation.json` uses the same format but can **only narrow** the operator-resolved tools/skills; it cannot add grants. Untrusted project configuration is ignored. `extensions`, `mcp` and other unsupported fields are rejected, not silently promised. See the [full contract](docs/delegation-contract.md).
+## Shared checkout and lifetime
 
-## Safe controlled walkthrough (no credentials/live provider)
+Sub-agents share your checkout. Writing tasks serialize through a model-tool writer lease. It does not coordinate manually entered `!`/`!!` commands, external editors, other terminals, other Pi sessions or arbitrary extension JavaScript. Avoid conflicting edits while a sub-agent is writing. There is no worktree isolation or OS sandbox.
 
-`npm test` and `npm run exercise` use the real Pi SDK, tools and storage with controlled model outputs. A controlled provider is present **only in test/example fixtures**, never the production extension.
+Work belongs to the live parent runtime. Shutdown or reload aborts and drains children; there is no restart recovery or cross-parent revival. Saved transcripts and results can contain sensitive task, tool and model output. Treat them like your main Pi transcripts.
 
-For an isolated CLI walkthrough, from this checkout:
+## Documentation
+
+- [Delegation contract](docs/delegation-contract.md): tools, permissions, lifecycle and storage.
+- [Advanced policies](docs/advanced-policies.md): models, prewalk and unsupported capabilities.
+- [Verification](docs/verification.md): checks, terminal evidence and known limits.
+- [Parity inventory](docs/parity-inventory.md), [provenance](docs/provenance.md), [third-party notices](THIRD_PARTY_NOTICES.md).
+
+## Local development
+
+From a source checkout:
+
+```sh
+npm ci --ignore-scripts
+npm run typecheck
+npm test
+npm run exercise
+npm pack --dry-run
+```
+
+Load the production entrypoint with `pi -e /absolute/path/to/src/pi-extended-subagents.ts`. Tests and examples use controlled providers without credentials or live inference.
+
+### Offline CLI walkthrough
+
+Run this from the checkout in a disposable workspace. The controlled example deliberately starts a long background child; normal print-parent exit aborts it.
 
 ```sh
 repo="$PWD"
@@ -132,7 +167,7 @@ mkdir -p "$root/home" "$root/workspace"
     "$node_bin" "$repo/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
     --offline --no-extensions --no-mcp --no-skills --no-prompt-templates \
     --no-themes --no-context-files --tools read,grep,find,ls,delegate_task \
-    --session-dir "$root/sessions" -e "$repo/src/extension.ts" \
+    --session-dir "$root/sessions" -e "$repo/src/pi-extended-subagents.ts" \
     -e "$repo/examples/controlled-parent.ts" -p 'delegate example' </dev/null
 )
 # Inspect only these new files before removing the temporary walkthrough root:
@@ -140,11 +175,13 @@ find "$root/sessions/delegation" -name '*.jsonl'
 rm -rf -- "$root"
 ```
 
-This prints a background identity; normal print-parent exit aborts the deliberately long child. Its JSONL records `stopReason:aborted`. It does not establish live provider reliability or interactive UI acceptance. Do not install the controlled example as a normal production provider.
+The child's JSONL records `stopReason:aborted`. Do not install the controlled example as a production provider. This checks the SDK lifecycle, not live-provider reliability.
 
-## Storage, lifetime and scope
+For the UI exercise, create `input.txt` in a disposable cwd. Run the local CLI with `--offline --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files`, `-e /absolute/path/src/pi-extended-subagents.ts -e /absolute/path/examples/controlled-fleet.ts`, and tools `read,grep,find,ls,write,edit,bash,delegate_task,delegate_coordinate`. Enter `fleet example`, then `/agent-hub`. `/fleet-theme dark` and `/fleet-theme light` switch themes. `fleet coordinate <JSON>` calls the coordination tool. The example writes `fleet-output.txt`; it is not loaded by the package manifest.
 
-New transcripts are stored under the parent session directory:
+### Saved output
+
+New files live under the parent session directory:
 
 ```text
 delegation/<parent-session-id>/<task-id>/
@@ -154,6 +191,4 @@ delegation/<parent-session-id>/<task-id>/
   structured.json            # accepted JSON value, if supplied (when referenced)
 ```
 
-Old `extended-subagents-proof` data is left untouched and is not loaded or migrated. New artifacts may contain sensitive assignment, tool and model output; treat them like parent transcripts. There is no durable recovery, cross-parent revival or generalized artifact service. Within this live parent, completed generation snapshots and bounded message receipts are retained in memory; renewed generations use `<task-id>-g<generation>/` directories and never modify completed files. Parent shutdown/reload aborts, drains and disposes all children. SDK hosts must bind extensions and emit shutdown through the public lifecycle; bare `session.dispose()` is not a substitute for host shutdown dispatch. Abrupt process death cannot run cleanup hooks.
-
-Not implemented: cross-parent messaging or revival, automatic idle TTL/retained-session reuse, isolation/apply, advisor/probes/speculation/workpool, executable extension/MCP grants, or the full roster/tree/transcript UI. No live provider inference, credential changes, global Pi installation/config changes or retained-data migration were performed during verification.
+Completed generations keep their own immutable files. New generations use `<task-id>-g<generation>/`. Old `extended-subagents-proof` data is left untouched and is not loaded or migrated. SDK hosts must emit the public shutdown lifecycle before disposal; bare `session.dispose()` does not perform that cleanup.

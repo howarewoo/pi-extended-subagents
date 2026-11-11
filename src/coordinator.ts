@@ -10,7 +10,7 @@ import type { Validator } from "@earendil-works/pi-schema";
 import { allowsModel, sameSelection, validateModelSelection, type ModelSelection } from "./model-policy.ts";
 import { parentModelRuntime } from "./model-adapter.ts";
 import { DEFAULT_POLICY, narrowLimits, validatePolicy, type ExecutionLimits, type SchedulingPolicy } from "./scheduling.ts";
-import { resolveProfile, intersectProfileGrants, isWriter, READ_TOOLS, type Profile, type CoordinationAction } from "./profiles.ts";
+import { resolveProfile, intersectProfileGrants, isWriter, READ_TOOLS, type Profile, type BuiltinTool, type CoordinationAction } from "./profiles.ts";
 
 const MAX_MESSAGE_BYTES = 4096;
 const MAX_MAILBOX_MESSAGES = 64;
@@ -32,6 +32,7 @@ export type ChildSnapshot = Readonly<ChildRef & {
   toolCalls: number;
   status: "queued" | "setup" | "running" | "draining" | "settled" | "failed" | "cancelled";
   profile: string;
+  tools: readonly BuiltinTool[];
   assignment: string;
   activity: string;
   progress: string;
@@ -45,11 +46,13 @@ export type ChildSnapshot = Readonly<ChildRef & {
   error?: string;
   transcript?: string;
   disposed: boolean;
+  createdAt: number;
+  endedAt: number | null;
 }>;
 export type RegistryEvent = Readonly<{ type: "changed" | "sdk"; child: ChildSnapshot; event?: AgentSessionEvent }>;
-export type StartTask = { model?: ModelSelection; resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; coordinationTools?: (actor: ChildRef) => ToolDefinition[]; nestedTool?: (parent: ChildRef) => ToolDefinition };
+export type StartTask = { model?: ModelSelection; resultSchema?: unknown; assignment: string; profile: Profile; skills: Skill[]; context: ExtensionToolContext; assertTools: (names: readonly string[]) => void; callerId: string; parent?: ChildRef; limits?: Partial<ExecutionLimits>; coordinationTools?: (actor: ChildRef) => ToolDefinition[]; nestedTool?: (parent: ChildRef) => ToolDefinition };
 type ChildSelection = Pick<ExtensionToolContext, "model" | "modelRegistry" | "scopedModels" | "thinkingLevel" | "cwd">;
-type Entry = { validator?: Validator; input: StartTask; selection: ChildSelection; done: Promise<void>; finish: () => void; timer?: ReturnType<typeof setTimeout>; spawned: number; state: ChildSnapshot; setup?: Promise<void>; run?: Promise<void>; session?: AgentSession; unsubscribe?: () => void; cancelled: boolean; callerId: string };
+type Entry = { validator?: Validator; input: StartTask; selection: ChildSelection; done: Promise<void>; finish: () => void; timer?: ReturnType<typeof setTimeout>; spawned: number; state: ChildSnapshot; finalizedMessages?: AgentSession["messages"]; setup?: Promise<void>; run?: Promise<void>; session?: AgentSession; unsubscribe?: () => void; cancelled: boolean; callerId: string };
 
 function admittedModel(entry: Entry, selection: ModelSelection): boolean {
   return entry.input.profile.models === undefined
@@ -75,17 +78,17 @@ export function childResources(prompt: string, skills: Skill[] = []): ResourceLo
 export class DelegationCoordinator {
   private entries = new Map<string, Entry>();
   private queue = new Set<Entry>();
-  private history = new Map<string, ChildSnapshot>();
+  private history = new Map<string, { state: ChildSnapshot; messages: AgentSession["messages"] }>();
   private presence = new Map<string, "active" | "idle" | "parked" | "stopped">();
   private coordinationListeners = new Set<() => void>();
-  private messages: DelegationMessage[] = [];
+  private coordinationMessages: DelegationMessage[] = [];
   private mailboxes = new Map<string, DelegationMessage[]>();
   private waits = new Map<string, Set<string>>();
   private waiterCount = 0;
   private notifyCoordination(): void { for (const listener of this.coordinationListeners) listener(); }
   agents() { return this.list().map(state => ({ id: state.id, generation: state.generation, presence: this.presence.get(state.id) })); }
   generations(id: string): ChildSnapshot[] {
-    return [...this.history.values(), ...this.list()].filter(state => state.id === id).map(state => structuredClone(state));
+    return [...this.history.values()].map(record => record.state).concat(this.list()).filter(state => state.id === id).map(state => structuredClone(state));
   }
   private listeners = new Set<(event: RegistryEvent) => void>();
   private parentMutations = new Set<string>();
@@ -101,7 +104,7 @@ export class DelegationCoordinator {
   snapshot(ref?: ChildRef): ChildSnapshot | undefined {
     if (ref) {
       const historical = this.history.get(this.key(ref));
-      if (historical) return structuredClone(historical);
+      if (historical) return structuredClone(historical.state);
     }
     const entry = ref ? this.entry(ref) : [...this.entries.values()].at(-1);
     return entry && structuredClone(entry.state);
@@ -145,7 +148,6 @@ export class DelegationCoordinator {
       if (!input.profile.models?.some(item => sameSelection(item, input.profile.prewalk!))) throw new Error("Prewalk target requires an exact model grant");
       validateModelSelection(selection, input.profile.prewalk);
     }
-    for (const name of input.profile.tools) if (!input.context.tools.some(tool => tool.name === name)) throw new Error(`Parent tool grant unavailable: ${name}`);
     const writer = this.writer ? this.entries.get(this.writer) : undefined;
     if (isWriter(input.profile) && [...this.parentMutations].some(id => !writer || !id.startsWith(writer.callerId + "/"))) throw new Error("Shared checkout writer conflict: in-flight parent mutation");
     if (input.parent) {
@@ -165,6 +167,14 @@ export class DelegationCoordinator {
   }
   /** Whole-batch synchronous validation precedes registry insertion, disk setup or dispatch. */
   admit(inputs: StartTask[], replacement?: ChildRef): ChildRef[] {
+    inputs = inputs.map(input => {
+      if (typeof input.assertTools !== "function") throw new Error("Delegation requires a parent builtin provenance validator");
+      const callable = new Set(input.context.tools.map(tool => tool.name));
+      const profile = { ...input.profile, tools: input.profile.tools.filter(name => callable.has(name)) };
+      if (!profile.tools.length) throw new Error(`Profile ${profile.name} has no callable parent builtin tools; enable an allowed parent tool or choose a usable profile`);
+      input.assertTools(profile.tools);
+      return { ...input, profile };
+    });
     const previous = replacement ? this.entry(replacement) : undefined;
     if (previous) {
       if (inputs.length !== 1 || !previous.state.disposed || !["idle", "parked"].includes(this.presence.get(previous.state.id) ?? "")) throw new Error("Assignment is not idle or parked");
@@ -212,7 +222,7 @@ export class DelegationCoordinator {
       const entry: Entry = { validator: validators[index], input, selection, done, finish, spawned: previous?.spawned ?? 0, cancelled: false, callerId: input.callerId, state: {
         id: previous?.state.id ?? randomUUID(), generation: (previous?.state.generation ?? 0) + 1, parentGeneration: input.parent?.generation, parentId: input.parent?.id ?? this.parentId,
         depth: input.parent ? this.entry(input.parent).state.depth + 1 : 1,
-        status: "queued", writerLease: false, limits: limits[index], toolCalls: 0, profile: input.profile.name,
+        createdAt: Date.now(), endedAt: null, status: "queued", writerLease: false, limits: limits[index], toolCalls: 0, profile: input.profile.name, tools: [...input.profile.tools],
         outcome: validators[index] ? { validation: "awaiting", attempts: 0, errors: [], finalized: false } : undefined,
         assignment: input.assignment, activity: "Queued for capacity / writer admission", progress: "", result: "", disposed: false,
         model: { provider: selection.model!.provider, id: selection.model!.id }, effort: selection.thinkingLevel ?? null,
@@ -222,7 +232,7 @@ export class DelegationCoordinator {
       return entry;
     });
     for (const [parent, count] of parents) parent.spawned += count;
-    if (previous) this.history.set(this.key(previous.state), structuredClone(previous.state));
+    if (previous) this.history.set(this.key(previous.state), { state: structuredClone(previous.state), messages: previous.finalizedMessages ?? [] });
     for (const entry of entries) { this.entries.set(entry.state.id, entry); this.queue.add(entry); this.presence.set(entry.state.id, "active"); }
     for (const entry of entries) {
       entry.timer = setTimeout(() => { this.limit(entry, "deadline"); }, entry.state.limits.deadlineMs);
@@ -326,10 +336,13 @@ export class DelegationCoordinator {
       await loader.reload();
       resources.getExtensions = () => loader.getExtensions();
       const tools: ToolDefinition[] = input.profile.tools.map(name => {
-        const tool = input.context.tools.find(tool => tool.name === name)!;
+        const tool = input.context.tools.find(tool => tool.name === name);
+        if (!tool) throw new Error(`Admitted parent tool is no longer callable: ${name}`);
         return { name, label: name, description: tool.description, parameters: tool.parameters,
           execute: async (_id, args, signal, onUpdate) => {
             if (entry.cancelled || this.closing) throw new Error("Delegation cancelled");
+            if (!input.context.tools.some(tool => tool.name === name)) throw new Error(`Admitted parent tool is no longer callable: ${name}`);
+            input.assertTools([name]);
             // The public parent dispatcher preserves validation and permission hooks. Do not
             // call a raw create*Tool.execute here: that would bypass operator policy.
             const outcome = await input.context.executeTool(name, args, { signal, onUpdate });
@@ -390,7 +403,7 @@ export class DelegationCoordinator {
         }
         if (event.type === "message_end" && event.message.role === "user") {
           const text = typeof event.message.content === "string" ? event.message.content : event.message.content.filter(block => block.type === "text").map(block => block.text).join("");
-          for (const message of this.messages) if (message.recipient !== "root" && this.key(message.recipient) === this.key(entry.state) && text === `Delegation message ${message.id} from ${message.sender === "root" ? "root" : this.key(message.sender)}: ${message.text}`) message.status = "delivered";
+          for (const message of this.coordinationMessages) if (message.recipient !== "root" && this.key(message.recipient) === this.key(entry.state) && text === `Delegation message ${message.id} from ${message.sender === "root" ? "root" : this.key(message.sender)}: ${message.text}`) message.status = "delivered";
           this.notifyCoordination();
         }
         if (event.type === "tool_execution_start") patch.activity = `Tool: ${event.toolName}`;
@@ -447,13 +460,14 @@ export class DelegationCoordinator {
     if (entry.state.disposed) return;
     this.queue.delete(entry);
     clearTimeout(entry.timer);
+    entry.finalizedMessages = structuredClone(entry.session?.messages ?? []);
     entry.unsubscribe?.(); entry.session?.dispose();
     // Retain immutable evidence, not the disposed SDK session graph, while idle/parked.
     entry.unsubscribe = undefined; entry.session = undefined;
     if (this.writer === entry.state.id) this.writer = undefined;
     this.closeDescendantPresence(entry);
     this.presence.set(entry.state.id, entry.cancelled || this.closing ? "stopped" : "idle");
-    this.update(entry, { disposed: true, writerLease: false, outcome: entry.state.outcome ? { ...entry.state.outcome, finalized: true } : undefined });
+    this.update(entry, { disposed: true, endedAt: Date.now(), writerLease: false, outcome: entry.state.outcome ? { ...entry.state.outcome, finalized: true } : undefined });
     entry.finish();
     this.pump();
   }
@@ -488,8 +502,8 @@ export class DelegationCoordinator {
     if (!target && mode !== "inbox") throw new Error("Root accepts inbox messages only");
     const key = this.key(target);
     const mailbox = this.mailboxes.get(key) ?? [];
-    if (mailbox.length >= MAX_MAILBOX_MESSAGES || this.messages.length >= MAX_RETAINED_MESSAGES) throw new Error("Parent message retention/mailbox limit");
-    this.messages.push(record); mailbox.push(record); this.mailboxes.set(key, mailbox);
+    if (mailbox.length >= MAX_MAILBOX_MESSAGES || this.coordinationMessages.length >= MAX_RETAINED_MESSAGES) throw new Error("Parent message retention/mailbox limit");
+    this.coordinationMessages.push(record); mailbox.push(record); this.mailboxes.set(key, mailbox);
     this.notifyCoordination();
     if (mode !== "inbox") {
       try {
@@ -514,7 +528,7 @@ export class DelegationCoordinator {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_WAIT_MS) throw new Error("Wait timeout must be 1–60000ms");
     if (this.waiterCount >= MAX_WAITERS) throw new Error("Parent waiter limit");
     if (target && messageId) throw new Error("Wait selects either an outcome or message receipt");
-    const receipt = messageId ? this.messages.find(message => message.id === messageId) : undefined;
+    const receipt = messageId ? this.coordinationMessages.find(message => message.id === messageId) : undefined;
     if (messageId && (!receipt || (this.key(receipt.sender === "root" ? undefined : receipt.sender) !== this.key(actor) && this.key(receipt.recipient === "root" ? undefined : receipt.recipient) !== this.key(actor)))) throw new Error("Unknown or foreign message receipt");
     const destination = target ? this.target(sender, target) : undefined;
     const pendingReceipt = receipt && !["delivered", "handled", "error", "not-running"].includes(receipt.status);
@@ -612,6 +626,13 @@ export class DelegationCoordinator {
     this.dispose(entry);
   }
   async wait(ref: ChildRef): Promise<ChildSnapshot> { const entry = this.entry(ref); await entry.done; return structuredClone(entry.state); }
+  /** Detached public SDK transcript for one admitted generation; no replay or arbitrary file access. */
+  messages(ref: ChildRef): AgentSession["messages"] {
+    const historical = this.history.get(this.key(ref));
+    if (historical) return structuredClone(historical.messages);
+    const entry = this.entry(ref);
+    return structuredClone(entry.session?.messages ?? entry.finalizedMessages ?? []);
+  }
   reopenTranscript(ref: ChildRef) { const path = this.snapshot(ref)?.transcript; if (!path) throw new Error("No transcript yet"); return SessionManager.open(path).buildSessionContext(); }
   shutdown(): Promise<void> {
     this.closing = true;
