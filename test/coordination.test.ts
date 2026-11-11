@@ -130,6 +130,31 @@ test("idle followup and park/revive use monotonic fresh generations, immutable a
   assert.equal((await control(f, { action: "revive", target: second, assignment: "stale" })).isError, true);
 });
 
+test("renewal queues behind older admissions without changing identity listing order", async t => {
+  const f = await fixture(t, { speed: 0, response });
+  await config(f, { scheduling: { concurrency: 1, queue: 2 }, general: { coordination: ["wait"] } });
+  const first = await final(f, await f.launch("completed", "general", false));
+  const blocker = await f.launch("receive");
+  const waiting = (ref: ChildRef) => f.events.some(event => event.child.id === ref.id && event.child.generation === ref.generation && event.event?.type === "tool_execution_start" && event.event.toolName === "delegate_coordinate");
+  await eventually(() => waiting(blocker));
+  const older = await f.launch("receive");
+  const renewed = await control(f, { action: "followup", target: first, assignment: "fresh work" });
+  assert.equal(renewed.isError, false, JSON.stringify(renewed));
+  const next = renewed.details as ChildSnapshot;
+  assert.equal(next.generation, 2); assert.equal(next.status, "queued");
+  await f.session.prompt('LAUNCH {"assignment":"overflow","profile":"general"}');
+  const overflow = f.session.messages.filter(message => message.role === "toolResult" && message.toolName === "delegate_task").at(-1);
+  assert.ok(overflow?.role === "toolResult" && overflow.isError);
+  assert.match(JSON.stringify(overflow), /queue capacity/);
+  const status = await control(f, { action: "status", target: next });
+  assert.deepEqual((status.details as { agents: ChildRef[] }).agents.map(agent => agent.id), [first.id, blocker.id, older.id]);
+  await control(f, { action: "stop", target: blocker });
+  await eventually(() => waiting(older));
+  assert.equal(f.events.filter(event => event.child.id === next.id && event.child.generation === next.generation).at(-1)!.child.status, "queued");
+  await control(f, { action: "stop", target: older });
+  assert.equal((await final(f, next)).status, "settled");
+});
+
 test("native event waits timeout/cancel/shutdown and terminal outcomes without polling or leaked waiters", async t => {
   const f = await fixture(t, { speed: 0 });
   assert.deepEqual(await f.coordinator.coordinateWait(undefined, undefined, 1), { status: "timeout" });

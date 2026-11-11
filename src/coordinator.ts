@@ -66,6 +66,7 @@ export function childResources(prompt: string, skills: Skill[] = []): ResourceLo
 /** Authoritative parent-lifetime registry. IDs are never reused; controls require their generation. */
 export class DelegationCoordinator {
   private entries = new Map<string, Entry>();
+  private queue = new Set<Entry>();
   private history = new Map<string, ChildSnapshot>();
   private presence = new Map<string, "active" | "idle" | "parked" | "stopped">();
   private coordinationListeners = new Set<() => void>();
@@ -165,8 +166,8 @@ export class DelegationCoordinator {
       }
       return narrowLimits(maximum, input.limits ?? {});
     });
-    const queued = [...this.entries.values()].filter(entry => entry.state.status === "queued" && !entry.state.disposed).length;
-    const pending = [...this.entries.values()].filter(entry => entry.state.status === "queued" && !entry.state.disposed).map(entry => entry.input).concat(inputs);
+    const queued = this.queue.size;
+    const pending = [...this.queue].map(entry => entry.input).concat(inputs);
     let slots = Math.max(0, this.policy.concurrency - this.active().length);
     let writerBusy = !!this.writer || !!this.parentMutations.size;
     let dispatchable = 0;
@@ -201,7 +202,7 @@ export class DelegationCoordinator {
     });
     for (const [parent, count] of parents) parent.spawned += count;
     if (previous) this.history.set(this.key(previous.state), structuredClone(previous.state));
-    for (const entry of entries) { this.entries.set(entry.state.id, entry); this.presence.set(entry.state.id, "active"); }
+    for (const entry of entries) { this.entries.set(entry.state.id, entry); this.queue.add(entry); this.presence.set(entry.state.id, "active"); }
     for (const entry of entries) {
       entry.timer = setTimeout(() => { this.limit(entry, "deadline"); }, entry.state.limits.deadlineMs);
     }
@@ -231,11 +232,12 @@ export class DelegationCoordinator {
   }
   private pump(): void {
     if (this.closing) return;
-    for (const entry of this.entries.values()) {
+    for (const entry of this.queue) {
       if (entry.cancelled || entry.state.disposed || entry.state.status !== "queued") continue;
       if (this.active().length >= this.policy.concurrency) break;
       const writer = isWriter(entry.input.profile);
       if (writer && (this.writer || this.parentMutations.size)) break; // strict FIFO
+      this.queue.delete(entry);
       if (writer) this.writer = entry.state.id;
       entry.state = { ...entry.state, status: "setup", writerLease: writer, activity: "Preparing SDK child" };
       entry.setup = this.create(entry, entry.input, entry.selection);
@@ -379,6 +381,7 @@ export class DelegationCoordinator {
   }
   private dispose(entry: Entry): void {
     if (entry.state.disposed) return;
+    this.queue.delete(entry);
     clearTimeout(entry.timer);
     entry.unsubscribe?.(); entry.session?.dispose();
     // Retain immutable evidence, not the disposed SDK session graph, while idle/parked.
