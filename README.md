@@ -2,6 +2,10 @@
 
 Delegate work to subagents in Pi, follow their progress, and steer or stop them from Subagent Hub. Subagents use your selected model by default, with their own assignments and explicit tool grants.
 
+![Terminal illustration of Subagent Hub with a four-task list on the left and the selected Reader alpha conversation on the right, including a native read-tool result containing synthetic input.](docs/images/subagent-hub.svg)
+
+_Subagent Hub: tasks and conversations side by side, illustrated with synthetic demo data._
+
 ## Installation
 
 Requires Node 22.19+; tested against Pi 1.5.2. Other Pi versions are not yet verified.
@@ -149,10 +153,6 @@ These illustrations use native renderer output from the [offline fleet demo](exa
 ![Terminal illustration of the pinned Subagents widget showing four tasks: two running, one queued and one cancelled, with a live activity preview and model-tool writer warning.](docs/images/subagent-widget.svg)
 
 _Pinned Subagents widget: task counts and recent activity stay visible above the editor._
-
-![Terminal illustration of Subagent Hub with a four-task list on the left and the selected Reader alpha conversation on the right, including a native read-tool result containing synthetic input.](docs/images/subagent-hub.svg)
-
-_Subagent Hub: select a task beside its conversation; the footer lists navigation and task controls._
 
 | Key                   | Action                                            |
 | --------------------- | ------------------------------------------------- |
