@@ -4,7 +4,7 @@ Delegate work to subagents in Pi, follow their progress, and steer or stop them 
 
 ![Terminal illustration of Subagent Hub with a four-task list on the left and the selected Reader alpha conversation on the right, including a native read-tool result containing synthetic input.](docs/images/subagent-hub.svg)
 
-_Subagent Hub: tasks and conversations side by side, illustrated with synthetic demo data._
+_Subagent Hub: tasks and conversations side by side, with a full-width rule above the footer. Illustrated with synthetic demo data._
 
 ## Installation
 
@@ -144,11 +144,11 @@ Foreground calls return the final results. Set `background:true` to return immed
 
 ## Subagent Hub
 
-Subagent Hub shows the subagent list beside the selected conversation, using Pi's native message and tool rendering. On narrow terminals, the conversation takes the full width. Details includes results, artifacts, grants and usage; Tools shows full sanitized arguments and result text.
+Subagent Hub shows the subagent list beside the selected conversation, using Pi's native message and tool rendering. On narrow terminals, the conversation takes the full width. A border-colored horizontal rule separates the conversation and task list from the visible footer; it is omitted when the footer is hidden at tiny sizes. Details includes results, artifacts, grants and usage; Tools shows full sanitized arguments and result text.
 
 The thread follows new output until you scroll up. Press End to follow again. The pinned Subagents widget appears after the first task starts. Closing Subagent Hub does not stop the work.
 
-These illustrations use native renderer output from the [offline fleet demo](examples/controlled-fleet.ts) with synthetic data; they are not terminal screenshots.
+These illustrations use native renderer output with synthetic data modeled on the [offline fleet demo](examples/controlled-fleet.ts); they are not terminal screenshots.
 
 ![Terminal illustration of the pinned Subagents widget showing four tasks: two running, one queued and one cancelled, with a live activity preview and model-tool writer warning.](docs/images/subagent-widget.svg)
 
