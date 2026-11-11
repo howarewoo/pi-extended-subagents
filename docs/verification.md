@@ -1,5 +1,13 @@
 # Delegation verification
 
+## PR 9 rebase onto merged main
+
+PR 9 was rebased onto main `a65a18e2405c02b3261fcfe417b83441d32bfb86` after its predecessor PRs merged. The reconciliation preserves main's writer admission/subtree cancellation fix (`6004646`) and generation FIFO fix (`482e217`), including all three added regression tests. The Hub, native thread renderer and other local follow-ups are unchanged by the rebase. The upstream GitHub workflow is retained unchanged.
+
+The default suite passes 136/136, with zero failures, cancellations or skips. Typecheck, the controlled SDK exercise, the 18-file package dry run and diff checks pass. Source/test manifest digest: `fb8d52595419ba6e3486609bf51814b68d8ff4069b59b503e8cdc71881bf3b65`. No live-provider calls or new terminal captures were run; earlier UI evidence applies to the unchanged Hub/thread sources.
+
+The README was shortened from 3389 to 1519 words. All ten code blocks remain byte-identical and in order; existing link targets are retained and local links/anchors checked. Earlier verification records below describe their original candidates, not additional runs against this rebased head.
+
 ## Agent Hub naming and unused-widget visibility
 
 The current command is `/agent-hub`, with the visible title **Agent Hub** throughout current UI/help/examples. It replaces the former Hub command without an alias; older verification sections below retain historical names. The pinned heading is **Sub-agents**. An empty current registry renders no widget rows; admitted queued/setup/running/draining work and retained terminal tasks still appear. No extra visibility flag, timer or lifecycle owner was introduced.
