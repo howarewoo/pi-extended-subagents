@@ -20,7 +20,7 @@ export const DEFAULT_POLICY: Readonly<SchedulingPolicy> = {
   batch: 16,
   depth: 2,
   spawns: 8,
-  deadlineMs: 600000,
+  deadlineMs: 1800000,
   requests: 100,
   tools: 100,
 };

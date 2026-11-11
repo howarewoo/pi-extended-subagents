@@ -108,6 +108,8 @@ test("widget counts each child state, sanitizes terminal content and shows only 
     "setup",
     "running",
     "draining",
+    "pausing",
+    "paused",
     "settled",
     "cancelled",
     "failed",
@@ -138,7 +140,7 @@ test("widget counts each child state, sanitizes terminal content and shows only 
     assert.ok(output.includes(status));
     assert.ok(widget.render(20)[0].startsWith("● Subagents"));
     assert.ok(!/[\x00-\x1f\x7f-\x9f]/.test(stripAnsi(output).replaceAll("\n", "")));
-    if (["setup", "running", "draining"].includes(status)) {
+    if (["setup", "running", "draining", "pausing"].includes(status)) {
       assert.ok(output.includes("test"));
       assert.match(output, /中文 👩‍💻 latest/);
     } else {
@@ -193,7 +195,7 @@ test("widget removes details on completion while retaining full fleet counts", (
   assert.match(widget.render(180).join("\n"), /inspect transition.*\n.*Live preview/);
   children = [{ ...children[0], status: "settled", disposed: true, result: "Final preview" }];
   assert.deepEqual(widget.render(180), ["● Subagents 1 · 1 settled"]);
-  assert.deepEqual(widget.render(40), ["● Subagents 1 · 0 active · 0 queued"]);
+  assert.deepEqual(widget.render(55), ["● Subagents 1 · 0 active · 0 paused · 0 queued"]);
 });
 
 test("widget keeps queued and finished fleets summary-only, including undisposed terminal states", () => {
@@ -211,8 +213,8 @@ test("widget keeps queued and finished fleets summary-only, including undisposed
         widget.render(180)[0],
         new RegExp(`${statuses.filter((s) => s === status).length} ${status}`),
       );
-    assert.deepEqual(widget.render(40), [
-      `● Subagents ${children.length} · 0 active · ${statuses[0] === "queued" ? 2 : 0} queued`,
+    assert.deepEqual(widget.render(55), [
+      `● Subagents ${children.length} · 0 active · 0 paused · ${statuses[0] === "queued" ? 2 : 0} queued`,
     ]);
   }
 });
@@ -235,7 +237,7 @@ test("widget overflow counts only non-disposed setup/running/draining tasks", ()
   assert.match(lines[3], /inspect running/);
   assert.equal(lines[4], "└─ 2 more · /subagent-hub");
   assert.doesNotMatch(lines.slice(1).join("\n"), /inspect done|inspect queued|inspect disposed/);
-  assert.match(widget.render(40)[0], /4 active · 1 queued/);
+  assert.match(widget.render(55)[0], /4 active · 0 paused · 1 queued/);
 });
 
 const effectiveKeys = {
@@ -1265,4 +1267,48 @@ test("compact agent tree uses actual status/role/direct stats/activity with trut
       assert.ok(lines.length <= Math.max(1, Math.min(5, Math.floor(rows / 4))));
       assert.ok(lines.every((line) => visibleWidth(line) <= width));
     }
+});
+
+test("paused widget stays summary-only while Hub exposes retained context and stop", async (t) => {
+  const coordinator = new DelegationCoordinator("unused", "root");
+  const child = snapshot("paused-agent", {
+    status: "paused",
+    pauseReason: "deadline",
+    retainedContext: true,
+    activity: "old activity",
+  });
+  const widget = createChildWidget(() => [child], theme);
+  const lines = widget.render(140);
+  assert.deepEqual(lines, ["● Subagents 1 · 1 paused"]);
+  assert.match(widget.render(55)[0], /0 active · 1 paused · 0 queued/);
+  const stopped: ChildRef[] = [];
+  t.mock.method(coordinator, "list", () => [child]);
+  t.mock.method(coordinator, "snapshot", () => child);
+  t.mock.method(coordinator, "stop", async (ref: ChildRef) => {
+    stopped.push(ref);
+  });
+  const hub = createHub(
+    coordinator,
+    theme,
+    effectiveKeys,
+    () => {},
+    () => {},
+    dependencies,
+    () => 24,
+  );
+  try {
+    hub.handleInput!("\t");
+    assert.match(
+      stripAnsi(hub.render(180).join("\n")),
+      /resources idle SDK; context retained; model resume required/,
+    );
+    assert.match(taskCard(child).join("\n"), /resume via model control after drain/);
+    hub.handleInput!("x");
+    assert.match(stripAnsi(hub.render(100).join("\n")), /y confirms/);
+    hub.handleInput!("y");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(stopped, [{ id: child.id, generation: child.generation }]);
+  } finally {
+    hub.dispose();
+  }
 });

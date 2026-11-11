@@ -649,6 +649,15 @@ test("descendant followup/revival retains exact live parent generation, consumes
       true,
     );
     assert.equal((await control(f, { action: "park", target: second })).isError, true);
+    const parentRenewal = await control(f, {
+      action: "followup",
+      target: parent,
+      assignment: "fresh parent without spawning",
+    });
+    assert.equal(parentRenewal.isError, false, JSON.stringify(parentRenewal));
+    const renewedParent = parentRenewal.details as ChildSnapshot;
+    assert.equal(renewedParent.spawned, 2, "admission preserves cumulative spawn telemetry");
+    assert.equal((await final(f, renewedParent)).spawned, 2);
   } finally {
     release();
   }

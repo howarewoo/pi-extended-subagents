@@ -87,11 +87,17 @@ The execution state is separate from agent presence:
 stateDiagram-v2
     [*] --> queued: Batch admitted; deadline starts
     queued --> setup: FIFO capacity and writer admission
-    queued --> cancelled: Stop or deadline before setup
+    queued --> cancelled: Stop before setup
+    queued --> pausing: Deadline before setup
+    setup --> pausing: Deadline
+    running --> pausing: Deadline
+    pausing --> paused: Actual subtree drain; release capacity/lease
+    paused --> queued: Explicit continuation; same SDK context/identity
+    paused --> cancelled: Stop or shutdown
     setup --> running: SDK agent_start
     setup --> failed: Setup failure
     setup --> draining: Stop during setup
-    running --> draining: Completion, stop or execution limit
+    running --> draining: Completion, stop or hard request/tool limit
     running --> failed: Run rejects after descendant drain
     draining --> settled: Successful finalization
     draining --> failed: Model, required result or persistence failure
@@ -101,17 +107,17 @@ stateDiagram-v2
     cancelled --> [*]: Dispose and release resources
 ```
 
-This diagram summarizes meaningful paths; cancellation during setup can finalize without reaching `running`. Consumers must use the completion promise or `disposed` flag for actual drain, rather than treating a terminal status alone as resource release.
+This diagram summarizes meaningful paths; cancellation during setup can finalize without reaching `running`. Consumers must use the window completion promise, `paused` state or `disposed` flag for actual drain, rather than treating a terminal status alone as resource release.
 
-Scheduling defaults are 16 concurrent tasks, a 32-item queue, and 16 tasks per batch. Each task defaults to a ten-minute deadline, 100 direct model requests, and 100 tool calls. Operator configuration can change defaults within hard ceilings; trusted project configuration and individual requests can only narrow their applicable limits. See [scheduling.ts](src/scheduling.ts) for the full policy, including nesting bounds.
+Scheduling defaults are 16 concurrent tasks, a 32-item queue, and 16 tasks per batch. Each task defaults to a thirty-minute deadline, 100 direct model requests, and 100 tool calls. Operator configuration can change defaults within hard ceilings; trusted project configuration and individual requests can only narrow their applicable limits. See [scheduling.ts](src/scheduling.ts) for the full policy, including nesting bounds.
 
 Important scheduling consequences:
 
 - The queue is strict FIFO. A writer blocked at its head can hold up later read-only tasks even if a concurrency slot is free.
-- Setup, running work, and draining retain capacity until disposal. Deadlines begin at admission, so queue time counts.
+- Setup, running work, pausing and draining retain capacity until real drain. Paused entries retain idle SDK sessions but no scheduler permits or writer lease. Each deadline window begins at admission (or explicit resume), so queue/setup time counts and paused time does not.
 - Nested calls are foreground-only. A waiting parent retains its permit; admission rejects nested work that cannot start immediately rather than lending permits or queuing a deadlock.
 - Effective writing tasks serialize through one writer lease across the coordinator, even when their workspaces differ. A writer cannot spawn another writer beneath itself.
-- Execution limits request cancellation; they cannot forcibly terminate unresponsive provider or tool code. Stop and shutdown wait for actual drain.
+- Deadlines mark the whole active subtree before abort/drain and preserve conversations; hard request/tool limits, stop and shutdown cancel. None forcibly terminate unresponsive provider or tool code. Each explicit resume revalidates current policy/auth/callability against original grants, keeps cumulative counters, and owns a fresh completion promise/timer. Revoked grants reject without replacing or disposing paused context. Parent completion or stop retires children, including retained paused sessions.
 
 Parent `tool_call` and `tool_execution_end` hooks reserve and release in-flight mutations. The coordinator rejects conflicting parent model-tool calls while a child owns the writer lease, and rejects writer admission when a conflicting parent mutation is already in flight. This is coordination inside this extension's parent runtime, not a process-wide or cross-session lock. Manual `!`/`!!` commands, external editors, other terminals, and arbitrary extension JavaScript remain uncoordinated.
 

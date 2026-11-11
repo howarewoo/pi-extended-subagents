@@ -461,3 +461,143 @@ test("compatibility model selection is exact and task files resolve in the selec
   );
   assert.deepEqual((native.details as ChildSnapshot).tools, ["read"]);
 });
+
+test("compatibility paused resume retains its generation and SDK history with one wake per window", async (t) => {
+  let release!: () => void;
+  let gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = 0;
+  let wakes = 0;
+  const contexts: unknown[] = [];
+  const f = await fixture(t, {
+    tools: "default",
+    speed: 0,
+    extra: (pi) => {
+      pi.on("tool_call", async (event) => {
+        if (event.toolName === "read") {
+          entered++;
+          await gate;
+        }
+      });
+      pi.on("before_agent_start", (event) => {
+        if (event.messageType === "custom" && event.message.customType === "delegation") wakes++;
+      });
+    },
+    response: controlled((context) => {
+      contexts.push(structuredClone(context));
+      return userText(context) === "finish"
+        ? fauxAssistantMessage("done with retained context")
+        : fauxAssistantMessage(fauxToolCall("read", { path: "input.txt" }), {
+            stopReason: "toolUse",
+          });
+    }),
+  });
+  await writeFile(join(f.root, "input.txt"), "data");
+  const launched = await call(f, {
+    agent: "scout",
+    task: "original paused work",
+    limits: { deadlineMs: 100 },
+  });
+  const first = launched.details as ChildSnapshot;
+  const notifications = () =>
+    f.session.messages.filter(
+      (message) => message.role === "custom" && message.customType === "delegation",
+    );
+  for (let window = 1; window <= 2; window++) {
+    await eventually(
+      () =>
+        entered === window &&
+        f.events.some((event) => event.child.window === window && event.child.status === "pausing"),
+    );
+    assert.equal(wakes, window - 1, "no wake before actual drain");
+    release();
+    await eventually(() => wakes === window && !f.session.isStreaming);
+    assert.equal(notifications().length, window);
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const resumed = await call(f, {
+      action: "resume",
+      id: first.id,
+      message: window === 1 ? "continue retained work" : "finish",
+    });
+    assert.equal(resumed.isError, false, JSON.stringify(resumed));
+    const next = resumed.details as ChildSnapshot;
+    assert.equal(next.id, first.id);
+    assert.equal(next.generation, first.generation);
+    assert.equal(next.window, window + 1);
+  }
+  await eventually(() => wakes === 3 && !f.session.isStreaming);
+  assert.equal(notifications().length, 3, "no duplicate compatibility/native resume notification");
+  assert.match(JSON.stringify(contexts.at(-1)), /original paused work/);
+  assert.match(JSON.stringify(contexts.at(-1)), /continue retained work/);
+  assert.match(JSON.stringify(contexts.at(-1)), /finish/);
+});
+
+for (const background of [false, true])
+  test(`compatibility ${background ? "background" : "foreground"} batch delivers one ordered paused window outcome`, async (t) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let wakes = 0;
+    const f = await fixture(t, {
+      tools: "default",
+      speed: 0,
+      extra: (pi) => {
+        pi.on("tool_call", async (event) => {
+          if (event.toolName === "read") await gate;
+        });
+        pi.on("before_agent_start", (event) => {
+          if (event.messageType === "custom" && event.message.customType === "delegation") wakes++;
+        });
+      },
+      response: controlled(() =>
+        fauxAssistantMessage(fauxToolCall("read", { path: "input.txt" }), {
+          stopReason: "toolUse",
+        }),
+      ),
+    });
+    await writeFile(join(f.root, "input.txt"), "data");
+    const launch = call(f, {
+      tasks: ["first", "second"].map((task) => ({
+        agent: "scout",
+        task,
+        limits: { deadlineMs: 100 },
+      })),
+      async: background,
+    });
+    await eventually(() =>
+      ["first", "second"].every((assignment) =>
+        f.events.some(
+          (event) => event.child.assignment === assignment && event.child.status === "pausing",
+        ),
+      ),
+    );
+    assert.equal(wakes, 0);
+    release();
+    const result = await launch;
+    assert.equal(result.isError, false, JSON.stringify(result));
+    if (background) await eventually(() => wakes === 1 && !f.session.isStreaming);
+    const messages = f.session.messages.filter(
+      (message) => message.role === "custom" && message.customType === "delegation",
+    );
+    assert.equal(messages.length, background ? 1 : 0);
+    let states: ChildSnapshot[];
+    if (background) {
+      const message = messages[0];
+      assert.ok(message.role === "custom");
+      const content = String(message.content);
+      states = JSON.parse(content.slice(content.indexOf("\n") + 1));
+    } else states = (result.details as { children: ChildSnapshot[] }).children;
+    assert.deepEqual(
+      states.map((state) => state.assignment),
+      ["first", "second"],
+    );
+    assert.deepEqual(
+      states.map((state) => state.status),
+      ["paused", "paused"],
+    );
+    assert.ok(states.every((state) => !state.disposed && state.retainedContext));
+  });

@@ -93,7 +93,7 @@ Pi discovers the native `subagent` tool at startup through its tool description 
 }
 ```
 
-`worker` uses the configured `implementation` profile. `scout`, `review` and `general` are also available. Calls are async by default and wake the parent after drain; set `async:false` to wait. Batches use `tasks:[{agent,task,cwd?}]`. Use the returned `id` with `action:"status"`, `"steer"`, `"stop"` or `"resume"`; steer/resume also need `message`.
+`worker` uses the configured `implementation` profile. `scout`, `review` and `general` are also available. Calls are async by default and wake the parent after drain; set `async:false` to wait. Batches use `tasks:[{agent,task,cwd?}]`. Use the returned `id` with `action:"status"`, `"steer"`, `"stop"` or `"resume"`; steer/resume also need `message`. Resume continues a paused conversation in the same generation; for completed idle/parked work it starts a fresh generation, so include needed prior conclusions.
 
 The coordinator supplies an existing workspace and the complete handoff, including accessible skill/reference paths. The extension does not create or manage worktrees. This is the [supported orchestration interface](docs/delegation-contract.md#native-orchestration-compatibility), not compatibility with every competing workflow script or custom agent definition.
 
@@ -232,7 +232,7 @@ No configuration is needed for the bundled roles. To change prompts or narrow to
 
 All bundled profiles may delegate to `scout` and `review` by default, within a total depth of two (root 0, child 1, grandchild 2). Other nested targets and child messaging need explicit operator grants. Set `spawn: []` to revoke nesting. General inherits available parent skills; other roles need explicit skill grants. Trusted project configuration in `.pi/delegation.json` can narrow grants, never expand them. Children do not load ambient extension/MCP runtimes or context files; general can forward only the reviewed leaf tools described above.
 
-Each task defaults to a 10-minute deadline, 100 model requests and 100 tool calls. Cancellation waits for actual tool/provider drain, so a deadline cannot forcibly end unresponsive code. See [limits and nesting](docs/delegation-contract.md#capacity-and-bounded-execution), [Subagent Profiles](docs/delegation-contract.md#subagent-profiles-and-explicit-spawn-grants), and [exact model selection and prewalk](docs/advanced-policies.md).
+Each task defaults to a 30-minute deadline (1800000ms), 100 model requests and 100 tool calls. The deadline pauses the active subtree after actual tool/provider drain, releasing capacity and writer leases while retaining each idle SDK session and its full conversation. Use `subagent` resume or root-only `delegate_coordinate` `{action:"resume",target:{id,generation},assignment:"Continue…"}` to append a continuation to the same identity and conversation. Resume resets only the deadline window, not cumulative request/tool/spawn counters. Resume the parent first, then explicitly selected children; descendants never resume automatically. Stop, shutdown and hard request/tool limits still cancel and dispose. Unresponsive code must drain before either pause or cancellation can release resources. See [limits and nesting](docs/delegation-contract.md#capacity-and-bounded-execution), [Subagent Profiles](docs/delegation-contract.md#subagent-profiles-and-explicit-spawn-grants), and [exact model selection and prewalk](docs/advanced-policies.md).
 
 ## Shared checkout and lifetime
 

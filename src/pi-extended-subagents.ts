@@ -352,7 +352,10 @@ export default function delegation(pi: ExtensionAPI) {
       }
       signal?.throwIfAborted();
       const children = owner.admit(inputs);
-      const stop = () => owner.stopMany(children);
+      const stop = () =>
+        parent && ["pausing", "paused"].includes(owner.snapshot(parent)!.status)
+          ? Promise.resolve()
+          : owner.stopMany(children);
       const abort = () => {
         void stop();
       };
@@ -442,16 +445,25 @@ export default function delegation(pi: ExtensionAPI) {
       },
       { additionalProperties: false },
     ),
+    Type.Object(
+      {
+        action: Type.Literal("resume"),
+        target: identity,
+        assignment: Type.String({ minLength: 1 }),
+      },
+      { additionalProperties: false },
+    ),
   ]);
   const coordinationTool = (
     owner?: DelegationCoordinator,
     actor?: ChildRef,
+    wake = false,
   ): ToolDefinition<typeof coordinationParameters> => ({
     name: "delegate_coordinate",
     label: "Coordinate delegation",
     exposure: "model-only",
     description:
-      "Live-parent identity-pinned coordination. message targets a running family agent (omit target for root inbox, direct children only); inbox reads own bounded mailbox; wait targets an outcome or own inbox with required 1–60000ms timeout, retaining capacity. No transcript access. Child actions require explicit operator grants. Root additionally has status/stop/park and idle followup/parked revive. Followup/revive create a fresh generation/session with current model/auth and narrowed current grants, no old tool replay or historical recovery. Message accepted/queued is NOT model acknowledgment; delivered means transcript/inbox visibility only. 4096-byte messages, 64 mailbox/waiters, 512 messages and 64 generations per live parent.",
+      "Live-parent identity-pinned coordination. message targets a running family agent (omit target for root inbox, direct children only); inbox reads own bounded mailbox; wait targets an outcome or own inbox with required 1–60000ms timeout, retaining capacity. No transcript access. Child actions require explicit operator grants. Root additionally has status/stop/park, paused resume (assignment is the appended continuation), and idle followup/parked revive. Resume retains identity and full context, resets only the deadline window, and requires explicit child resumes after parent resume. Followup/revive create a fresh generation/session with current model/auth and narrowed current grants, no old tool replay or historical recovery. Message accepted/queued is NOT model acknowledgment; delivered means transcript/inbox visibility only. 4096-byte messages, 64 mailbox/waiters, 512 messages and 64 generations per live parent.",
     parameters: coordinationParameters,
     async execute(callerId, args, signal, _update, ctx) {
       const registry = owner ?? coordinator;
@@ -482,7 +494,15 @@ export default function delegation(pi: ExtensionAPI) {
             generations: registry.generations(args.target.id),
             agents: registry.agents(),
           };
-        else if (args.action === "followup" || args.action === "revive") {
+        else if (args.action === "resume") {
+          const next = await registry.resume(args.target, args.assignment);
+          value = registry.snapshot(next);
+          // Each continuation owns exactly one notification for its new window.
+          void registry.wait(next).then((state) => {
+            if (!closing && coordinator === registry)
+              show(wake ? compatible(state) : state, state.transcript, wake);
+          });
+        } else if (args.action === "followup" || args.action === "revive") {
           const presence = registry
             .agents()
             .find(
@@ -607,7 +627,7 @@ export default function delegation(pi: ExtensionAPI) {
     promptGuidelines: [
       "Use subagent for native worker delegation requested by the user or an active workflow; no extension-specific user instruction or enable call is needed. Use agent worker for implementation, scout for research, review for review, or general for restricted inherited capabilities.",
       "Pass subagent the approved task handoff and existing workspace cwd. Preserve selected model routing; no model override is needed to inherit the parent. Pass accessible skill/reference paths in the task; general inherits available skills and callable builtins, plus operator-reviewed leaf tools only; parent instructions/history and project trust are not inherited.",
-      "subagent launches are async by default and wake this session after actual drain. Continue independent work or yield; do not poll or sleep. Use the exact returned id (UUID@generation) for status, steer, stop or resume. Resume starts a fresh conversation in the same workspace; include needed context.",
+      "subagent launches are async by default and wake this session after actual drain. Continue independent work or yield; do not poll or sleep. Use the exact returned id (UUID@generation) for status, steer, stop or resume. Resume continues a paused conversation with its full context and cumulative budgets; completed idle/parked work starts a fresh generation.",
     ],
     description:
       "Native delegation for orchestration and coding task owners. Launch {agent,task,cwd?,model?,async?} or an ordered {tasks:[...],async?,cwd?} batch. worker maps explicitly to the implementation profile; unknown/custom agent names reject. Model strings require exact provider/id[:effort] and operator grants. Actions: agents, list, status/stop with exact returned id, steer/resume with id and message. Uses the same registry, parent permissions, limits and global writer lease as delegate_task. Existing workspaces only: file paths and shell cwd are explicitly adapted through root builtin hooks. No automatic worktree creation/commits/apply/deletion, detached survival, script workflows or blanket competing API parity. Do not load another provider of the subagent tool alongside this extension.",
@@ -681,10 +701,15 @@ export default function delegation(pi: ExtensionAPI) {
           .find(
             (state) => state.id === target.id && state.generation === target.generation,
           )?.presence;
-        const response = await coordinationTool().execute(
+        const response = await coordinationTool(undefined, undefined, true).execute(
           callerId,
           {
-            action: presence === "parked" ? "revive" : "followup",
+            action:
+              owner.snapshot(target)?.status === "paused"
+                ? "resume"
+                : presence === "parked"
+                  ? "revive"
+                  : "followup",
             target,
             assignment: args.message,
           },
@@ -693,9 +718,10 @@ export default function delegation(pi: ExtensionAPI) {
           ctx,
         );
         const next = response.details as ChildSnapshot;
-        void owner.wait(next).then((state) => {
-          if (!closing && coordinator === owner) show(compatible(state), state.transcript, true);
-        });
+        if (next.generation !== target.generation)
+          void owner.wait(next).then((state) => {
+            if (!closing && coordinator === owner) show(compatible(state), state.transcript, true);
+          });
         return result(compatible(next));
       }
       return result(compatible(owner.snapshot(target)!));

@@ -49,8 +49,13 @@ for (const cancellation of ["stop", "deadline"] as const)
           pi.events.on("delegation:registry", (data) => {
             const child = (data as import("../src/coordinator.ts").RegistryEvent).child;
             latest.set(child.assignment, child);
-            if (child.assignment === "first" && child.status === "draining") markDraining();
-            if (child.disposed) timeline.push(`${child.id}:disposed`);
+            if (
+              child.assignment === "first" &&
+              (child.status === "draining" || child.status === "pausing")
+            )
+              markDraining();
+            if (child.disposed || child.status === "paused")
+              timeline.push(`${child.id}:${child.status === "paused" ? "paused" : "disposed"}`);
             if (child.assignment === "second" && child.disposed) markCompleted();
           });
           pi.on("tool_call", async (event) => {
@@ -125,7 +130,8 @@ for (const cancellation of ["stop", "deadline"] as const)
         assert.equal(first.id, refs[0].id);
         assert.equal(first.disposed, false);
         assert.equal(first.writerLease, true);
-        assert.equal(first.limitReason, cancellation === "deadline" ? "deadline" : undefined);
+        assert.equal(first.limitReason, undefined);
+        assert.equal(first.pauseReason, cancellation === "deadline" ? "deadline" : undefined);
         assert.equal(
           stopReturned,
           false,
@@ -145,15 +151,15 @@ for (const cancellation of ["stop", "deadline"] as const)
           .map((event) => event.child);
         assert.deepEqual(
           disposed.map((state) => state.status),
-          ["cancelled", "settled"],
+          cancellation === "deadline" ? ["settled"] : ["cancelled", "settled"],
         );
         assert.deepEqual(timeline, [
           "first.txt:hook",
-          `${refs[0].id}:disposed`,
+          `${refs[0].id}:${cancellation === "deadline" ? "paused" : "disposed"}`,
           "second.txt:hook",
           `${refs[1].id}:disposed`,
         ]);
-        assert.match(await readFile(disposed[1].transcript!, "utf8"), /written/);
+        assert.match(await readFile(disposed.at(-1)!.transcript!, "utf8"), /written/);
         assert.equal(await readFile(join(f.root, "second.txt"), "utf8"), "written");
       } finally {
         release();
@@ -254,9 +260,7 @@ test(
             ],
           }),
       );
-      await eventually(
-        () => entered && f.events.some((event) => event.child.status === "draining"),
-      );
+      await eventually(() => entered && f.events.some((event) => event.child.status === "pausing"));
       const ids = [...new Set(f.events.map((event) => event.child.id))];
       assert.equal(ids.length, 2);
       assert.equal(
@@ -272,9 +276,10 @@ test(
         f.events.some((event) => event.child.id === ids[1] && event.child.disposed),
       );
       const first = f.events.filter((event) => event.child.id === ids[0]).at(-1)!.child;
-      assert.equal(first.status, "cancelled");
+      assert.equal(first.status, "paused");
       assert.equal(first.telemetry.requests, null);
-      assert.equal(first.limitReason, "deadline");
+      assert.equal(first.pauseReason, "deadline");
+      assert.equal(first.retainedContext, true);
     } finally {
       release();
     }

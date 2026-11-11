@@ -279,7 +279,7 @@ test("nested capacity, depth, role, ancestor grants, spawn count and writer dead
   }
 });
 
-test("execution deadlines, direct request and executable-tool limits cancel and dispose once", async (t) => {
+test("execution deadlines pause; direct request and executable-tool limits cancel and dispose once", async (t) => {
   for (const limit of ["deadlineMs", "requests", "tools"] as const)
     await t.test(limit, async (t) => {
       const f = await fixture(t, {
@@ -302,12 +302,13 @@ test("execution deadlines, direct request and executable-tool limits cancel and 
       const [result] = await batch(f, [
         { ...task("limited"), limits: { [limit]: limit === "deadlineMs" ? 50 : 1 } },
       ]);
-      assert.equal(result.status, "cancelled");
-      assert.equal(result.disposed, true);
-      assert.equal(result.limitReason, limit === "deadlineMs" ? "deadline" : limit);
+      assert.equal(result.status, limit === "deadlineMs" ? "paused" : "cancelled");
+      assert.equal(result.disposed, limit !== "deadlineMs");
+      assert.equal(result.limitReason, limit === "deadlineMs" ? undefined : limit);
+      if (limit === "deadlineMs") assert.equal(result.pauseReason, "deadline");
       assert.equal(
         f.events.filter((event) => event.child.id === result.id && event.child.disposed).length,
-        1,
+        limit === "deadlineMs" ? 0 : 1,
       );
       if (limit === "requests") assert.equal(result.telemetry.requests, 1);
       if (limit === "tools") assert.equal(result.toolCalls, 1);
