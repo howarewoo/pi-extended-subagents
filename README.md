@@ -16,16 +16,16 @@ Restart Pi and run `/task-profiles` to check the installation. If you already in
 
 Compared with two community alternatives using their documentation, checked on 2026-11-11. This is a feature comparison, not a performance or reliability benchmark.
 
-| Capability | pi-extended-subagents | [nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents) | [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) |
-| --- | --- | --- | --- |
-| Delegation | Single tasks, ordered batches and opt-in nesting | Single tasks, parallel runs, chains and nesting | Foreground/background tasks and opt-in nesting |
-| Agent configuration | Four bundled roles; JSON prompt/resource configuration | Bundled and user/project Markdown agents | Bundled and custom Markdown types; Claude Code agent files |
-| Tools and resources | Parent builtin grants and explicit skills; no extension/MCP inheritance | Per-agent tools, extensions and skills | Per-agent tools, extensions and skills; MCP selectors |
-| Live UI | Sub-agents widget and Agent Hub with native Pi rendering and live follow | FleetView and live transcript inspector | Live widget, FleetView and conversation viewer |
-| Background work | Ends with the parent runtime; reload aborts and drains children | Detached runners can outlive the parent process | Background by default; session-scoped scheduled jobs |
-| Workflows | Bounded batches and scoped coordination; no workflow scripts or schedules | JavaScript workflows, chains, missions and schedules | `SubagentWorkflow` with parallel/pipeline composition and schedules |
-| Filesystem | Existing caller-supplied workspaces; global writer lease; no managed worktrees | Managed Git worktrees for writing children | Git worktrees with automatic commits |
-| Results and checks | Per-task JSON Schema; results finalized after drain | Typed gates, structured outputs and acceptance checks | Workflow schemas and post-run command gates |
+| Capability          | pi-extended-subagents                                                          | [nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents) | [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) |
+| ------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Delegation          | Single tasks, ordered batches and opt-in nesting                               | Single tasks, parallel runs, chains and nesting                       | Foreground/background tasks and opt-in nesting                      |
+| Agent configuration | Four bundled roles; JSON prompt/resource configuration                         | Bundled and user/project Markdown agents                              | Bundled and custom Markdown types; Claude Code agent files          |
+| Tools and resources | Parent builtin grants and explicit skills; no extension/MCP inheritance        | Per-agent tools, extensions and skills                                | Per-agent tools, extensions and skills; MCP selectors               |
+| Live UI             | Sub-agents widget and Agent Hub with native Pi rendering and live follow       | FleetView and live transcript inspector                               | Live widget, FleetView and conversation viewer                      |
+| Background work     | Ends with the parent runtime; reload aborts and drains children                | Detached runners can outlive the parent process                       | Background by default; session-scoped scheduled jobs                |
+| Workflows           | Bounded batches and scoped coordination; no workflow scripts or schedules      | JavaScript workflows, chains, missions and schedules                  | `SubagentWorkflow` with parallel/pipeline composition and schedules |
+| Filesystem          | Existing caller-supplied workspaces; global writer lease; no managed worktrees | Managed Git worktrees for writing children                            | Git worktrees with automatic commits                                |
+| Results and checks  | Per-task JSON Schema; results finalized after drain                            | Typed gates, structured outputs and acceptance checks                 | Workflow schemas and post-run command gates                         |
 
 Sources: [our contract](docs/delegation-contract.md); nicobailon's [README](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/README.md), [agents](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/agents.md) and [workflows](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/workflows.md); tintinweb's [README](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/README.md) and [workflows](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/docs/workflows.md).
 
@@ -34,7 +34,11 @@ Sources: [our contract](docs/delegation-contract.md); nicobailon's [README](http
 Pi discovers the native `subagent` tool at startup through its tool description and coding-worker guidance; no enable call is needed. For replacement use, load only one extension providing `subagent`: Pi uses the first registration, not an automatic provider preference. Switching providers does not migrate or remove old runs.
 
 ```json
-{"agent":"worker","task":"Implement the approved change; follow the supplied repository guidelines and task references","cwd":"/absolute/path/to/task-worktree"}
+{
+  "agent": "worker",
+  "task": "Implement the approved change; follow the supplied repository guidelines and task references",
+  "cwd": "/absolute/path/to/task-worktree"
+}
 ```
 
 `worker` uses the configured `implementation` profile. `scout`, `review` and `general` are also available. Calls are async by default and wake the parent after drain; set `async:false` to wait. Batches use `tasks:[{agent,task,cwd?}]`. Use the returned `id` with `action:"status"`, `"steer"`, `"stop"` or `"resume"`; steer/resume also need `message`.
@@ -52,13 +56,23 @@ Ask Pi:
 The corresponding tool call is:
 
 ```json
-{"assignment":"Locate startup lifecycle code and report source locations","profile":"scout","background":false}
+{
+  "assignment": "Locate startup lifecycle code and report source locations",
+  "profile": "scout",
+  "background": false
+}
 ```
 
 Or submit a batch:
 
 ```json
-{"tasks":[{"assignment":"Locate startup code","profile":"scout"},{"assignment":"Review lifecycle tests","profile":"review","limits":{"requests":20}}],"background":false}
+{
+  "tasks": [
+    { "assignment": "Locate startup code", "profile": "scout" },
+    { "assignment": "Review lifecycle tests", "profile": "review", "limits": { "requests": 20 } }
+  ],
+  "background": false
+}
 ```
 
 The default is two concurrent tasks, a 32-item queue and up to 16 tasks per batch. Every item passes preflight before any starts. One failed task does not cancel its siblings.
@@ -82,18 +96,18 @@ Agent Hub shows the sub-agent list beside the selected conversation, using Pi's 
 
 The thread follows new output until you scroll up. Press End to follow again. The pinned Sub-agents widget appears after the first task starts. Closing Agent Hub does not stop the work.
 
-| Key | Action |
-| --- | --- |
-| ↑ / ↓ | Select a sub-agent or historical generation |
-| j / k | Scroll down / up one line |
-| Ctrl+u/d or PgUp/PgDn | Scroll a page |
-| Home / End | Top / latest output |
-| Tab | Switch between thread, details and tools |
-| / | Filter the sub-agent list |
-| s / m | Steer / send an inbox message |
-| x, then y | Stop the selected subtree; Enter does not confirm |
-| w / p | Wait briefly for an outcome / park an idle task |
-| Esc | Cancel input or close the Hub |
+| Key                   | Action                                            |
+| --------------------- | ------------------------------------------------- |
+| ↑ / ↓                 | Select a sub-agent or historical generation       |
+| j / k                 | Scroll down / up one line                         |
+| Ctrl+u/d or PgUp/PgDn | Scroll a page                                     |
+| Home / End            | Top / latest output                               |
+| Tab                   | Switch between thread, details and tools          |
+| /                     | Filter the sub-agent list                         |
+| s / m                 | Steer / send an inbox message                     |
+| x, then y             | Stop the selected subtree; Enter does not confirm |
+| w / p                 | Wait briefly for an outcome / park an idle task   |
+| Esc                   | Cancel input or close the Hub                     |
 
 Mouse-wheel scrolling works in fullscreen mode. In regular mode, use the keyboard controls because the terminal owns mouse scrollback. Actions stay pinned to the original task and generation; controls refuse to submit if the window cannot show the full target.
 
@@ -114,7 +128,16 @@ Each line is a separate call. An accepted or queued message is not a delivery co
 Use `taskFile` instead of `assignment` to read instructions from a workspace-relative text file. Add `resultSchema` when you need a validated JSON value:
 
 ```json
-{"taskFile":"tasks/review.txt","profile":"review","resultSchema":{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}}
+{
+  "taskFile": "tasks/review.txt",
+  "profile": "review",
+  "resultSchema": {
+    "type": "object",
+    "properties": { "summary": { "type": "string" } },
+    "required": ["summary"],
+    "additionalProperties": false
+  }
+}
 ```
 
 Task files must be regular UTF-8 files of 1 to 50000 bytes, outside hidden paths and `node_modules`. Reads use the parent's permission hooks. Schema-required children call `submit_result({value:...})`; missing or invalid results fail visibly. See [supported schemas](docs/delegation-contract.md#required-structured-results) and [task-file checks](docs/delegation-contract.md#checked-task-file-input).
@@ -156,11 +179,15 @@ From a source checkout:
 
 ```sh
 npm ci --ignore-scripts
+npm run lint
+npm run format:check
 npm run typecheck
 npm test
 npm run exercise
 npm pack --dry-run
 ```
+
+Oxlint checks correctness rules; warnings fail the lint command. Control-character regexes are allowed in terminal rendering code and tests because they match ANSI escape sequences. Run `npm run lint:fix` for safe lint fixes and `npm run format` to apply Oxfmt formatting. Formatting skips the generated lockfile and the managed Pullfrog workflow.
 
 Load the production entrypoint with `pi -e /absolute/path/to/src/pi-extended-subagents.ts`. Tests and examples use controlled providers without credentials or live inference.
 

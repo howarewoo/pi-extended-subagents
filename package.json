@@ -2,26 +2,45 @@
   "name": "pi-extended-subagents",
   "version": "0.0.1",
   "description": "Pi-native single-assignment delegation with explicit profiles and parent-owned SDK children",
+  "files": [
+    "src",
+    "docs",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
   "type": "module",
-  "engines": { "node": ">=22.19.0" },
-  "files": ["src", "docs", "README.md", "THIRD_PARTY_NOTICES.md"],
-  "pi": { "extensions": ["./src/pi-extended-subagents.ts"] },
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings .",
+    "lint:fix": "npm run lint -- --fix",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
     "exercise": "node examples/sdk-exercise.ts"
   },
-  "dependencies": { "@earendil-works/pi-schema": "1.5.2" },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-tui": "*"
+  "dependencies": {
+    "@earendil-works/pi-schema": "1.5.2"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "1.5.2",
     "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2",
     "@earendil-works/pi-tui": "1.5.2",
     "@types/node": "24.19.2",
+    "oxfmt": "0.78.0",
+    "oxlint": "1.93.0",
     "typescript": "7.0.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/pi-extended-subagents.ts"
+    ]
   }
 }

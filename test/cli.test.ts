@@ -12,55 +12,119 @@ test("local package manifest loads the recognizably named production extension",
   const root = await mkdtemp(join(tmpdir(), "extended-subagents-package-"));
   try {
     const repo = fileURLToPath(new URL("..", import.meta.url));
-    const loader = new DefaultResourceLoader({ cwd: root, agentDir: join(root, "agent"),
-      settingsManager: SettingsManager.inMemory({packages: [repo]}),
-      noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
+    const loader = new DefaultResourceLoader({
+      cwd: root,
+      agentDir: join(root, "agent"),
+      settingsManager: SettingsManager.inMemory({ packages: [repo] }),
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+    });
     await loader.reload();
     const loaded = loader.getExtensions();
     assert.deepEqual(loaded.errors, []);
-    assert.deepEqual(loaded.extensions.map(extension => extension.path), [join(repo, "src", "pi-extended-subagents.ts")]);
-  } finally { await rm(root, {recursive: true, force: true}); }
+    assert.deepEqual(
+      loaded.extensions.map((extension) => extension.path),
+      [join(repo, "src", "pi-extended-subagents.ts")],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
-test("isolated real Pi CLI exit aborts the delegated child before scripted completion", { timeout: 15000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "extended-subagents-cli-"));
-  try {
-    const cli = fileURLToPath(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js", import.meta.url));
-    const extension = fileURLToPath(new URL("../src/pi-extended-subagents.ts", import.meta.url));
-    const controlled = fileURLToPath(new URL("../examples/controlled-parent.ts", import.meta.url));
-    const invocation = promisify(execFile)(process.execPath, [cli,
-      "--offline", "--no-extensions", "--no-mcp", "--no-skills", "--no-prompt-templates",
-      "--no-themes", "--no-context-files", "--tools", "read,grep,find,ls,delegate_task", "--session-dir", join(root, "sessions"),
-      "-e", extension, "-e", controlled, "-p", "delegate example",
-    ], { cwd: root, timeout: 10000,
-      env: { PATH: process.env.PATH, HOME: join(root, "home"), PI_CODING_AGENT_DIR: join(root, "agent"), PI_OFFLINE: "1" } });
-    // Pi consumes piped stdin before processing CLI prompts; signal EOF explicitly.
-    invocation.child.stdin?.end();
-    await invocation;
-    const children = join(root, "sessions", "delegation");
-    const parents = await readdir(children);
-    assert.equal(parents.length, 1);
-    const tasks = await readdir(join(children, parents[0]));
-    assert.equal(tasks.length, 1);
-    const transcripts = join(children, parents[0], tasks[0], "transcripts");
-    const files = await readdir(transcripts);
-    assert.equal(files.length, 1);
-    const disk = await readFile(join(transcripts, files[0]), "utf8");
-    assert.match(disk, /"stopReason":"aborted"/);
-    assert.ok(!disk.includes('"stopReason":"stop"'));
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
+test(
+  "isolated real Pi CLI exit aborts the delegated child before scripted completion",
+  { timeout: 15000 },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "extended-subagents-cli-"));
+    try {
+      const cli = fileURLToPath(
+        new URL(
+          "../node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+          import.meta.url,
+        ),
+      );
+      const extension = fileURLToPath(new URL("../src/pi-extended-subagents.ts", import.meta.url));
+      const controlled = fileURLToPath(
+        new URL("../examples/controlled-parent.ts", import.meta.url),
+      );
+      const invocation = promisify(execFile)(
+        process.execPath,
+        [
+          cli,
+          "--offline",
+          "--no-extensions",
+          "--no-mcp",
+          "--no-skills",
+          "--no-prompt-templates",
+          "--no-themes",
+          "--no-context-files",
+          "--tools",
+          "read,grep,find,ls,delegate_task",
+          "--session-dir",
+          join(root, "sessions"),
+          "-e",
+          extension,
+          "-e",
+          controlled,
+          "-p",
+          "delegate example",
+        ],
+        {
+          cwd: root,
+          timeout: 10000,
+          env: {
+            PATH: process.env.PATH,
+            HOME: join(root, "home"),
+            PI_CODING_AGENT_DIR: join(root, "agent"),
+            PI_OFFLINE: "1",
+          },
+        },
+      );
+      // Pi consumes piped stdin before processing CLI prompts; signal EOF explicitly.
+      invocation.child.stdin?.end();
+      await invocation;
+      const children = join(root, "sessions", "delegation");
+      const parents = await readdir(children);
+      assert.equal(parents.length, 1);
+      const tasks = await readdir(join(children, parents[0]));
+      assert.equal(tasks.length, 1);
+      const transcripts = join(children, parents[0], tasks[0], "transcripts");
+      const files = await readdir(transcripts);
+      assert.equal(files.length, 1);
+      const disk = await readFile(join(transcripts, files[0]), "utf8");
+      assert.match(disk, /"stopReason":"aborted"/);
+      assert.ok(!disk.includes('"stopReason":"stop"'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
-
-for (const tool of ["delegate_task", "subagent"]) test(`isolated ordinary-default Pi CLI ${tool} launches two scouts without activating grep/find/ls`, {timeout: 15000}, async () => {
-  const root = await mkdtemp(join(tmpdir(), "extended-subagents-default-cli-"));
-  try {
-    const cli = fileURLToPath(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js", import.meta.url));
-    const extension = fileURLToPath(new URL("../src/pi-extended-subagents.ts", import.meta.url));
-    const ai = new URL("../node_modules/@earendil-works/pi-ai/dist/index.js", import.meta.url).href;
-    const controlled = join(root, "controlled-default.ts");
-    await writeFile(join(root, "input.txt"), "default CLI real read payload");
-    await writeFile(controlled, `
+for (const tool of ["delegate_task", "subagent"])
+  test(
+    `isolated ordinary-default Pi CLI ${tool} launches two scouts without activating grep/find/ls`,
+    { timeout: 15000 },
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "extended-subagents-default-cli-"));
+      try {
+        const cli = fileURLToPath(
+          new URL(
+            "../node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+            import.meta.url,
+          ),
+        );
+        const extension = fileURLToPath(
+          new URL("../src/pi-extended-subagents.ts", import.meta.url),
+        );
+        const ai = new URL("../node_modules/@earendil-works/pi-ai/dist/index.js", import.meta.url)
+          .href;
+        const controlled = join(root, "controlled-default.ts");
+        await writeFile(join(root, "input.txt"), "default CLI real read payload");
+        await writeFile(
+          controlled,
+          `
       import { fauxProvider, fauxAssistantMessage, fauxToolCall } from ${JSON.stringify(ai)};
       import { writeFile } from "node:fs/promises";
       import { join } from "node:path";
@@ -92,21 +156,64 @@ for (const tool of ["delegate_task", "subagent"]) test(`isolated ordinary-defaul
           await writeFile(join(ctx.cwd,"observed.json"), JSON.stringify({active:pi.getActiveTools(),reads,children:[...children.values()]}));
         });
       }
-    `);
-    const invocation = promisify(execFile)(process.execPath, [cli, "--offline", "--no-extensions", "--no-mcp", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
-      "--session-dir", join(root, "sessions"), "-e", extension, "-e", controlled, "-p", "default fleet"],
-      {cwd: root, timeout: 10000, env: {PATH: process.env.PATH, HOME: join(root,"home"), PI_CODING_AGENT_DIR: join(root,"agent"), PI_OFFLINE: "1"}});
-    invocation.child.stdin?.end(); await invocation;
-    const observed = JSON.parse(await readFile(join(root, "observed.json"), "utf8")) as {active: string[]; reads: number; children: import("../src/coordinator.ts").ChildSnapshot[]};
-    assert.equal(observed.reads, 2, JSON.stringify(observed));
-    assert.ok(observed.active.includes("subagent"), "compatibility tool is available at ordinary startup without an enable call");
-    for (const name of ["read", "bash", "edit", "write"]) assert.ok(observed.active.includes(name));
-    for (const name of ["grep", "find", "ls"]) assert.ok(!observed.active.includes(name));
-    assert.equal(observed.children.length, 2);
-    for (const child of observed.children) {
-      assert.equal(child.status, "settled"); assert.equal(child.disposed, true);
-      assert.deepEqual(child.tools, ["read"]); assert.equal(child.writerLease, false);
-      assert.match(await readFile(child.transcript!, "utf8"), /default CLI real read payload/);
-    }
-  } finally {await rm(root, {recursive: true, force: true});}
-});
+    `,
+        );
+        const invocation = promisify(execFile)(
+          process.execPath,
+          [
+            cli,
+            "--offline",
+            "--no-extensions",
+            "--no-mcp",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-themes",
+            "--no-context-files",
+            "--session-dir",
+            join(root, "sessions"),
+            "-e",
+            extension,
+            "-e",
+            controlled,
+            "-p",
+            "default fleet",
+          ],
+          {
+            cwd: root,
+            timeout: 10000,
+            env: {
+              PATH: process.env.PATH,
+              HOME: join(root, "home"),
+              PI_CODING_AGENT_DIR: join(root, "agent"),
+              PI_OFFLINE: "1",
+            },
+          },
+        );
+        invocation.child.stdin?.end();
+        await invocation;
+        const observed = JSON.parse(await readFile(join(root, "observed.json"), "utf8")) as {
+          active: string[];
+          reads: number;
+          children: import("../src/coordinator.ts").ChildSnapshot[];
+        };
+        assert.equal(observed.reads, 2, JSON.stringify(observed));
+        assert.ok(
+          observed.active.includes("subagent"),
+          "compatibility tool is available at ordinary startup without an enable call",
+        );
+        for (const name of ["read", "bash", "edit", "write"])
+          assert.ok(observed.active.includes(name));
+        for (const name of ["grep", "find", "ls"]) assert.ok(!observed.active.includes(name));
+        assert.equal(observed.children.length, 2);
+        for (const child of observed.children) {
+          assert.equal(child.status, "settled");
+          assert.equal(child.disposed, true);
+          assert.deepEqual(child.tools, ["read"]);
+          assert.equal(child.writerLease, false);
+          assert.match(await readFile(child.transcript!, "utf8"), /default CLI real read payload/);
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );

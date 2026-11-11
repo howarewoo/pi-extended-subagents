@@ -14,65 +14,144 @@ async function configure(f: Fixture, config: object) {
 }
 async function batch(f: Fixture, tasks: object[], background = false): Promise<ChildSnapshot[]> {
   await f.session.prompt("LAUNCH " + JSON.stringify({ tasks, background }));
-  const message = f.session.messages.filter(message => message.role === "toolResult" && message.toolName === "delegate_task").at(-1);
-  assert.ok(message?.role === "toolResult" && message.details && "children" in (message.details as object), JSON.stringify(message));
+  const message = f.session.messages
+    .filter((message) => message.role === "toolResult" && message.toolName === "delegate_task")
+    .at(-1);
+  assert.ok(
+    message?.role === "toolResult" && message.details && "children" in (message.details as object),
+    JSON.stringify(message),
+  );
   return (message.details as { children: ChildSnapshot[] }).children;
 }
 const task = (assignment: string, profile = "general") => ({ assignment, profile });
 const userText = (context: Parameters<import("@earendil-works/pi-ai").FauxResponseFactory>[0]) => {
-  const user = context.messages.find(message => message.role === "user");
-  return typeof user?.content === "string" ? user.content : user?.content.filter(block => block.type === "text").map(block => block.text).join("") ?? "";
+  const user = context.messages.find((message) => message.role === "user");
+  return typeof user?.content === "string"
+    ? user.content
+    : (user?.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("") ?? "");
 };
 
-test("whole batch preflight launches nothing for an invalid later assignment, grant or limit", async t => {
+test("whole batch preflight launches nothing for an invalid later assignment, grant or limit", async (t) => {
   const f = await fixture(t);
-  for (const invalid of [task("  "), task("invalid", "unknown"), { ...task("limit"), limits: { requests: 101 } }, { ...task("spawn"), spawn: ["general"] }]) {
-    await f.session.prompt("LAUNCH " + JSON.stringify({ tasks: [task("must not start", "implementation"), invalid] }));
-    const message = f.session.messages.filter(message => message.role === "toolResult" && message.toolName === "delegate_task").at(-1);
+  for (const invalid of [
+    task("  "),
+    task("invalid", "unknown"),
+    { ...task("limit"), limits: { requests: 101 } },
+    { ...task("spawn"), spawn: ["general"] },
+  ]) {
+    await f.session.prompt(
+      "LAUNCH " + JSON.stringify({ tasks: [task("must not start", "implementation"), invalid] }),
+    );
+    const message = f.session.messages
+      .filter((message) => message.role === "toolResult" && message.toolName === "delegate_task")
+      .at(-1);
     assert.ok(message?.role === "toolResult" && message.isError);
     assert.equal(f.events.length, 0);
   }
   await assert.rejects(readdir(join(f.root, "parent", "delegation")), /ENOENT/);
 });
 
-test("SDK batch queues FIFO at bounded concurrency, cancels before setup, preserves ordered mixed outcomes and delivers once", async t => {
-  const f = await fixture(t, { speed: 500, response: context => {
-    const text = userText(context);
-    if (text.startsWith("LAUNCH ")) return context.messages.at(-1)?.role === "toolResult" ? fauxAssistantMessage("parent done") : fauxAssistantMessage(fauxToolCall("delegate_task", JSON.parse(text.slice(7))), { stopReason: "toolUse" });
-    return text === "fail" ? fauxAssistantMessage("", { stopReason: "error", errorMessage: "selected failure" }) : fauxAssistantMessage(text);
-  } });
+test("SDK batch queues FIFO at bounded concurrency, cancels before setup, preserves ordered mixed outcomes and delivers once", async (t) => {
+  const f = await fixture(t, {
+    speed: 500,
+    response: (context) => {
+      const text = userText(context);
+      if (text.startsWith("LAUNCH "))
+        return context.messages.at(-1)?.role === "toolResult"
+          ? fauxAssistantMessage("parent done")
+          : fauxAssistantMessage(fauxToolCall("delegate_task", JSON.parse(text.slice(7))), {
+              stopReason: "toolUse",
+            });
+      return text === "fail"
+        ? fauxAssistantMessage("", { stopReason: "error", errorMessage: "selected failure" })
+        : fauxAssistantMessage(text);
+    },
+  });
   await configure(f, { scheduling: { concurrency: 1 } });
-  const accepted = await batch(f, [task("long ".repeat(100)), task("cancel before setup"), task("fail"), task("last")], true);
-  assert.deepEqual(accepted.map(state => state.status), ["setup", "queued", "queued", "queued"]);
+  const accepted = await batch(
+    f,
+    [task("long ".repeat(100)), task("cancel before setup"), task("fail"), task("last")],
+    true,
+  );
+  assert.deepEqual(
+    accepted.map((state) => state.status),
+    ["setup", "queued", "queued", "queued"],
+  );
   await f.session.prompt(`/task-stop ${accepted[1].id} 1`);
   await f.session.prompt(`/task-stop ${accepted[0].id} 1`);
-  await eventually(() => f.events.some(event => event.child.id === accepted[3].id && event.child.disposed));
-  const final = accepted.map(ref => f.events.filter(event => event.child.id === ref.id).at(-1)!.child);
-  assert.deepEqual(final.map(state => state.status), ["cancelled", "cancelled", "failed", "settled"]);
+  await eventually(() =>
+    f.events.some((event) => event.child.id === accepted[3].id && event.child.disposed),
+  );
+  const final = accepted.map(
+    (ref) => f.events.filter((event) => event.child.id === ref.id).at(-1)!.child,
+  );
+  assert.deepEqual(
+    final.map((state) => state.status),
+    ["cancelled", "cancelled", "failed", "settled"],
+  );
   assert.equal(final[1].transcript, undefined);
   const live = new Set<string>();
   for (const event of f.events) {
-    if (["setup", "running", "draining"].includes(event.child.status) && !event.child.disposed) live.add(event.child.id);
+    if (["setup", "running", "draining"].includes(event.child.status) && !event.child.disposed)
+      live.add(event.child.id);
     if (event.child.disposed) live.delete(event.child.id);
     assert.ok(live.size <= 1, "setup/running/draining share the capacity bound");
   }
-  await eventually(() => f.session.messages.some(message => message.role === "custom" && JSON.stringify(message).includes(accepted[3].id)));
-  const delivered = f.session.messages.filter(message => message.role === "custom" && JSON.stringify(message).includes(accepted[3].id));
+  await eventually(() =>
+    f.session.messages.some(
+      (message) => message.role === "custom" && JSON.stringify(message).includes(accepted[3].id),
+    ),
+  );
+  const delivered = f.session.messages.filter(
+    (message) => message.role === "custom" && JSON.stringify(message).includes(accepted[3].id),
+  );
   assert.equal(delivered.length, 1);
   const text = JSON.stringify(delivered[0]);
-  for (let i = 1; i < accepted.length; i++) assert.ok(text.indexOf(accepted[i - 1].id) < text.indexOf(accepted[i].id));
-  for (const ref of accepted) assert.equal(f.events.filter(event => event.child.id === ref.id && event.child.disposed).length, 1);
+  for (let i = 1; i < accepted.length; i++)
+    assert.ok(text.indexOf(accepted[i - 1].id) < text.indexOf(accepted[i].id));
+  for (const ref of accepted)
+    assert.equal(
+      f.events.filter((event) => event.child.id === ref.id && event.child.disposed).length,
+      1,
+    );
 });
 
-test("multiple batch writers serialize, retain real parent permission hooks and produce separate transcripts", async t => {
+test("multiple batch writers serialize, retain real parent permission hooks and produce separate transcripts", async (t) => {
   let writes = 0;
-  const f = await fixture(t, { extra: pi => { pi.on("tool_call", event => { if (event.toolName === "write") { writes++; return { block: true, reason: "parent denies" }; } }); }, response: context => {
-    const text = userText(context);
-    if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
-    return fauxAssistantMessage(fauxToolCall(text.startsWith("LAUNCH ") ? "delegate_task" : "write", text.startsWith("LAUNCH ") ? JSON.parse(text.slice(7)) : { path: text + ".txt", content: "denied" }), { stopReason: "toolUse" });
-  } });
-  const result = await batch(f, [task("first", "implementation"), task("second", "implementation")]);
-  assert.deepEqual(result.map(state => state.status), ["settled", "settled"]);
+  const f = await fixture(t, {
+    extra: (pi) => {
+      pi.on("tool_call", (event) => {
+        if (event.toolName === "write") {
+          writes++;
+          return { block: true, reason: "parent denies" };
+        }
+      });
+    },
+    response: (context) => {
+      const text = userText(context);
+      if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
+      return fauxAssistantMessage(
+        fauxToolCall(
+          text.startsWith("LAUNCH ") ? "delegate_task" : "write",
+          text.startsWith("LAUNCH ")
+            ? JSON.parse(text.slice(7))
+            : { path: text + ".txt", content: "denied" },
+        ),
+        { stopReason: "toolUse" },
+      );
+    },
+  });
+  const result = await batch(f, [
+    task("first", "implementation"),
+    task("second", "implementation"),
+  ]);
+  assert.deepEqual(
+    result.map((state) => state.status),
+    ["settled", "settled"],
+  );
   assert.equal(writes, 2);
   for (const state of result) {
     assert.match(await readFile(state.transcript!, "utf8"), /parent denies/);
@@ -80,79 +159,179 @@ test("multiple batch writers serialize, retain real parent permission hooks and 
     await assert.rejects(readFile(join(f.root, state.assignment + ".txt")), /ENOENT/);
   }
   assert.notEqual(result[0].transcript, result[1].transcript);
-  const secondSetup = f.events.findIndex(event => event.child.id === result[1].id && event.child.status === "setup");
-  const firstDisposed = f.events.findIndex(event => event.child.id === result[0].id && event.child.disposed);
+  const secondSetup = f.events.findIndex(
+    (event) => event.child.id === result[1].id && event.child.status === "setup",
+  );
+  const firstDisposed = f.events.findIndex(
+    (event) => event.child.id === result[0].id && event.child.disposed,
+  );
   assert.ok(secondSetup > firstDisposed);
 });
 
-test("actual SDK child-local model-only tool spawns an authorized grandchild, uses root permission hooks and direct usage once", async t => {
+test("actual SDK child-local model-only tool spawns an authorized grandchild, uses root permission hooks and direct usage once", async (t) => {
   let reads = 0;
-  const f = await fixture(t, { extra: pi => { pi.on("tool_call", event => { if (event.toolName === "read") { reads++; return { block: true, reason: "grandchild read denied by parent" }; } }); }, response: context => {
-    const text = userText(context);
-    if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done: " + text);
-    const call = text.startsWith("LAUNCH ") ? JSON.parse(text.slice(7)) : text === "child" ? task("grandchild") : undefined;
-    return fauxAssistantMessage(fauxToolCall(call ? "delegate_task" : "read", call ?? { path: "never-read.txt" }), { stopReason: "toolUse" });
-  } });
+  const f = await fixture(t, {
+    extra: (pi) => {
+      pi.on("tool_call", (event) => {
+        if (event.toolName === "read") {
+          reads++;
+          return { block: true, reason: "grandchild read denied by parent" };
+        }
+      });
+    },
+    response: (context) => {
+      const text = userText(context);
+      if (context.messages.at(-1)?.role === "toolResult")
+        return fauxAssistantMessage("done: " + text);
+      const call = text.startsWith("LAUNCH ")
+        ? JSON.parse(text.slice(7))
+        : text === "child"
+          ? task("grandchild")
+          : undefined;
+      return fauxAssistantMessage(
+        fauxToolCall(call ? "delegate_task" : "read", call ?? { path: "never-read.txt" }),
+        { stopReason: "toolUse" },
+      );
+    },
+  });
   await configure(f, { general: { spawn: ["general"] } });
   const child = await f.launch("child", "general", false);
-  const finals = f.events.filter(event => event.child.disposed).map(event => event.child);
+  const finals = f.events.filter((event) => event.child.disposed).map((event) => event.child);
   assert.equal(finals.length, 2);
-  const grandchild = finals.find(state => state.depth === 2)!;
+  const grandchild = finals.find((state) => state.depth === 2)!;
   assert.equal(grandchild.parentId, child.id);
   assert.equal(grandchild.status, "settled");
   assert.equal(reads, 1);
   assert.match(await readFile(grandchild.transcript!, "utf8"), /grandchild read denied by parent/);
-  assert.ok(finals.every(state => state.telemetry.requests === 2));
-  const parentResult = f.session.messages.find(message => message.role === "toolResult" && message.toolName === "delegate_task");
-  assert.ok(parentResult?.role === "toolResult" && !parentResult.usage, "registry child usage is not also charged to parent tool usage");
+  assert.ok(finals.every((state) => state.telemetry.requests === 2));
+  const parentResult = f.session.messages.find(
+    (message) => message.role === "toolResult" && message.toolName === "delegate_task",
+  );
+  assert.ok(
+    parentResult?.role === "toolResult" && !parentResult.usage,
+    "registry child usage is not also charged to parent tool usage",
+  );
 });
 
-test("nested capacity, depth, role, ancestor grants, spawn count and writer deadlocks reject visibly before descendant setup", async t => {
-  for (const scenario of ["capacity", "depth", "role", "grants", "spawn", "writer", "request-depth", "request-spawn"]) {
-    await t.test(scenario, async t => {
-      const target = scenario === "role" || scenario === "grants" || scenario === "writer" ? "implementation" : "general";
-      const f = await fixture(t, { response: context => {
-        const text = userText(context);
-        if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
-        return fauxAssistantMessage(fauxToolCall("delegate_task", text.startsWith("LAUNCH ") ? JSON.parse(text.slice(7)) : task("forbidden descendant", target)), { stopReason: "toolUse" });
-      } });
+test("nested capacity, depth, role, ancestor grants, spawn count and writer deadlocks reject visibly before descendant setup", async (t) => {
+  for (const scenario of [
+    "capacity",
+    "depth",
+    "role",
+    "grants",
+    "spawn",
+    "writer",
+    "request-depth",
+    "request-spawn",
+  ]) {
+    await t.test(scenario, async (t) => {
+      const target =
+        scenario === "role" || scenario === "grants" || scenario === "writer"
+          ? "implementation"
+          : "general";
+      const f = await fixture(t, {
+        response: (context) => {
+          const text = userText(context);
+          if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
+          return fauxAssistantMessage(
+            fauxToolCall(
+              "delegate_task",
+              text.startsWith("LAUNCH ")
+                ? JSON.parse(text.slice(7))
+                : task("forbidden descendant", target),
+            ),
+            { stopReason: "toolUse" },
+          );
+        },
+      });
       const profile = scenario === "writer" ? "implementation" : "general";
-      await configure(f, { [profile]: { spawn: scenario === "role" ? ["general"] : [target] }, scheduling: { concurrency: scenario === "capacity" ? 1 : 2, depth: scenario === "depth" ? 1 : 2, spawns: scenario === "spawn" ? 0 : 8 } });
-      const [child] = await batch(f, [{ ...task("child", profile),
-        ...(scenario === "request-depth" ? { limits: { depth: 1 } } : scenario === "request-spawn" ? { limits: { spawns: 0 } } : {}) }]);
-      const finals = f.events.filter(event => event.child.disposed);
+      await configure(f, {
+        [profile]: { spawn: scenario === "role" ? ["general"] : [target] },
+        scheduling: {
+          concurrency: scenario === "capacity" ? 1 : 2,
+          depth: scenario === "depth" ? 1 : 2,
+          spawns: scenario === "spawn" ? 0 : 8,
+        },
+      });
+      const [child] = await batch(f, [
+        {
+          ...task("child", profile),
+          ...(scenario === "request-depth"
+            ? { limits: { depth: 1 } }
+            : scenario === "request-spawn"
+              ? { limits: { spawns: 0 } }
+              : {}),
+        },
+      ]);
+      const finals = f.events.filter((event) => event.child.disposed);
       assert.equal(finals.length, 1);
       assert.equal(finals[0].child.id, child.id);
       const disk = await readFile(finals[0].child.transcript!, "utf8");
-      assert.match(disk, /Nested capacity unavailable|depth limit|spawn role denied|broaden ancestor grants|spawn limit|writer ancestor/);
-      assert.equal(f.events.some(event => event.child.depth > 1), false);
+      assert.match(
+        disk,
+        /Nested capacity unavailable|depth limit|spawn role denied|broaden ancestor grants|spawn limit|writer ancestor/,
+      );
+      assert.equal(
+        f.events.some((event) => event.child.depth > 1),
+        false,
+      );
     });
   }
 });
 
-test("execution deadlines, direct request and executable-tool limits cancel and dispose once", async t => {
-  for (const limit of ["deadlineMs", "requests", "tools"] as const) await t.test(limit, async t => {
-    const f = await fixture(t, { speed: limit === "deadlineMs" ? 50 : 10000, response: context => {
-      const text = userText(context);
-      if (text.startsWith("LAUNCH ")) return context.messages.at(-1)?.role === "toolResult" ? fauxAssistantMessage("parent done") : fauxAssistantMessage(fauxToolCall("delegate_task", JSON.parse(text.slice(7))), { stopReason: "toolUse" });
-      return limit === "deadlineMs" ? fauxAssistantMessage("long response ".repeat(100)) : fauxAssistantMessage(fauxToolCall("read", { path: "missing.txt" }), { stopReason: "toolUse" });
-    } });
-    const [result] = await batch(f, [{ ...task("limited"), limits: { [limit]: limit === "deadlineMs" ? 50 : 1 } }]);
-    assert.equal(result.status, "cancelled");
-    assert.equal(result.disposed, true);
-    assert.equal(result.limitReason, limit === "deadlineMs" ? "deadline" : limit);
-    assert.equal(f.events.filter(event => event.child.id === result.id && event.child.disposed).length, 1);
-    if (limit === "requests") assert.equal(result.telemetry.requests, 1);
-    if (limit === "tools") assert.equal(result.toolCalls, 1);
-  });
+test("execution deadlines, direct request and executable-tool limits cancel and dispose once", async (t) => {
+  for (const limit of ["deadlineMs", "requests", "tools"] as const)
+    await t.test(limit, async (t) => {
+      const f = await fixture(t, {
+        speed: limit === "deadlineMs" ? 50 : 10000,
+        response: (context) => {
+          const text = userText(context);
+          if (text.startsWith("LAUNCH "))
+            return context.messages.at(-1)?.role === "toolResult"
+              ? fauxAssistantMessage("parent done")
+              : fauxAssistantMessage(fauxToolCall("delegate_task", JSON.parse(text.slice(7))), {
+                  stopReason: "toolUse",
+                });
+          return limit === "deadlineMs"
+            ? fauxAssistantMessage("long response ".repeat(100))
+            : fauxAssistantMessage(fauxToolCall("read", { path: "missing.txt" }), {
+                stopReason: "toolUse",
+              });
+        },
+      });
+      const [result] = await batch(f, [
+        { ...task("limited"), limits: { [limit]: limit === "deadlineMs" ? 50 : 1 } },
+      ]);
+      assert.equal(result.status, "cancelled");
+      assert.equal(result.disposed, true);
+      assert.equal(result.limitReason, limit === "deadlineMs" ? "deadline" : limit);
+      assert.equal(
+        f.events.filter((event) => event.child.id === result.id && event.child.disposed).length,
+        1,
+      );
+      if (limit === "requests") assert.equal(result.telemetry.requests, 1);
+      if (limit === "tools") assert.equal(result.toolCalls, 1);
+    });
 });
 
-test("operator policy is finite and project can only narrow; queue and batch bounds are atomic", async t => {
-  for (const value of [{ concurrency: 0 }, { concurrency: 17 }, { depth: -1 }, { requests: 0 }, { deadlineMs: Infinity }, { tools: 1.2 }, { unknown: 1 }]) assert.throws(() => validatePolicy(value));
+test("operator policy is finite and project can only narrow; queue and batch bounds are atomic", async (t) => {
+  for (const value of [
+    { concurrency: 0 },
+    { concurrency: 17 },
+    { depth: -1 },
+    { requests: 0 },
+    { deadlineMs: Infinity },
+    { tools: 1.2 },
+    { unknown: 1 },
+  ])
+    assert.throws(() => validatePolicy(value));
   const f = await fixture(t);
   await configure(f, { scheduling: { concurrency: 1, queue: 0, batch: 2 } });
   await mkdir(join(f.root, ".pi"), { recursive: true });
-  await writeFile(join(f.root, ".pi", "delegation.json"), JSON.stringify({ scheduling: { concurrency: 2 } }));
+  await writeFile(
+    join(f.root, ".pi", "delegation.json"),
+    JSON.stringify({ scheduling: { concurrency: 2 } }),
+  );
   await assert.rejects(resolveScheduling(f.root, true, join(f.root, "operator")), /broadened/);
   assert.equal((await resolveScheduling(f.root, false, join(f.root, "operator"))).concurrency, 1);
   await f.session.prompt("LAUNCH " + JSON.stringify({ tasks: [task("one"), task("two")] }));
