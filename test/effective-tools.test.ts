@@ -79,7 +79,10 @@ test("ordinary SDK default loadout delegates a two-scout background batch throug
     ),
   );
   assert.equal(reads, 2);
-  assert.deepEqual(declarations, [["read"], ["read"]]);
+  assert.deepEqual(declarations, [
+    ["read", "delegate_task"],
+    ["read", "delegate_task"],
+  ]);
   assert.deepEqual(
     f.session.getActiveToolNames(),
     before,
