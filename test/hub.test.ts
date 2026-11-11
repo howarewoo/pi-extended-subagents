@@ -33,7 +33,15 @@ const theme = {
 test("hub frames, pads and paints every cell, adapts to tiny geometry and invalidates theme output", () => {
   const coordinator = new DelegationCoordinator("unused-render-only", "parent");
   let rows = 24;
-  const palette = { ...theme, colors: { ...theme.colors } };
+  const borderCalls: string[] = [];
+  const palette = {
+    ...theme,
+    colors: { ...theme.colors },
+    fg: (color: string, text: string) => {
+      if (color === "border") borderCalls.push(text);
+      return text;
+    },
+  };
   const darkBg = backgroundAnsi(oklchColor(0.3, 0, 0), "truecolor");
   const hub = createHub(
     coordinator,
@@ -46,7 +54,7 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
   );
   try {
     for (const width of [0, 1, 2, 3, 4, 8, 20, 40, 80]) {
-      for (rows of [1, 2, 3, 4, 5, 6, 7, 24]) {
+      for (rows of [1, 2, 3, 4, 5, 6, 7, 8, 9, 24]) {
         const rendered = hub.render(width);
         assert.ok(rendered.length <= rows);
         assert.ok(rendered.every((line) => visibleWidth(line) === width));
@@ -55,14 +63,32 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
           assert.match(rendered[0], /╭.*╮/);
           assert.match(rendered.at(-1)!, /╰.*╯/);
           assert.ok(
-            rendered.slice(1, -1).every((line) => line.includes("│ ") && line.includes(" │")),
+            rendered
+              .slice(1, -1)
+              .every(
+                (line) =>
+                  stripAnsi(line) === "├" + "─".repeat(width - 2) + "┤" ||
+                  (line.includes("│ ") && line.includes(" │")),
+              ),
           );
+          const separators = rendered.filter((line) => stripAnsi(line).startsWith("├"));
+          assert.equal(
+            separators.length,
+            rows >= 8 ? 1 : 0,
+            "only visible footers get a separator",
+          );
+          if (separators.length) {
+            const separatorIndex = rendered.indexOf(separators[0]);
+            assert.equal(separatorIndex, rendered.length - 4);
+            assert.equal(stripAnsi(separators[0]), "├" + "─".repeat(width - 2) + "┤");
+          }
         }
       }
     }
     rows = 24;
     assert.match(hub.render(80).join("\n"), /Subagent Hub/);
     assert.match(hub.render(80).join("\n"), /escape: close/);
+    assert.ok(borderCalls.includes("├" + "─".repeat(78) + "┤"), "separator uses the border color");
     palette.colors.customMessageBg = oklchColor(0.9, 0.1, 330);
     hub.invalidate();
     const lightBg = backgroundAnsi(oklchColor(0.9, 0, 0), "truecolor");
@@ -809,7 +835,7 @@ for (const action of ["stop", "steer", "message"] as const) {
         "a newly opened but not yet displayed target cannot authorize dispatch",
       );
       const short = render();
-      assert.match(short, /> └ beta.*scout #9/);
+      assert.match(short, /beta · scout #9/);
       assert.ok(
         short.includes(`Target: ${a} #7`),
         "full pinned identity must outrank filter/status hints at height 8",
@@ -861,6 +887,23 @@ for (const action of ["stop", "steer", "message"] as const) {
         "new interaction pins B, not cancelled A",
       );
       hub.handleInput!("\x1b");
+      for (const [columns, minimumRows] of [
+        [90, 7],
+        [36, 9],
+      ]) {
+        width = columns;
+        rows = minimumRows;
+        begin();
+        const visible = render();
+        assert.match(visible, /├─+┤/);
+        assert.match(visible, action === "stop" ? /y confirms/ : /Enter submit/);
+        rows--;
+        assert.match(render(), /Resize/);
+        assert.doesNotMatch(render(), /├─+┤/);
+        await submit();
+        assert.equal(calls.length, 2, "separator budget must not expose incomplete controls");
+        hub.handleInput!("\x1b");
+      }
       assert.equal(calls.length, 2);
     } finally {
       hub.dispose();
@@ -1086,8 +1129,20 @@ test("Hub normalized wheel is contained to its reading viewport, never the roste
       "roster wheel must be contained without changing selection or thread",
     );
     assert.match(output(), /> └ inspect one/);
-    hub.handleMouse?.({ ...event, y: 26 });
-    assert.equal(output(), before, "footer wheel must not move the reading viewport");
+    const rendered = before.split("\n");
+    const separatorY = rendered.findIndex((line) => line.startsWith("├"));
+    assert.equal(separatorY, 23);
+    for (const y of [separatorY - 1, separatorY, separatorY + 1, 26]) {
+      hub.handleMouse?.({ ...event, y });
+      assert.equal(output(), before, "position row, separator and footer must not scroll");
+    }
+    hub.handleMouse?.({ ...event, y: separatorY - 2 });
+    assert.notEqual(output(), before, "last reading row remains wheel-scrollable");
+    const position = output().match(/(\d+)–(\d+)\/\d+ lines/)!;
+    assert.equal(Number(position[2]) - Number(position[1]) + 1, 19);
+    hub.handleInput!("\x1b[6~");
+    const nextPosition = output().match(/(\d+)–(\d+)\/\d+ lines/)!;
+    assert.equal(Number(nextPosition[1]) - Number(position[1]), 6, "page clamps at the live tail");
     hub.handleInput!("x");
     const confirmation = output();
     hub.handleMouse?.(event);

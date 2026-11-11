@@ -4,7 +4,7 @@ Delegate work to subagents in Pi, follow their progress, and steer or stop them 
 
 ![Terminal illustration of Subagent Hub with a four-task list on the left and the selected Reader alpha conversation on the right, including a native read-tool result containing synthetic input.](docs/images/subagent-hub.svg)
 
-_Subagent Hub: tasks and conversations side by side, illustrated with synthetic demo data._
+_Subagent Hub: tasks and conversations side by side, with a full-width rule above the footer. Illustrated with synthetic demo data._
 
 ## Installation
 
@@ -127,7 +127,7 @@ Or submit a batch:
 }
 ```
 
-The default is two concurrent tasks, a 32-item queue and up to 16 tasks per batch. Every item passes preflight before any starts. One failed task does not cancel its siblings.
+The default is 16 concurrent tasks, a 32-item queue and up to 16 tasks per batch. Every item passes preflight before any starts. One failed task does not cancel its siblings.
 
 `general`, `scout` and `review` allow up to `read`, `grep`, `find` and `ls`. `implementation` also allows `write`, `edit` and `bash`. Each role receives only the builtins already callable in the parent. With Pi's default tools, scouts get `read` only. Tool calls retain the parent's permission hooks; incompatible tool overrides are rejected.
 
@@ -156,11 +156,11 @@ _Synthetic native-component output; not a terminal screenshot or live-provider v
 
 ## Subagent Hub
 
-Subagent Hub shows the subagent list beside the selected conversation, using Pi's native message and tool rendering. On narrow terminals, the conversation takes the full width. Details includes results, artifacts, grants and usage; Tools shows full sanitized arguments and result text.
+Subagent Hub shows the subagent list beside the selected conversation, using Pi's native message and tool rendering. On narrow terminals, the conversation takes the full width. A border-colored horizontal rule separates the conversation and task list from the visible footer; it is omitted when the footer is hidden at tiny sizes. Details includes results, artifacts, grants and usage; Tools shows full sanitized arguments and result text.
 
 The thread follows new output until you scroll up. Press End to follow again. The pinned Subagents widget appears after the first task starts. Closing Subagent Hub does not stop the work.
 
-These illustrations use native renderer output from the [offline fleet demo](examples/controlled-fleet.ts) with synthetic data; they are not terminal screenshots.
+These illustrations use native renderer output with synthetic data modeled on the [offline fleet demo](examples/controlled-fleet.ts); they are not terminal screenshots.
 
 ![Terminal illustration of the pinned Subagents widget showing four tasks: two running, one queued and one cancelled, with a live activity preview and model-tool writer warning.](docs/images/subagent-widget.svg)
 
@@ -226,7 +226,7 @@ No configuration is needed for the bundled roles. To change prompts or narrow to
 }
 ```
 
-Skills, nested delegation and child messaging need explicit operator grants. Trusted project configuration in `.pi/delegation.json` can narrow those grants, never expand them. Children do not inherit ambient extensions, MCP tools or context files.
+All bundled profiles may delegate to `scout` and `review` by default, within a total depth of two (root 0, child 1, grandchild 2). Other nested targets, skills and child messaging need explicit operator grants. Set `spawn: []` to revoke nesting. Trusted project configuration in `.pi/delegation.json` can narrow those grants, never expand them. Children do not inherit ambient extensions, MCP tools or context files.
 
 Each task defaults to a 10-minute deadline, 100 model requests and 100 tool calls. Cancellation waits for actual tool/provider drain, so a deadline cannot forcibly end unresponsive code. See [limits and nesting](docs/delegation-contract.md#capacity-and-bounded-execution), [Subagent Profiles](docs/delegation-contract.md#subagent-profiles-and-explicit-spawn-grants), and [exact model selection and prewalk](docs/advanced-policies.md).
 

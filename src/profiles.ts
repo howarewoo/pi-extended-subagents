@@ -33,6 +33,7 @@ const bundled: Record<string, Profile> = {
     prompt: "Complete the assigned analysis and report the evidence and limitations.",
     tools: READ_TOOLS,
     skills: [],
+    spawn: ["scout", "review"],
   },
   scout: {
     name: "scout",
@@ -41,6 +42,7 @@ const bundled: Record<string, Profile> = {
       "Explore the assignment using read-only tools. Report precise source locations and findings.",
     tools: READ_TOOLS,
     skills: [],
+    spawn: ["scout", "review"],
   },
   review: {
     name: "review",
@@ -49,6 +51,7 @@ const bundled: Record<string, Profile> = {
       "Review the assigned work. Report actionable findings with source locations; do not edit files.",
     tools: READ_TOOLS,
     skills: [],
+    spawn: ["scout", "review"],
   },
   implementation: {
     name: "implementation",
@@ -58,6 +61,7 @@ const bundled: Record<string, Profile> = {
       "Implement the assigned bounded change, verify it and report changed files and remaining risks. Work in your supplied cwd; root permissions and global model-tool writer coordination still apply.",
     tools: WRITE_TOOLS,
     skills: [],
+    spawn: ["scout", "review"],
   },
 };
 

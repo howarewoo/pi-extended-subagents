@@ -539,7 +539,10 @@ test("default descendant inherits its actual immediate parent's alternate model/
   };
   alt.setResponses([respond]);
   f.runtime.registerNativeProvider(alt.provider);
-  await configure(f.root, { scout: { models: [alternate], spawn: ["general"] } });
+  await configure(f.root, {
+    scout: { models: [alternate], spawn: ["general"] },
+    general: { spawn: [] },
+  });
   await f.session.prompt(
     "LAUNCH " +
       JSON.stringify({ profile: "scout", assignment: "alternate parent", model: alternate }),

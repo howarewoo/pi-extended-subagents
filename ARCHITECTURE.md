@@ -102,7 +102,7 @@ stateDiagram-v2
 
 This diagram summarizes meaningful paths; cancellation during setup can finalize without reaching `running`. Consumers must use the completion promise or `disposed` flag for actual drain, rather than treating a terminal status alone as resource release.
 
-Scheduling defaults are two concurrent tasks, a 32-item queue, and 16 tasks per batch. Each task defaults to a ten-minute deadline, 100 direct model requests, and 100 tool calls. Operator configuration can change defaults within hard ceilings; trusted project configuration and individual requests can only narrow their applicable limits. See [scheduling.ts](src/scheduling.ts) for the full policy, including nesting bounds.
+Scheduling defaults are 16 concurrent tasks, a 32-item queue, and 16 tasks per batch. Each task defaults to a ten-minute deadline, 100 direct model requests, and 100 tool calls. Operator configuration can change defaults within hard ceilings; trusted project configuration and individual requests can only narrow their applicable limits. See [scheduling.ts](src/scheduling.ts) for the full policy, including nesting bounds.
 
 Important scheduling consequences:
 
@@ -120,7 +120,7 @@ Parent `tool_call` and `tool_execution_end` hooks reserve and release in-flight 
 
 The bundled `general`, `scout`, and `review` roles have read-only tool ceilings (`read`, `grep`, `find`, `ls`). `implementation` also permits `write`, `edit`, and `bash`. A ceiling does not activate tools: admission grants only the intersection with the parent's callable builtins and rejects profiles with no usable tools. Overridden tools with incompatible builtin provenance are rejected.
 
-Operator configuration in the agent directory's `delegation.json` can grant explicit skills, spawn roles, coordination actions, and exact model selections. Trusted root-project `.pi/delegation.json` may narrow those grants. Descendants cannot broaden ancestor tool, skill, spawn, coordination, model, or execution-limit authority.
+All bundled profiles default to `scout`/`review` spawn targets, bounded at absolute depth two (root 0, child 1, grandchild 2). Operator configuration in the agent directory's `delegation.json` can grant explicit skills, additional spawn roles, coordination actions, and exact model selections, or revoke nesting with `spawn: []`. Trusted root-project `.pi/delegation.json` may narrow those grants. Descendants cannot broaden ancestor tool, skill, spawn, coordination, model, or execution-limit authority.
 
 Child resources are constructed explicitly. They include the role prompt, assignment, and granted skills, but no ambient parent conversation, project context files, prompt templates, themes, extensions, or MCP resources. The child loader disables ambient discovery and uses an internal extension factory for model-policy hooks. Configured skills are exact validated files, not discovery directories.
 
