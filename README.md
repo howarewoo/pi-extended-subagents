@@ -2,6 +2,10 @@
 
 Delegate work to subagents in Pi, follow their progress, and steer or stop them from Subagent Hub. Subagents use your selected model by default, with their own assignments and explicit tool grants.
 
+![Terminal illustration of Subagent Hub with a four-task list on the left and the selected Reader alpha conversation on the right, including a native read-tool result containing synthetic input.](docs/images/subagent-hub.svg)
+
+_Subagent Hub: tasks and conversations side by side, illustrated with synthetic demo data._
+
 ## Installation
 
 Requires Node 22.19+; tested against Pi 1.5.2. Other Pi versions are not yet verified.
@@ -59,20 +63,23 @@ changelog entries on the next fresh launch after a version increase. See the
 
 ## Feature comparison
 
-Compared with two community alternatives using their documentation, checked on 2026-11-11. This is a feature comparison, not a performance or reliability benchmark.
+Compared with two community alternatives using their documentation, checked on 2026-11-11. This is a feature comparison, not a performance or reliability benchmark. UI cells name documented surfaces; they do not imply other features are absent.
 
-| Capability          | pi-extended-subagents                                                          | [nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents) | [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) |
-| ------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Delegation          | Single tasks, ordered batches and opt-in nesting                               | Single tasks, parallel runs, chains and nesting                       | Foreground/background tasks and opt-in nesting                      |
-| Agent configuration | Four bundled roles; JSON prompt/resource configuration                         | Bundled and user/project Markdown agents                              | Bundled and custom Markdown types; Claude Code agent files          |
-| Tools and resources | Parent builtin grants and explicit skills; no extension/MCP inheritance        | Per-agent tools, extensions and skills                                | Per-agent tools, extensions and skills; MCP selectors               |
-| Live UI             | Subagents widget and Subagent Hub with native Pi rendering and live follow     | FleetView and live transcript inspector                               | Live widget, FleetView and conversation viewer                      |
-| Background work     | Ends with the parent runtime; reload aborts and drains children                | Detached runners can outlive the parent process                       | Background by default; session-scoped scheduled jobs                |
-| Workflows           | Bounded batches and scoped coordination; no workflow scripts or schedules      | JavaScript workflows, chains, missions and schedules                  | `SubagentWorkflow` with parallel/pipeline composition and schedules |
-| Filesystem          | Existing caller-supplied workspaces; global writer lease; no managed worktrees | Managed Git worktrees for writing children                            | Git worktrees with automatic commits                                |
-| Results and checks  | Per-task JSON Schema; results finalized after drain                            | Typed gates, structured outputs and acceptance checks                 | Workflow schemas and post-run command gates                         |
+| Feature                  | pi-extended-subagents                                            | [nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents) | [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) |
+| ------------------------ | ---------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Background tasks         | Until parent exit or reload                                      | ✓ Supported                                                           | ✓ Supported                                                         |
+| Nested delegation        | Opt-in; foreground only                                          | Opt-in                                                                | Opt-in                                                              |
+| Task list / conversation | Subagent Hub: split panes; full-width thread on narrow terminals | Fleet inspector: roster and output pane                               | FleetView opens a separate conversation viewer                      |
+| Message / tool rendering | Native Pi message and tool components                            | Structured Markdown/tool transcripts                                  | Markdown + session-registered tool renderers                        |
+| Live follow / scrollback | ✓ Scroll up to pause; End to follow                              | ✓ Scroll away to pause; bottom resumes                                | ✓ Scroll up to pause; End to follow                                 |
+| In-UI task controls      | Hub: steer, inbox, stop, wait, park                              | Inspector: steer/follow-up and stop async runs                        | Viewer: steer, stop, foreground-to-background handoff               |
+| Tool / usage inspection  | Tools: sanitized arguments/results; Details: direct usage        | Expandable tool details + token counts                                | Expandable tool output + tokens; optional cost                      |
+| Schema-validated results | ✓ Supported                                                      | ✓ Supported                                                           | Workflow agents only                                                |
+| Managed Git worktrees    | — Not supported                                                  | ✓ Supported                                                           | ✓ Supported                                                         |
+| Workflow scripts         | — Not supported                                                  | ✓ Supported                                                           | ✓ Supported                                                         |
+| Scheduled runs           | — Not supported                                                  | ✓ Supported                                                           | Session-scoped agents only                                          |
 
-Sources: [our contract](docs/delegation-contract.md); nicobailon's [README](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/README.md), [agents](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/agents.md) and [workflows](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/workflows.md); tintinweb's [README](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/README.md) and [workflows](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/docs/workflows.md).
+Sources: [our contract](docs/delegation-contract.md); nicobailon's [README](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/README.md), [agents](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/agents.md), [workflows](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/workflows.md) and [observability](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/observability.md); tintinweb's [README](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/README.md) and [workflows](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/docs/workflows.md).
 
 ## Native orchestration
 
@@ -140,6 +147,12 @@ Foreground calls return the final results. Set `background:true` to return immed
 Subagent Hub shows the subagent list beside the selected conversation, using Pi's native message and tool rendering. On narrow terminals, the conversation takes the full width. Details includes results, artifacts, grants and usage; Tools shows full sanitized arguments and result text.
 
 The thread follows new output until you scroll up. Press End to follow again. The pinned Subagents widget appears after the first task starts. Closing Subagent Hub does not stop the work.
+
+These illustrations use native renderer output from the [offline fleet demo](examples/controlled-fleet.ts) with synthetic data; they are not terminal screenshots.
+
+![Terminal illustration of the pinned Subagents widget showing four tasks: two running, one queued and one cancelled, with a live activity preview and model-tool writer warning.](docs/images/subagent-widget.svg)
+
+_Pinned Subagents widget: task counts and recent activity stay visible above the editor._
 
 | Key                   | Action                                            |
 | --------------------- | ------------------------------------------------- |
@@ -210,6 +223,18 @@ Each task defaults to a 10-minute deadline, 100 model requests and 100 tool call
 Subagents use your checkout by default, or an existing directory selected by `cwd`. File paths and shell commands are explicitly adapted through the original parent permission hooks; hooks still run in the parent context and may deny the selected paths. Writing tasks serialize through one global model-tool writer lease, even across worktrees. It does not coordinate manually entered `!`/`!!` commands, external editors, other terminals, other Pi sessions or arbitrary extension JavaScript. Avoid conflicting edits while a subagent is writing. A supplied worktree is not an OS sandbox; there is no automatic copy/apply or cleanup.
 
 Work belongs to the live parent runtime. Shutdown or reload aborts and drains children; there is no restart recovery or cross-parent revival. Saved transcripts and results can contain sensitive task, tool and model output. Treat them like your main Pi transcripts.
+
+### Why worktrees are managed externally
+
+The separation is intentional: the extension owns subagent execution, coordination and UI; an external coordinator or worktree tool owns worktree creation, branch and base selection, integration and cleanup.
+
+Worktrees are supported and useful for subagent orchestration. Create a worktree externally or select an existing workspace, then pass its path as `cwd` for the assigned subagent, as in the [native orchestration example](#native-orchestration). Separate worktrees do not bypass the global model-tool writer lease or provide an OS sandbox. The extension does not automatically commit, apply changes or clean up worktrees.
+
+### Why workflows and scheduling stay external
+
+This package is a focused delegation method, not a general-purpose automation framework. It provides explicit assignments and grants, bounded execution, coordination, and inspectable results in Subagent Hub. Ordered batches and live coordination are supported orchestration features, distinct from workflow scripts and scheduled runs.
+
+Workflow scripting and scheduling can live in separate packages that compose the public delegation tools and own when and how to delegate within the live parent runtime. They need not be built into this subagent integration. This separation implies neither a new built-in integration nor automatic inheritance of workflows, tools or context, and does not promise compatibility with existing third-party packages.
 
 ## Documentation
 
