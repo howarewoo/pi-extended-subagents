@@ -26,8 +26,8 @@ The repository workflows do not publish on ordinary main-branch pushes.
 A repository owner and an npm package owner must complete these steps. They are not performed
 by the local setup scripts.
 
-1. Ensure `pi-extended-subagents` is available to your npm account. The name was not found in
-   the public registry during setup; that is not a reservation or proof of publishing rights.
+1. Confirm your npm account can publish `@howarewoo/pi-subagents` in the `@howarewoo` scope.
+   The old unscoped `pi-extended-subagents@0.1.0` is already published; this is a new npm package.
 2. Enable GitHub Actions for this repository. Create a GitHub environment named `npm`.
    Add a required reviewer if desired, and restrict deployment refs to release tags (`v*`).
    Protect `main` with the two CI matrix checks and restrict creation/deletion of `v*` tags
@@ -35,7 +35,8 @@ by the local setup scripts.
 3. Bootstrap the package with the first manual npm publish below. A trusted publisher is
    normally configured from an existing package's settings, so do not assume the first
    tag-triggered run can create a new npm package without account setup.
-4. In the npm package's **Settings → Trusted publishing**, add GitHub Actions with:
+4. In **`@howarewoo/pi-subagents` → Settings → Trusted publishing**, add GitHub Actions with:
+   The old package's trusted publisher does not carry over to the new scoped package.
 
    | Field                | Value                   |
    | -------------------- | ----------------------- |
@@ -66,12 +67,13 @@ not validate trusted publishing permissions.
    npm version 0.1.1 --no-git-tag-version
    ```
 
-   Choose the actual next version; `0.1.0` is already prepared for the first release.
+   Choose the actual next version; `0.1.1` is prepared for the scoped package rename.
+   Preserve the existing `v0.1.0` tag and historical changelog entry.
 
 3. Add a nonempty `## [0.1.1]` entry to the root changelog, using the selected version. Include
    changes, migrations, Pi compatibility, and relevant permission/lifecycle changes. Do not
-   promise verification that has not run. Keep the README's installation status and examples
-   current when the first npm version becomes available.
+   promise verification that has not run. Keep the README's installation and migration examples
+   current.
 4. Run the local gates:
 
    ```sh
@@ -86,25 +88,25 @@ not validate trusted publishing permissions.
    production extension load and tool registration, not live-provider reliability.
 
 5. Submit the version/changelog changes as a human-reviewed release PR and merge it after CI.
-   These instructions describe maintainer actions; the setup task does not commit or publish.
+   These instructions describe maintainer actions; local checks do not commit or publish.
 
 CI runs all checks and the package smoke test on Node 22.19.0 and Node 24. It uses pinned Pi
 1.5.2 development packages, not an implied matrix of all Pi versions.
 
-## First npm publish only
+## First scoped npm publish only
 
-After the first release PR is merged, check out its exact clean commit and run the local gates
+After the scoped-package release PR is merged, check out its exact clean commit and run the local gates
 above. Use an npm account with publishing rights and two-factor authentication:
 
 ```sh
 npm login
 release_dir="$(mktemp -d)"
 npm pack --pack-destination "$release_dir"
-npm run test:package -- "$release_dir/pi-extended-subagents-0.1.0.tgz"
-npm publish "$release_dir/pi-extended-subagents-0.1.0.tgz" --access public
+npm run test:package -- "$release_dir/howarewoo-pi-subagents-0.1.1.tgz"
+npm publish "$release_dir/howarewoo-pi-subagents-0.1.1.tgz" --access public
 ```
 
-Inspect the result with `npm view pi-extended-subagents@0.1.0 version dist.integrity`.
+Inspect the result with `npm view @howarewoo/pi-subagents@0.1.1 version dist.integrity`.
 Keep the tarball until verified, then remove the temporary directory. This interactive bootstrap
 is separate from GitHub OIDC and does not claim GitHub provenance. Configure the trusted publisher
 before pushing the release tag. The workflow accepts an already-published version only when its
@@ -115,8 +117,8 @@ registry SHA-512 integrity matches the newly verified tarball byte for byte.
 From the exact merged release commit (replace the example version as needed):
 
 ```sh
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.1 -m "Release v0.1.1"
+git push origin v0.1.1
 ```
 
 `release.yml` verifies that the commit belongs to `main`, the tag matches the manifest and
@@ -141,6 +143,6 @@ trusted-publisher setting or fresh installed-package user walkthrough is perform
   clear changelog guidance. Deprecate the affected version with an explanatory npm message if
   needed; do not unpublish as the normal rollback strategy.
 - **User rollback:** let tasks finish, explicitly install the last known-good version, then
-  restart Pi. For example, `pi install npm:pi-extended-subagents@0.1.0` once that version exists.
+  restart Pi. For example, `pi install npm:@howarewoo/pi-subagents@0.1.1` if that is the last known-good release.
   Pinning code does not undo incompatible configuration or data changes; follow release-specific
   migration instructions. Reload and shutdown abort/drain active children rather than migrate them.

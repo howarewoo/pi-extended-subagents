@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## [0.1.1]
+
+### Scoped npm package
+
+- Rename the npm package from `pi-extended-subagents` to `@howarewoo/pi-subagents`. The GitHub repository and production entrypoint are unchanged; the package rename does not change runtime behavior.
+- To prevent duplicate extension loading, run `pi remove npm:pi-extended-subagents`, then `pi install npm:@howarewoo/pi-subagents`, and restart Pi after active tasks finish.
+- Tested host remains Pi 1.5.2; requires Node 22.19 or newer. Shutdown or reload aborts and drains active children rather than migrating them.
 
 ### Subagent terminology and command migration
 
