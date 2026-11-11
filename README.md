@@ -230,6 +230,12 @@ The separation is intentional: the extension owns subagent execution, coordinati
 
 Worktrees are supported and useful for subagent orchestration. Create a worktree externally or select an existing workspace, then pass its path as `cwd` for the assigned subagent, as in the [native orchestration example](#native-orchestration). Separate worktrees do not bypass the global model-tool writer lease or provide an OS sandbox. The extension does not automatically commit, apply changes or clean up worktrees.
 
+### Why workflows and scheduling stay external
+
+This package is a focused delegation method, not a general-purpose automation framework. It provides explicit assignments and grants, bounded execution, coordination, and inspectable results in Subagent Hub. Ordered batches and live coordination are supported orchestration features, distinct from workflow scripts and scheduled runs.
+
+Workflow scripting and scheduling can live in separate packages that compose the public delegation tools and own when and how to delegate within the live parent runtime. They need not be built into this subagent integration. This separation implies neither a new built-in integration nor automatic inheritance of workflows, tools or context, and does not promise compatibility with existing third-party packages.
+
 ## Documentation
 
 - [Delegation contract](docs/delegation-contract.md): tools, permissions, lifecycle and storage.
