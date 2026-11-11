@@ -22,6 +22,7 @@ export function createChildWidget(snapshot: () => ChildSnapshot[], theme: Pick<T
     render(width) {
       width = Math.max(0, width);
       const children = snapshot();
+      if (!children.length) return [];
       const queued = children.filter(child => child.status === "queued").length;
       const priority = (child: ChildSnapshot) => child.status === "draining" ? 0 : child.status === "running" ? 1 : child.status === "setup" ? 2 : 3;
       const live = children.filter(child => !child.disposed && child.status !== "queued").sort((a, b) => priority(a) - priority(b));
@@ -33,8 +34,8 @@ export function createChildWidget(snapshot: () => ChildSnapshot[], theme: Pick<T
         const count = children.filter(child => child.status === status).length;
         return count ? [`${count} ${status}`] : [];
       }).join(" · ");
-      const rows = [theme.fg("accent", `● Agents ${children.length}`) + theme.fg("muted", ` · ${counts || "No tasks · /task-hub"}`)];
-      if (writer && budget === 1) rows[0] = theme.fg("warning", `● Agents ${children.length} · Model writer: !/!! + external unsafe · ${queued} queued`);
+      const rows = [theme.fg("accent", `● Sub-agents ${children.length}`) + theme.fg("muted", ` · ${counts}`)];
+      if (writer && budget === 1) rows[0] = theme.fg("warning", `● Sub-agents ${children.length} · Model writer: !/!! + external unsafe · ${queued} queued`);
       const room = Math.max(0, budget - 1 - (writer && budget > 1 ? 1 : 0));
       const activityRows = candidates.length && room >= (candidates.length > 1 ? 3 : 2) ? 1 : 0;
       const slots = room - activityRows;
@@ -64,7 +65,7 @@ export function createChildWidget(snapshot: () => ChildSnapshot[], theme: Pick<T
           rows.push(theme.fg("muted", prefix + preview));
         }
       });
-      if (shown.length < candidates.length && room) rows.push(theme.fg("muted", `└─ ${candidates.length - shown.length} more · /task-hub`));
+      if (shown.length < candidates.length && room) rows.push(theme.fg("muted", `└─ ${candidates.length - shown.length} more · /agent-hub`));
       else if (!candidates.length && queued && room) rows.push(theme.fg("muted", `└─ ${queued} queued`));
       if (writer && budget > 1) rows.push(theme.fg("warning", width < 75 ? "Model writer: !/!! + external unsafe" : writerWarning));
       return rows.slice(0, budget).map(line => truncateToWidth(line, width));
@@ -73,7 +74,7 @@ export function createChildWidget(snapshot: () => ChildSnapshot[], theme: Pick<T
 }
 
 export function taskCard(child: ChildSnapshot | undefined, expanded = false): string[] {
-  if (!child) return ["Task identity unavailable", "See tool error; /task-hub lists current runtime tasks"];
+  if (!child) return ["Task identity unavailable", "See tool error; /agent-hub lists current runtime tasks"];
   return [
     `${truncateToWidth(agentLabel(child), 240, "… [preview truncated]")} #${child.generation} · ${child.status}`,
     `Identity ${child.id} #${child.generation}`,
@@ -85,7 +86,7 @@ export function taskCard(child: ChildSnapshot | undefined, expanded = false): st
     ...(child.limitReason ? [`Limit: ${child.limitReason}`] : []),
     ...(child.artifacts ? [`Artifacts: ${JSON.stringify(child.artifacts)}`] : []),
     ...(expanded ? ["Assignment: " + truncateToWidth(lineText(child.assignment), 480, "… [preview truncated]"), "Result: " + truncateToWidth(lineText(child.result || child.error || "Not available yet"), 480, "… [preview truncated]")] : []),
-    child.transcript ? `Full transcript: ${child.transcript} · /task-hub` : "Transcript unavailable (setup) · /task-hub",
+    child.transcript ? `Full transcript: ${child.transcript} · /agent-hub` : "Transcript unavailable (setup) · /agent-hub",
   ].map(lineText);
 }
 
@@ -208,7 +209,7 @@ export function createHub(
         const restoreBg = theme.style("", {bg: panelBg}).replace(/\x1b\[49m$/, "");
         return padded.split("\x1b[0m").map(part => theme.style(part.replaceAll("\x1b[49m", restoreBg), { bg: panelBg })).join("\x1b[0m");
       };
-      if (width < 4 || height < 3) return [paint(interactionTarget ? "Resize · Esc cancels" : "FLEET " + coordinator.list().length)];
+      if (width < 4 || height < 3) return [paint(interactionTarget ? "Resize · Esc cancels" : "Agent Hub " + coordinator.list().length)];
       const inner = Math.max(0, width - 4);
       const row = (text: string) => {
         const clipped = truncateToWidth(text, inner);
@@ -304,7 +305,7 @@ export function createHub(
       if (wide) {
         const slots = Math.max(1, Math.floor((paneHeight - 2) / 3));
         const start = Math.max(0, index - slots + 1);
-        const left = [theme.fg("accent", `AGENTS · ${children.length} generations`), ...children.slice(start, start + slots).flatMap(item => [
+        const left = [theme.fg("accent", `SUB-AGENTS · ${children.length} generations`), ...children.slice(start, start + slots).flatMap(item => [
           theme.fg(identity(item) === selected ? "accent" : "text", `${identity(item) === selected ? ">" : " "} ${" ".repeat(Math.min(4, Math.max(0, item.depth - 1)))}└ ${agentLabel(item)} #${item.generation}${historical(item) ? " · history" : ""}`),
           theme.fg(statusColor(item), `  ${item.profile} · ${item.status}`),
           theme.fg("muted", `  #${item.generation}${historical(item) ? " · history" : ""}`),
@@ -319,7 +320,7 @@ export function createHub(
         if (paneHeight > 1) pane.push(theme.fg(child ? statusColor(child) : "muted", `${tab.toUpperCase()}${child ? ` · ${child.profile} · ${child.status}` : ""}`));
         if (paneHeight > 2) pane.push(...content.slice(0, paneHeight - 3), ...Array(Math.max(0, paneHeight - 3 - content.length)).fill(""), theme.fg("muted", position));
       }
-      return [frame("╭", " Fleet / Agent Hub ", "╮"), ...pane.slice(0, height - 2).map(row), ...shownFooter.map(row), frame("╰", "", "╯")];
+      return [frame("╭", " Agent Hub ", "╮"), ...pane.slice(0, height - 2).map(row), ...shownFooter.map(row), frame("╰", "", "╯")];
     },
     handleInput(data) {
       if (keybindings.matches(data, "tui.select.cancel")) {

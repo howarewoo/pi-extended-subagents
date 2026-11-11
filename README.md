@@ -1,24 +1,41 @@
 # pi-extended-subagents
 
-Pi-native bounded batch, nested delegation and live-parent coordination for **Pi 1.5.2**. A model-callable `delegate_task` creates an actual SDK child using the parent's selected model by default and public provider/authentication API. OMP is a behavioral/UI reference, **not a port**. This working slice is not full OMP parity or a pi-subagents compatibility layer.
+Pi-native bounded batch, nested delegation and live-parent coordination for **Pi 1.5.2**. A model-callable `delegate_task` creates an actual SDK child using the parent's selected model by default and public provider/authentication API.
 
-- [Delegation contract](docs/delegation-contract.md): profiles, configuration, registry/events/control interfaces, authority and limitations.
-- [Verification and historical proof evidence](docs/verification.md).
-- [Pinned parity inventory](docs/parity-inventory.md), [provenance](docs/provenance.md), [third-party notices](THIRD_PARTY_NOTICES.md).
+## Installation
+
+Requires Node **22.19+** and Pi **1.5.2**. Install from the repository's `main` branch with Pi's CLI:
+
+```sh
+pi install git:github.com/howarewoo/pi-extended-subagents
+```
+
+Restart Pi, then run `/task-profiles` to confirm the extension loaded. No npm publication, repository checkout or manual build is required.
+
+If you previously installed a local checkout, remove its registration with `pi remove /path/to/pi-extended-subagents` before installing the GitHub source, so the extension does not load twice.
+
+## Feature comparison
+
+Two other community options are [nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents) and [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents). The table compares documented capabilities as of **2026-11-11**, not performance, reliability or security rankings.
+
+| Capability | pi-extended-subagents | nicobailon/pi-subagents | tintinweb/pi-subagents |
+| --- | --- | --- | --- |
+| Delegation | Single tasks, ordered batches and explicitly granted nested delegation | Single tasks, parallel runs, chains and nested orchestration | Foreground/background tasks and opt-in nested subagents |
+| Agent configuration | Four bundled roles with JSON prompt/resource configuration | Bundled agents plus user/project Markdown agent definitions | Bundled and custom Markdown agent types; Claude Code agent-file support |
+| Tools and resources | Callable parent builtin grants and explicitly granted skills; no extension/MCP tool inheritance | Per-agent tool, extension and skill configuration | Per-agent tool, extension and skill configuration, including MCP tool selectors |
+| Live UI | Pinned agent tree and two-pane Hub with native Pi message/tool rendering, history and live follow | FleetView and live inspector with transcripts, steering and stop controls | Live widget, FleetView and conversation viewer with steering |
+| Background work | Runs within the live parent runtime; shutdown/reload aborts and drains children | Detached background runners can continue after the parent process exits | Background execution by default; session-scoped scheduled jobs |
+| Workflow automation | Bounded batches and identity-scoped coordination; no scripted workflow engine or scheduled jobs | JavaScript workflows, chains, missions and schedules | `SubagentWorkflow` with parallel/pipeline composition and scheduled agents |
+| Filesystem separation | Shared checkout with a model-tool writer lease; no worktree isolation | Managed Git worktrees for writing children | Git worktrees with automatic commits on completion |
+| Structured results and checks | Per-task JSON Schema and child `submit_result`; finalization after actual drain | Typed workflow gates, structured outputs and acceptance checks | Workflow JSON Schema option and post-run command gates |
+
+Use this extension when you want parent-lifetime delegation with explicit grants and a shared-checkout writer boundary. The alternatives offer broader workflow automation and worktree support. A worktree is not an OS sandbox; this extension's writer lease does not coordinate manual shells, external editors or other sessions.
+
+Sources: this extension's [delegation contract](docs/delegation-contract.md); nicobailon's [README](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/README.md), [agent configuration](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/agents.md) and [workflows](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/workflows.md); tintinweb's [README](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/README.md) and [workflows](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/docs/workflows.md). These are source/documentation checks, not head-to-head runtime tests.
 
 ## Use delegation
 
-Use Node **22.19+** and Pi **1.5.2**. From this checkout:
-
-```sh
-npm ci --ignore-scripts
-npm run typecheck
-npm test
-npm run exercise
-npm pack --dry-run
-```
-
-Load only the production extension with `pi -e /absolute/path/to/src/pi-extended-subagents.ts`. Select a physical model using Pi's normal `/login` and `/model` setup. **Production delegation uses that provider and may incur charges.** It does not automatically switch to a cheaper/different model or use scripted responses. Explicit operator-granted exact model/effort selection and one-way prewalk are available; see [advanced policies and capability boundaries](docs/advanced-policies.md). Missing authentication, unsupported virtual routing, an empty effective builtin tool set or forbidden resource grants fail visibly. Role tool lists are maximum allowlists, not requirements to activate every listed tool. Custom overrides of tools that would be forwarded are deliberately rejected rather than bypassed.
+Select a physical model using Pi's normal `/login` and `/model` setup. **Production delegation uses that provider and may incur charges.** It does not automatically switch to a cheaper/different model or use scripted responses. Explicit operator-granted exact model/effort selection and one-way prewalk are available; see [advanced policies and capability boundaries](docs/advanced-policies.md). Missing authentication, unsupported virtual routing, an empty effective builtin tool set or forbidden resource grants fail visibly. Role tool lists are maximum allowlists, not requirements to activate every listed tool. Custom overrides of tools that would be forwarded are deliberately rejected rather than bypassed.
 
 Ask the parent model, for example:
 
@@ -46,10 +63,10 @@ Foreground returns final state/text once. With `background:true`, the tool retur
 /task-status <id> <generation>
 /task-steer <id> <generation> <text>
 /task-stop <id> <generation>
-/task-hub
+/agent-hub
 ```
 
-Steering queues after the current assistant/tool turn. Stop aborts the selected subtree and **waits for actual drain/disposal**; queued work may have no session or transcript yet. `/task-hub` opens the selected subagent’s full readonly **thread**, alongside a left roster/tree/history at wide sizes. The roster is roughly one third of the panel (capped at 32 columns); the right thread is dominant even at a 100×30 terminal’s 90% overlay. Below 76 panel columns, a compact selected-generation header replaces the roster so the thread keeps the full width. Names are readable **assignment headline · role** labels derived from snapshots, not new identities. ↑/↓ still select UUID+generation; generation/history markers remain visible, and the selected roster row stays visible independently of thread scrolling. Full identities remain searchable and inspectable in details and pinned controls. The persistent compact widget counts all current tasks, collapses queued entries into a count, prioritizes draining/running/setup rows over recent terminal rows, and warns only when a real writer lease is held. Its `● Agents`/tree hierarchy puts semantic status and bold role beside a short assignment, with dim direct stats and an indented newest-activity preview. Known tool calls, request/token/cost usage and admission-to-disposal elapsed time are snapshot-derived; unknown usage is omitted, requests are not invented turns, and no context percentage or animation timer is added. It stays within 1–5 rows and roughly a quarter of terminal height. The visual reference is [tintinweb/pi-subagents at 8df7fa7d8e8130151a8fbfa991a1d3fa6b443739](https://github.com/tintinweb/pi-subagents/tree/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739), independently implemented without its source/assets/runtime. Closing the Hub never stops execution. Its opaque achromatic outer panel derives lightness from the current theme, including tinted themes; native message/tool surfaces inside keep their normal semantic styles.
+Steering queues after the current assistant/tool turn. Stop aborts the selected subtree and **waits for actual drain/disposal**; queued work may have no session or transcript yet. `/agent-hub` opens **Agent Hub**, with the selected subagent’s full readonly **thread** alongside a left roster/tree/history at wide sizes. The roster is roughly one third of the panel (capped at 32 columns); the right thread is dominant even at a 100×30 terminal’s 90% overlay. Below 76 panel columns, a compact selected-generation header replaces the roster so the thread keeps the full width. Names are readable **assignment headline · role** labels derived from snapshots, not new identities. ↑/↓ still select UUID+generation; generation/history markers remain visible, and the selected roster row stays visible independently of thread scrolling. Full identities remain searchable and inspectable in details and pinned controls. The pinned **Sub-agents** widget is hidden until the current session has admitted a sub-agent task. It counts all current tasks, collapses queued entries into a count, prioritizes draining/running/setup rows over recent terminal rows, and warns only when a real writer lease is held. Its `● Sub-agents`/tree hierarchy puts semantic status and bold role beside a short assignment, with dim direct stats and an indented newest-activity preview. Known tool calls, request/token/cost usage and admission-to-disposal elapsed time are snapshot-derived; unknown usage is omitted, requests are not invented turns, and no context percentage or animation timer is added. It stays within 1–5 rows and roughly a quarter of terminal height. Closing the Hub never stops execution. Its opaque achromatic outer panel derives lightness from the current theme, including tinted themes; native message/tool surfaces inside keep their normal semantic styles.
 
 Hub keys (TUI only): **↑/↓** select a UUID+generation, **Tab** cycles thread/details/tools, **j/k** scroll down/up one line, **Ctrl+u/d** or configured **PgUp/PgDn** scroll a page, and **Home/End** go to the top/bottom of the active view, **/** searches/filters identity, ancestry, role, lifecycle, assignment, result and progress. **s** opens steering, **m** sends a bounded root inbox message, **x then y** explicitly confirms subtree stop; Enter does not confirm stop. **w** waits up to 1000ms for the exact selected outcome, **p** parks an already disposed idle identity. Escape cancels input/confirmation; configured Enter/Escape closes browsing. Input/confirmation pins the original UUID+generation even if a filter changes or that generation finishes: actions never drift to another identity. Stale, draining, disposed, cancelled or otherwise disallowed controls report the real refusal. Stop accepts queued/setup/running targets; repeating a stop on an already-draining UI target refuses without changing native stop semantics.
 
@@ -103,7 +120,7 @@ The coordinator enforces one child writer against parent model-tool `bash`/`edit
 
 ## Explicit profiles and resources
 
-Built-in definitions have extension-owned role prompts. No ambient pi-subagents agents, extensions, MCP servers, context files, skills, prompts, themes, settings or credentials are loaded into children.
+Built-in definitions have extension-owned role prompts. Children load only explicitly granted resources, not ambient agent definitions, extensions, MCP servers, context files, skills, prompts, themes, settings or credentials.
 
 Optional operator configuration lives at `<Pi agent dir>/delegation.json` (normally `~/.pi/agent/delegation.json`), keyed by bundled profile name. It can specialize descriptions/prompts, narrow bundled tools, grant exact absolute skill Markdown files, explicitly grant spawn roles, and choose bounded scheduler maximums:
 
@@ -122,6 +139,26 @@ Nested delegation is **disabled by default**. For example, operator `"general":{
 Default per-task bounds are **10 minutes from admission**, **100 direct model-registry dispatches**, and **100 executable tool calls**. Optional request `limits` only narrows operator/project bounds. Limits cancel visibly with `limitReason`; deadlines initiate abort but **cannot force unabortable auth/provider/permission code to return**. Capacity and writer ownership remain held until real setup/tool drain. These are hard guards, not soft-yield prompts or provider-internal/token/cost precision promises. Full settings/ceilings and cancellation semantics: [delegation contract](docs/delegation-contract.md#capacity-and-bounded-execution).
 
 Skills use Pi's standard loader, without default discovery. A trusted project's `.pi/delegation.json` uses the same format but can **only narrow** the operator-resolved tools/skills; it cannot add grants. Untrusted project configuration is ignored. `extensions`, `mcp` and other unsupported fields are rejected, not silently promised. See the [full contract](docs/delegation-contract.md).
+
+## Reference documentation
+
+- [Delegation contract](docs/delegation-contract.md): profiles, configuration, registry/events/control interfaces, authority and limitations.
+- [Verification and historical proof evidence](docs/verification.md).
+- [Pinned parity inventory](docs/parity-inventory.md), [provenance](docs/provenance.md), [third-party notices](THIRD_PARTY_NOTICES.md).
+
+## Local development
+
+For a source checkout only; these steps are not needed for normal installation:
+
+```sh
+npm ci --ignore-scripts
+npm run typecheck
+npm test
+npm run exercise
+npm pack --dry-run
+```
+
+Load only the production extension from a checkout with `pi -e /absolute/path/to/src/pi-extended-subagents.ts`.
 
 ## Safe controlled walkthrough (no credentials/live provider)
 
@@ -170,4 +207,4 @@ No live provider inference, credential changes, global Pi installation/config ch
 
 ### Offline fleet UI exercise (synthetic workspace only)
 
-Create `input.txt` in a disposable cwd and run this checkout’s local Pi CLI with `--offline --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files`, explicit `-e /absolute/path/src/pi-extended-subagents.ts -e /absolute/path/examples/controlled-fleet.ts`, and tools `read,grep,find,ls,write,edit,bash,delegate_task,delegate_coordinate`. The controlled example selects its own offline provider; do not use it in a real project (its writer creates `fleet-output.txt`). Enter `fleet example`, then `/task-hub`. `/fleet-theme dark` and `/fleet-theme light` exercise live theme changes. `fleet coordinate <JSON>` explicitly model-calls native `delegate_coordinate` for synthetic park/followup/revive. This is controlled SDK/terminal evidence, not live inference or human visual acceptance. The example is not loaded by the package manifest.
+Create `input.txt` in a disposable cwd and run this checkout’s local Pi CLI with `--offline --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files`, explicit `-e /absolute/path/src/pi-extended-subagents.ts -e /absolute/path/examples/controlled-fleet.ts`, and tools `read,grep,find,ls,write,edit,bash,delegate_task,delegate_coordinate`. The controlled example selects its own offline provider; do not use it in a real project (its writer creates `fleet-output.txt`). Enter `fleet example`, then `/agent-hub`. `/fleet-theme dark` and `/fleet-theme light` exercise live theme changes. `fleet coordinate <JSON>` explicitly model-calls native `delegate_coordinate` for synthetic park/followup/revive. This is controlled SDK/terminal evidence, not live inference or human visual acceptance. The example is not loaded by the package manifest.

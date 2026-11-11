@@ -81,7 +81,7 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
   };
   const errors: unknown[] = [];
   await session.bindExtensions({ mode: "tui", uiContext: ui, onError: error => { errors.push(error); } });
-  assert.match(widget!.render(80).join("\n"), /Agents 0/);
+  assert.deepEqual(widget!.render(80), [], "no pinned line before a sub-agent starts");
   const panelLevels: number[] = [];
   for (const name of ["dark", "light", "tinted-custom"] as const) {
     if (name !== "tinted-custom") initTheme(name, false);
@@ -111,7 +111,7 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
   await session.prompt("launch");
   // Background acknowledgment is setup/queued, not an SDK running acknowledgment.
   await Promise.all([running, delta]);
-  assert.match(widget!.render(80).join("\n"), /running/);
+  assert.match(widget!.render(80).join("\n"), /Sub-agents.*running/);
   assert.ok(rendersAtDelta > rendersAtStart, "actual child text delta requests widget renders");
   const task = session.messages.find(message => message.role === "toolResult" && message.toolName === "delegate_task");
   assert.ok(task?.role === "toolResult");
@@ -125,7 +125,7 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
   assert.deepEqual(calls, [true, false, true]);
   assert.notEqual(widget, oldWidget);
   assert.equal(model.state.callCount, callsBeforeStop, "reload makes no inference request");
-  assert.match(widget!.render(80).join("\n"), /Agents 0/);
+  assert.deepEqual(widget!.render(80), [], "fresh runtime hides the unused sub-agent widget");
   running = new Promise<void>(resolve => { markRunning = resolve; });
   delta = new Promise<void>(resolve => { markDelta = resolve; });
   await session.prompt("launch");
@@ -141,7 +141,7 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
   const drained = events.filter(event => event.child.id === second.id).at(-1)!.child;
   assert.equal(drained.status, "cancelled");
   assert.equal(drained.disposed, true);
-  assert.match(widget!.render(80).join("\n"), /Agents 0/);
+  assert.deepEqual(widget!.render(80), [], "active reload drains and hides the fresh empty widget");
   assert.deepEqual(errors, [], "reload and drain must not use stale extension contexts");
   assert.ok(model.state.callCount >= 3, "controlled parent and delegated child used actual provider dispatch");
 });

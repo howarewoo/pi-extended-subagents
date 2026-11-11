@@ -41,7 +41,7 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
       }
     }
     rows = 24;
-    assert.match(hub.render(80).join("\n"), /Fleet \/ Agent Hub/);
+    assert.match(hub.render(80).join("\n"), /Agent Hub/);
     assert.match(hub.render(80).join("\n"), /escape: close/);
     palette.colors.customMessageBg = oklchColor(0.9, 0.1, 330);
     hub.invalidate();
@@ -53,12 +53,12 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
 test("widget retains each child state, sanitizes terminal content and shows latest activity at narrow widths", () => {
   let child: ChildSnapshot | undefined;
   const widget = createChildWidget(() => child ? [child] : [], theme);
-  assert.match(widget.render(100).join("\n"), /● Agents 0.*task-hub/);
+  for (const width of [0, 1, 8, 20, 80, 140]) assert.deepEqual(widget.render(width), [], "no pinned line before the first sub-agent");
   for (const status of ["queued", "setup", "running", "draining", "settled", "cancelled", "failed"] as const) {
     child = { depth: 1, limits: {deadlineMs: 600000, requests: 100, tools: 100, depth: 2, spawns: 8}, toolCalls: 0, tools: ["read"], createdAt: 1, endedAt: null, writerLease: false, id: "test", generation: 1, parentId: "parent", profile: "general", assignment: "test", activity: "", model: {provider: "test", id: "test"}, effort: "off", telemetry: {requests: null, tokens: null, cost: null, context: null}, status, progress: "old activity ".repeat(20) + "中文 👩‍💻 latest\u001b\u0007", result: "final result", disposed: ["settled", "failed", "cancelled"].includes(status) };
     const output = widget.render(80).join("\n");
     assert.ok(output.includes(status));
-    assert.ok(widget.render(20)[0].startsWith("● Agents"));
+    assert.ok(widget.render(20)[0].startsWith("● Sub-agents"));
     assert.ok(!/[\x00-\x1f\x7f-\x9f]/.test(stripAnsi(output).replaceAll("\n", "")));
     if (status === "running") { assert.ok(output.includes("test")); assert.match(output, /中文 👩‍💻 latest/); }
     else if (child.disposed) assert.ok(output.includes("final result"));
@@ -68,6 +68,8 @@ test("widget retains each child state, sanitizes terminal content and shows late
   assert.match(widget.render(100).join("\n"), /no conflicting manual !\/!! or external edits/);
   child = { ...child!, status: "failed", error: "Cannot start\u001b\u0007" };
   assert.match(widget.render(140).join("\n"), /Cannot start/);
+  child = undefined;
+  assert.deepEqual(widget.render(100), [], "an empty replacement registry hides the widget again");
 });
 
 function snapshot(id: string, patch: Partial<ChildSnapshot> = {}): ChildSnapshot {
@@ -81,7 +83,7 @@ test("fleet counts every lifecycle, bounds height independently of task count, a
   const children = [snapshot("reader", {profile: "implementation"}), ...["setup", "running", "settled", "failed", "cancelled"].map(status => snapshot(status, {status: status as ChildSnapshot["status"], disposed: status !== "running" && status !== "setup"}))];
   const widget = createChildWidget(() => children, theme);
   const text = stripAnsi(widget.render(180).join("\n"));
-  assert.match(text, /● Agents 6/); assert.match(text, /2 running/); assert.match(text, /1 failed/);
+  assert.match(text, /● Sub-agents 6/); assert.match(text, /2 running/); assert.match(text, /1 failed/);
   assert.doesNotMatch(text, /no conflicting/);
   children[0] = {...children[0], writerLease: true};
   assert.match(widget.render(180).join("\n"), /no conflicting/);
@@ -459,7 +461,7 @@ test("compact agent tree uses actual status/role/direct stats/activity with trut
     snapshot("done",{assignment:"Finished check",status:"settled",disposed:true,endedAt:2000})];
   const widget=createChildWidget(()=>children,theme,()=>30);
   const text=stripAnsi(widget.render(120).join("\n"));
-  assert.match(text,/● Agents/);assert.match(text,/8 queued/);assert.match(text,/[├└]─/);
+  assert.match(text,/● Sub-agents/);assert.match(text,/8 queued/);assert.match(text,/[├└]─/);
   assert.match(text,/scout.*Check drain/);assert.match(text,/└.*Tool: read/);assert.match(text,/more/);assert.match(text,/writer|Model-tool/);
   assert.doesNotMatch(text,/null|undefined|NaN|context.*%/);
   const measured=createChildWidget(()=>[snapshot("known",{toolCalls:3,telemetry:{requests:2,tokens:{input:3,output:5,cacheRead:2,cacheWrite:1,total:11},cost:0.125,context:null}})],theme);

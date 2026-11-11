@@ -1,5 +1,11 @@
 # Delegation verification
 
+## Agent Hub naming and unused-widget visibility
+
+The current command is `/agent-hub`, with the visible title **Agent Hub** throughout current UI/help/examples. It replaces the former Hub command without an alias; older verification sections below retain historical names. The pinned heading is **Sub-agents**. An empty current registry renders no widget rows; admitted queued/setup/running/draining work and retained terminal tasks still appear. No extra visibility flag, timer or lifecycle owner was introduced.
+
+The empty-widget regression was reproduced before the fix. Focused component/SDK lifecycle tests **27/27** and the default suite **133/133** pass with zero failures/skips/cancellations, as do typecheck, SDK exercise, 18-file package dry run and diff checks. Existing full-identity controls, short-geometry refusal, live-follow/scrolling, native renderer/privacy and writer-drain assertions remain. A fresh isolated offline CLI PTY exited **0**, observing no unused Sub-agents heading at startup, the heading after a controlled launch, and `/agent-hub` opening Agent Hub with its Sub-agents roster. These are actual emitted terminal fragments, not screenshots or a human visual-acceptance claim. No live-provider calls, user settings changes or active-session reload were needed. Source/test digest: `90662331e566749fdb9bcf355f2cb20835054416133d8635336054f4b268fb24`. The pending installation-first, standalone introduction and sourced feature-comparison README edits are preserved.
+
 ## Recognizable local extension name
 
 The production entrypoint is now `src/pi-extended-subagents.ts`, declared in the package manifest and used by current examples/tests/docs. Pi labels local extensions from their filenames, so this replaces the generic `extension.ts` startup label. Entrypoint contents are byte-identical to the prior module; no compatibility shim or runtime change was added.

@@ -15,7 +15,7 @@ export function createFleetProvider(speed = 400) {
     if (latestText.startsWith("fleet coordinate ")) return last?.role === "toolResult"
       ? fauxAssistantMessage("Native coordination returned; inspect receipts/status, not model acknowledgment")
       : fauxAssistantMessage(fauxToolCall("delegate_coordinate", JSON.parse(latestText.slice(17))), {stopReason: "toolUse"});
-    if (text === "fleet example") return context.messages.some(message => message.role === "toolResult" && message.toolName === "delegate_task") ? fauxAssistantMessage("Fleet launched; open /task-hub") : fauxAssistantMessage([
+    if (text === "fleet example") return context.messages.some(message => message.role === "toolResult" && message.toolName === "delegate_task") ? fauxAssistantMessage("Fleet launched; open /agent-hub") : fauxAssistantMessage([
       fauxToolCall("delegate_task", {assignment: "Reader alpha: inspect input.txt", profile: "scout", background: true}),
       fauxToolCall("delegate_task", {assignment: "Reader beta: inspect input.txt", profile: "review", background: true}),
       fauxToolCall("delegate_task", {assignment: "Writer: create fleet-output.txt", profile: "implementation", background: true}),

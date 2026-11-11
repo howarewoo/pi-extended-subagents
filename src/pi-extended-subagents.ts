@@ -208,7 +208,7 @@ export default function delegation(pi: ExtensionAPI) {
     const [id, generation, ...text] = args.trim().split(/\s+/);
     await coordinator.steer(ref(`${id} ${generation}`), text.join(" "));
   } });
-  pi.registerCommand("task-hub", { description: "Fleet roster, generation history, transcripts and pinned controls (TUI only)", handler: async (_args, ctx) => {
+  pi.registerCommand("agent-hub", { description: "Agent Hub: sub-agent roster, generation history, transcripts and pinned controls (TUI only)", handler: async (_args, ctx) => {
     if (ctx.mode !== "tui") return;
     await ctx.ui.custom<void>((tui, theme, keys, done) => createHub(coordinator, theme, keys, () => tui.requestRender(), () => done(), {tui, cwd: ctx.cwd, toolRenderers: {delegate_task: {renderShell: taskDefinition.renderShell, renderCall: taskDefinition.renderCall, renderResult: taskDefinition.renderResult} as ToolRenderers}},
       () => Math.max(1, Math.floor(tui.terminal.rows * 0.9))), { overlay: true, overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" } });
