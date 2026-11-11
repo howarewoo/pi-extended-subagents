@@ -81,7 +81,7 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
   };
   const errors: unknown[] = [];
   await session.bindExtensions({ mode: "tui", uiContext: ui, onError: error => { errors.push(error); } });
-  assert.match(widget!.render(80).join("\n"), /FLEET 0/);
+  assert.match(widget!.render(80).join("\n"), /Agents 0/);
   const panelLevels: number[] = [];
   for (const name of ["dark", "light", "tinted-custom"] as const) {
     if (name !== "tinted-custom") initTheme(name, false);
@@ -125,7 +125,7 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
   assert.deepEqual(calls, [true, false, true]);
   assert.notEqual(widget, oldWidget);
   assert.equal(model.state.callCount, callsBeforeStop, "reload makes no inference request");
-  assert.match(widget!.render(80).join("\n"), /FLEET 0/);
+  assert.match(widget!.render(80).join("\n"), /Agents 0/);
   running = new Promise<void>(resolve => { markRunning = resolve; });
   delta = new Promise<void>(resolve => { markDelta = resolve; });
   await session.prompt("launch");
@@ -141,7 +141,7 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
   const drained = events.filter(event => event.child.id === second.id).at(-1)!.child;
   assert.equal(drained.status, "cancelled");
   assert.equal(drained.disposed, true);
-  assert.match(widget!.render(80).join("\n"), /FLEET 0/);
+  assert.match(widget!.render(80).join("\n"), /Agents 0/);
   assert.deepEqual(errors, [], "reload and drain must not use stale extension contexts");
   assert.ok(model.state.callCount >= 3, "controlled parent and delegated child used actual provider dispatch");
 });

@@ -172,7 +172,7 @@ test("parent cancellation drains the actual nested tree before finalizing the an
   assert.deepEqual(disposed.map(state => state.depth), [2, 1]);
   assert.ok(disposed.every(state => state.status === "cancelled"));
   const widget = createChildWidget(() => disposed, {fg: (_color, text) => text});
-  assert.match(widget.render(180).join("\n"), /cancelled 2/);
+  assert.match(widget.render(180).join("\n"), /2 cancelled/);
   assert.ok(disposed.every(state => state.endedAt! >= state.createdAt));
   assert.equal(disposed[0].parentId, child.id);
   for (const state of disposed) assert.match(await readFile(state.transcript!, "utf8"), /"stopReason":"aborted"/);

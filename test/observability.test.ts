@@ -28,7 +28,7 @@ test("real SDK concurrent readers/writer/failure feed fleet, cards and full tran
   assert.ok(f.events.some(event => event.child.profile === "review" && event.child.status === "running"));
   assert.ok(f.events.some(event => event.event?.type === "tool_execution_end"));
   const widget = createChildWidget(() => children, {fg: (_color, text) => text});
-  assert.match(widget.render(160).join("\n"), /settled 3.*failed 1/);
+  assert.match(widget.render(160).join("\n"), /3 settled.*1 failed/);
   const toolResults = f.session.messages.filter(message => message.role === "toolResult" && message.toolName === "delegate_task");
   assert.equal(toolResults.length, 4);
   assert.ok(toolResults.every(message => message.role === "toolResult" && !message.usage), "child usage never billed twice as parent tool usage");

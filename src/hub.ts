@@ -1,4 +1,4 @@
-import { colorToOklch, Input, matchesKey, oklchColor, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type KeybindingsManager } from "@earendil-works/pi-tui";
+import { colorToOklch, Input, matchesKey, oklchColor, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type KeybindingsManager } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ChildRef, ChildSnapshot, DelegationCoordinator } from "./coordinator.ts";
 import { createNativeThread, safe, type LiveTool, type ThreadDependencies } from "./thread.ts";
@@ -6,7 +6,8 @@ export { safe } from "./thread.ts";
 
 type Palette = Pick<Theme, "fg" | "style"> & { colors: Pick<Theme["colors"], "customMessageBg"> };
 const lineText = (text: string) => safe(text).replaceAll("\n", " ");
-export const agentLabel = (child: ChildSnapshot) => `${safe(child.assignment).split("\n").map(line => line.trim()).find(Boolean)?.replace(/^#{1,6}\s+/, "") || "Assignment"} · ${lineText(child.profile)}`;
+const assignmentHeadline = (child: ChildSnapshot) => safe(child.assignment).split("\n").map(line => line.trim()).find(Boolean)?.replace(/^#{1,6}\s+/, "") || "Assignment";
+export const agentLabel = (child: ChildSnapshot) => `${assignmentHeadline(child)} · ${lineText(child.profile)}`;
 const active = (child: ChildSnapshot) => !child.disposed;
 const activity = (child: ChildSnapshot) => child.error || (active(child) ? child.activity || child.progress : child.result) || child.progress || "Waiting for SDK activity";
 export const writerWarning = "Model-tool writer only: no conflicting manual !/!! or external edits";
@@ -15,21 +16,58 @@ export function fleetSummary(children: ChildSnapshot[]): string {
   return children.length ? statuses.map(status => `${status} ${children.filter(child => child.status === status).length}`).join(" · ") : "No tasks · ask the model to delegate_task";
 }
 
-/** Bounded overview; all current tasks contribute to counts, including settled entries. */
-export function createChildWidget(snapshot: () => ChildSnapshot[], theme: Pick<Theme, "fg">, availableRows = () => 30): Component {
+/** Event-driven, bounded current-agent tree; history and full metrics remain in the Hub. */
+export function createChildWidget(snapshot: () => ChildSnapshot[], theme: Pick<Theme, "fg"> & Partial<Pick<Theme, "bold">>, availableRows = () => 30): Component {
   return {
     render(width) {
+      width = Math.max(0, width);
       const children = snapshot();
-      const running = children.filter(active);
-      const counts = width < 75 && children.length ? statuses.map((status, index) => `${["queue", "setup", "run", "drain", "done", "fail", "cancel"][index]}${children.filter(child => child.status === status).length}`).join(" ") : fleetSummary(children);
-      const rows = [`FLEET ${children.length} · /task-hub`, counts];
+      const queued = children.filter(child => child.status === "queued").length;
+      const priority = (child: ChildSnapshot) => child.status === "draining" ? 0 : child.status === "running" ? 1 : child.status === "setup" ? 2 : 3;
+      const live = children.filter(child => !child.disposed && child.status !== "queued").sort((a, b) => priority(a) - priority(b));
+      const finished = children.filter(child => child.disposed).sort((a, b) => (b.endedAt ?? b.createdAt) - (a.endedAt ?? a.createdAt));
+      const candidates = [...live, ...finished];
       const writer = children.some(child => child.writerLease);
       const budget = Math.max(1, Math.min(5, Math.floor(availableRows() / 4)));
-      const slots = Math.max(0, budget - 2 - (writer ? 1 : 0));
-      const shown = [...running, ...children.filter(child => !active(child)).slice(-1)].slice(0, slots);
-      rows.push(...shown.map(child => `${agentLabel(child)} #${child.generation} · ${child.status} — ${lineText(activity(child))}`));
-      if (writer) rows.push(width < 75 ? "Model writer: !/!! + external unsafe" : writerWarning);
-      return rows.slice(0, budget).map((line, index) => truncateToWidth(theme.fg(writer && index === rows.length - 1 ? "warning" : index ? "muted" : "accent", lineText(line)), Math.max(0, width)));
+      const counts = width < 60 ? `${live.length} active · ${queued} queued` : statuses.flatMap(status => {
+        const count = children.filter(child => child.status === status).length;
+        return count ? [`${count} ${status}`] : [];
+      }).join(" · ");
+      const rows = [theme.fg("accent", `● Agents ${children.length}`) + theme.fg("muted", ` · ${counts || "No tasks · /task-hub"}`)];
+      if (writer && budget === 1) rows[0] = theme.fg("warning", `● Agents ${children.length} · Model writer: !/!! + external unsafe · ${queued} queued`);
+      const room = Math.max(0, budget - 1 - (writer && budget > 1 ? 1 : 0));
+      const activityRows = candidates.length && room >= (candidates.length > 1 ? 3 : 2) ? 1 : 0;
+      const slots = room - activityRows;
+      const overflow = candidates.length > slots;
+      const shown = candidates.slice(0, Math.max(0, slots - (overflow ? 1 : 0)));
+      shown.forEach((child, index) => {
+        const last = index === shown.length - 1 && shown.length === candidates.length;
+        const color = child.status === "failed" ? "error" : child.status === "draining" || child.status === "cancelled" ? "warning" : child.status === "settled" ? "success" : "accent";
+        const role = lineText(child.profile);
+        const indent = "  ".repeat(Math.min(3, Math.max(0, child.depth - 1)));
+        const prefix = theme.fg("muted", `${indent}${last ? "└─" : "├─"} `) + theme.fg(color, child.disposed ? "○ " : "● ") + (theme.bold?.(role) ?? role) + " ";
+        const elapsed = Math.max(0, Math.floor(((child.endedAt ?? Date.now()) - child.createdAt) / 1000));
+        const stats = [child.status, `${elapsed}s`, `${child.toolCalls} tools`,
+          ...(child.telemetry.requests === null ? [] : [`${child.telemetry.requests} req`]),
+          ...(child.telemetry.tokens ? [`${child.telemetry.tokens.total} tok`] : []),
+          ...(child.telemetry.cost === null ? [] : [`$${child.telemetry.cost.toFixed(3)}`])].join(" · ");
+        const metric = truncateToWidth(stats, Math.max(8, Math.floor(width / 2)));
+        const headline = assignmentHeadline(child);
+        rows.push(prefix + theme.fg("text", truncateToWidth(headline, Math.max(4, width - visibleWidth(prefix) - visibleWidth(metric) - 3))) + theme.fg("muted", " · " + metric));
+        if (!index && activityRows) {
+          const prefix = `${indent}${last ? "   " : "│  "} └ `;
+          const text = lineText(activity(child));
+          const columns = Math.max(0, width - visibleWidth(prefix));
+          const length = visibleWidth(text);
+          // Progress is an accumulated tail; keep its newest text, not a frozen opening paragraph.
+          const preview = length > columns ? "…" + sliceByColumn(text, length - Math.max(0, columns - 1), Math.max(0, columns - 1)) : text;
+          rows.push(theme.fg("muted", prefix + preview));
+        }
+      });
+      if (shown.length < candidates.length && room) rows.push(theme.fg("muted", `└─ ${candidates.length - shown.length} more · /task-hub`));
+      else if (!candidates.length && queued && room) rows.push(theme.fg("muted", `└─ ${queued} queued`));
+      if (writer && budget > 1) rows.push(theme.fg("warning", width < 75 ? "Model writer: !/!! + external unsafe" : writerWarning));
+      return rows.slice(0, budget).map(line => truncateToWidth(line, width));
     }, invalidate() {},
   };
 }
@@ -89,6 +127,9 @@ export function createHub(
   let mode: "browse" | "search" | "steer" | "message" | "stop" = "browse";
   let tab: "thread" | "details" | "tools" = "thread";
   let offset = 0;
+  let following = true;
+  let maxOffset = 0;
+  let threadBounds: {x: number; y: number; width: number; height: number} | undefined;
   let viewport = 1;
   let notice = "";
   let disposed = false;
@@ -113,8 +154,13 @@ export function createHub(
   const roster = () => coordinator.list().flatMap(child => coordinator.generations(child.id)).filter(child => lineText([child.id, child.parentId, child.profile, child.status, child.assignment, child.progress, child.result, child.error, child.model.id].join(" ")).toLowerCase().includes(query.toLowerCase()));
   const selection = () => {
     const children = roster();
-    if (!children.some(child => identity(child) === selected)) { selected = children[0] && identity(children[0]); offset = 0; }
+    if (!children.some(child => identity(child) === selected)) { selected = children[0] && identity(children[0]); offset = 0; following = tab === "thread"; }
     return children.find(child => identity(child) === selected);
+  };
+  const scrollBy = (delta: number) => {
+    offset = Math.max(0, Math.min(maxOffset, offset + delta));
+    if (tab === "thread") following = delta > 0 && offset === maxOffset;
+    refresh();
   };
   const control = async (target: ChildRef, text?: string, message = false) => {
     notice = text === undefined ? "Stopping and draining…" : message ? "Sending inbox message…" : "Sending steering…"; refresh();
@@ -142,15 +188,16 @@ export function createHub(
   };
   const finishInput = () => {
     if (interactionTarget && !canSubmitInteraction()) return;
-    if (mode === "search") query = lineText(input.getValue());
+    if (mode === "search") { query = lineText(input.getValue()); offset = 0; following = tab === "thread"; }
     else if ((mode === "steer" || mode === "message") && interactionTarget) void control(interactionTarget, input.getValue(), mode === "message");
     interactionTarget = undefined;
-    mode = "browse"; input.setValue(""); offset = 0; refresh();
+    mode = "browse"; input.setValue(""); refresh();
   };
   return {
     focused: false,
     render(width) {
       interactionVisibleAtHeight = undefined;
+      threadBounds = undefined;
       width = Math.max(0, width);
       const height = Math.max(1, availableRows());
       const child = selection();
@@ -197,8 +244,8 @@ export function createHub(
         const label = mode === "search" ? "Filter: " : mode === "message" ? "Inbox: " : "Steer: ";
         footer.push(label + input.render(Math.max(1, inner - visibleWidth(label)))[0], "Enter submit · Esc back (no action)");
       } else if (mode === "stop") footer.push("Stop target? y confirms · Esc back", "Enter does not confirm stop");
-      else footer.push(...(wide ? ["↑↓ agents · / filter · Tab view · PgUp/Dn Home/End scroll", `s steer · m inbox · x stop · w wait · p park · ${close}: close`]
-        : ["↑↓ / Tab · s steer m msg x stop", `PgUp/Dn · ${close.replaceAll("escape", "Esc").replaceAll("enter", "Enter").replaceAll("ctrl+", "C-")}: close`]));
+      else footer.push(...(wide ? ["↑↓ agents · j/k line · Ctrl+u/d or PgUp/Dn page · Home/End", `${close}: close · / filter Tab view · s steer m inbox x stop · w wait p park`]
+        : ["↑↓ agent · j/k scroll · / Tab", `End live · s/m/x · ${(keybindings.getKeys("tui.select.cancel")[0] ?? "Esc").replaceAll("escape", "Esc")}: close`]));
       // A pinned target and its controls are indivisible; optional hints must yield first.
       const requiredFooter = interactionTarget ? targetLines.length + 2 : 0;
       const shownFooter = requiredFooter || height >= 8 ? footer.slice(-Math.max(2, height - 7, requiredFooter)) : [];
@@ -245,12 +292,14 @@ export function createHub(
         }
       } else detail = [query ? "No matching tasks · / to change filter" : "No tasks · ask the model to delegate_task"];
       const wrapped = nativeLines ?? detail.flatMap(text => safe(text).split("\n").flatMap(line => wrapTextWithAnsi(line, Math.max(1, threadWidth))));
-      offset = Math.max(0, Math.min(offset, wrapped.length - viewport));
+      maxOffset = Math.max(0, wrapped.length - viewport);
+      offset = tab === "thread" && following ? maxOffset : Math.max(0, Math.min(offset, maxOffset));
+      threadBounds = {x: wide ? 2 + leftWidth + 3 : 2, y: 3, width: threadWidth, height: Math.max(0, paneHeight - 3)};
       const content = wrapped.slice(offset, offset + viewport).map(line => nativeLines ? line : theme.fg("text", line));
       const statusColor = (item: ChildSnapshot): "error" | "warning" | "success" | "accent" => item.status === "failed" ? "error" : item.status === "cancelled" ? "warning" : item.status === "settled" ? "success" : "accent";
       const selectedLabel = child ? `${agentLabel(child)} #${child.generation} · ${child.status}${historical(child) ? " · history" : ""}` : "No selection";
       const viewLabel = `${tab.toUpperCase()} · Tab: ${tab === "thread" ? "details" : tab === "details" ? "tools" : "thread"}`;
-      const position = `${offset + 1}–${Math.min(wrapped.length, offset + viewport)}/${wrapped.length} lines${offset + viewport < wrapped.length ? " · more ↓" : ""}`;
+      const position = `${tab === "thread" ? following ? "LIVE · " : "READING · " : ""}${offset + 1}–${Math.min(wrapped.length, offset + viewport)}/${wrapped.length} lines${tab === "thread" ? following ? " · k/PgUp read" : " · End: live" : offset < maxOffset ? " · more ↓" : ""}`;
       const pane: string[] = [];
       if (wide) {
         const slots = Math.max(1, Math.floor((paneHeight - 2) / 3));
@@ -296,12 +345,14 @@ export function createHub(
         const index = children.findIndex(child => identity(child) === selected);
         const next = children[Math.max(0, Math.min(children.length - 1, index + (keybindings.matches(data, "tui.select.up") ? -1 : 1)))];
         selected = next && identity(next);
-        offset = 0; notice = "";
-      } else if (keybindings.matches(data, "tui.select.pageUp")) offset = Math.max(0, offset - viewport);
-      else if (keybindings.matches(data, "tui.select.pageDown")) offset += viewport;
-      else if (matchesKey(data, "home")) offset = 0;
-      else if (matchesKey(data, "end")) offset = Number.MAX_SAFE_INTEGER;
-      else if (matchesKey(data, "tab")) { tab = tab === "thread" ? "details" : tab === "details" ? "tools" : "thread"; offset = 0; }
+        offset = 0; following = tab === "thread"; notice = "";
+      } else if (keybindings.matches(data, "tui.select.pageUp") || matchesKey(data, "ctrl+u")) scrollBy(-viewport);
+      else if (keybindings.matches(data, "tui.select.pageDown") || matchesKey(data, "ctrl+d")) scrollBy(viewport);
+      else if (data === "k") scrollBy(-1);
+      else if (data === "j") scrollBy(1);
+      else if (matchesKey(data, "home")) { offset = 0; following = false; }
+      else if (matchesKey(data, "end")) { offset = maxOffset; following = tab === "thread"; }
+      else if (matchesKey(data, "tab")) { tab = tab === "thread" ? "details" : tab === "details" ? "tools" : "thread"; offset = 0; following = tab === "thread"; }
       else if (data === "/") {
         mode = "search"; input.setValue(query);
         // Native Input.setValue preserves its old cursor; a saved filter starts editing at its end.
@@ -321,6 +372,13 @@ export function createHub(
         else notice = "Controls unavailable: historical/disposed target, or task not running (stop accepts queued/setup/running)";
       }
       refresh();
+    },
+    handleMouse(event) {
+      if (event.type !== "wheel" || disposed) return;
+      // Overlay wheels outside the reading viewport must not fall through to the main chat.
+      if (mode === "browse" && threadBounds && event.x >= threadBounds.x && event.x < threadBounds.x + threadBounds.width &&
+        event.y >= threadBounds.y && event.y < threadBounds.y + threadBounds.height && event.wheelDelta) scrollBy(event.wheelDelta);
+      return {handled: true};
     },
     invalidate() { input.invalidate(); nativeThread.invalidate(); },
     dispose() { disposed = true; interactionTarget = undefined; unsubscribe(); streaming.clear(); liveTools.clear(); nativeThread.clear(); },

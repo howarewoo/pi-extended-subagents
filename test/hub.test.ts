@@ -53,14 +53,14 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
 test("widget retains each child state, sanitizes terminal content and shows latest activity at narrow widths", () => {
   let child: ChildSnapshot | undefined;
   const widget = createChildWidget(() => child ? [child] : [], theme);
-  assert.match(widget.render(100).join("\n"), /FLEET 0.*task-hub/);
+  assert.match(widget.render(100).join("\n"), /● Agents 0.*task-hub/);
   for (const status of ["queued", "setup", "running", "draining", "settled", "cancelled", "failed"] as const) {
     child = { depth: 1, limits: {deadlineMs: 600000, requests: 100, tools: 100, depth: 2, spawns: 8}, toolCalls: 0, tools: ["read"], createdAt: 1, endedAt: null, writerLease: false, id: "test", generation: 1, parentId: "parent", profile: "general", assignment: "test", activity: "", model: {provider: "test", id: "test"}, effort: "off", telemetry: {requests: null, tokens: null, cost: null, context: null}, status, progress: "old activity ".repeat(20) + "中文 👩‍💻 latest\u001b\u0007", result: "final result", disposed: ["settled", "failed", "cancelled"].includes(status) };
     const output = widget.render(80).join("\n");
     assert.ok(output.includes(status));
-    assert.ok(widget.render(20)[0].startsWith("FLEET"));
+    assert.ok(widget.render(20)[0].startsWith("● Agents"));
     assert.ok(!/[\x00-\x1f\x7f-\x9f]/.test(stripAnsi(output).replaceAll("\n", "")));
-    if (status === "running") assert.ok(output.includes("test"));
+    if (status === "running") { assert.ok(output.includes("test")); assert.match(output, /中文 👩‍💻 latest/); }
     else if (child.disposed) assert.ok(output.includes("final result"));
     for (const width of [0, 1, 2, 8, 20, 40]) assert.ok(widget.render(width).every(line => visibleWidth(line) <= width));
   }
@@ -81,7 +81,7 @@ test("fleet counts every lifecycle, bounds height independently of task count, a
   const children = [snapshot("reader", {profile: "implementation"}), ...["setup", "running", "settled", "failed", "cancelled"].map(status => snapshot(status, {status: status as ChildSnapshot["status"], disposed: status !== "running" && status !== "setup"}))];
   const widget = createChildWidget(() => children, theme);
   const text = stripAnsi(widget.render(180).join("\n"));
-  assert.match(text, /FLEET 6/); assert.match(text, /running 2/); assert.match(text, /failed 1/);
+  assert.match(text, /● Agents 6/); assert.match(text, /2 running/); assert.match(text, /1 failed/);
   assert.doesNotMatch(text, /no conflicting/);
   children[0] = {...children[0], writerLease: true};
   assert.match(widget.render(180).join("\n"), /no conflicting/);
@@ -107,7 +107,8 @@ test("Hub selection survives streaming/new completion; search, tabs, full transc
   children = [...children, snapshot("new", {status: "settled", disposed: true})];
   listener!({type: "changed", child: children[2]}); assert.match(output(), /> └ inspect second/);
   assert.doesNotMatch(output(), /Direct requests/);
-  assert.match(output(), /FULL LINE 0/);
+  assert.match(output(), /FULL LINE 99/);
+  hub.handleInput!("\x1b[H"); assert.match(output(), /FULL LINE 0/);
   hub.handleInput!("\x1b[6~"); assert.doesNotMatch(output(), /FULL LINE 0 /);
   hub.handleInput!("\x1b[F"); assert.match(output(), /FULL LINE 99/);
   hub.handleInput!("\t"); hub.handleInput!("\x1b[F"); assert.match(output(), /Direct requests unavailable/);
@@ -220,22 +221,22 @@ test("Hub opens with agents on the left and the selected full thread on the righ
     const adjacent = wide.find(line => line.includes("AGENTS") && line.includes("Assignment 0"));
     assert.ok(adjacent, "selection heading and selected identity must share the same physical row");
     assert.ok(wide.some(line => line.includes("> └ Assignment 0") && line.includes("THREAD")), "left roster and right view must be adjacent");
-    assert.match(wide.join("\n"), /agent-0 THREAD LINE 0/);
+    assert.match(wide.join("\n"), /agent-0 THREAD LINE 89/);
     assert.doesNotMatch(wide.join("\n"), /Direct tokens|Limits \{|Prewalk/);
     assert.ok(wide.every(line => visibleWidth(line) === 90));
     const left = wide.slice(1, -1).map(line => line.split("│")[1]);
-    hub.handleInput!("\x1b[6~");
+    hub.handleInput!("\x1b[5~");
     assert.match(render().join("\n"), /agent-0 THREAD LINE/);
     assert.deepEqual(render().slice(1, -1).map(line => line.split("│")[1]), left, "thread scrolling must not scroll the roster");
     for (let index = 0; index < 10; index++) hub.handleInput!("\x1b[B");
     assert.match(render().join("\n"), /> └ Assignment 10/);
-    assert.match(render().join("\n"), /agent-10 THREAD LINE 0/);
+    assert.match(render().join("\n"), /agent-10 THREAD LINE 89/);
     rows = 14;
     const narrow = render(36);
     assert.ok(narrow.every(line => visibleWidth(line) === 36));
     assert.ok(narrow.length <= rows);
     assert.match(narrow.join("\n"), /> └ Assignment 10/);
-    assert.match(narrow.join("\n"), /THREAD LINE 0/);
+    assert.match(narrow.join("\n"), /THREAD LINE 89/);
     assert.doesNotMatch(narrow.join("\n"), /AGENTS/);
   } finally {hub.dispose();}
 });
@@ -255,7 +256,7 @@ test("Hub full thread preserves role/thinking/tool/error text, isolates ANSI and
   const render = (width = 90) => hub.render(width);
   const plain = () => render().map(stripAnsi);
   try {
-    render(); hub.handleInput!("\x1b[6~");
+    render(); hub.handleInput!("\x1b[H"); hub.handleInput!("\x1b[6~");
     const before = plain().filter(line => line.includes("USER_BODY"));
     const partial = fauxAssistantMessage("STREAMING_SENTINEL");
     listener({type: "sdk", child, event: {type: "message_update", message: partial,
@@ -388,10 +389,83 @@ test("human assignment/role labels distinguish same-role agents without changing
     const initial=output();assert.match(initial,/> └ Audit parser/);assert.match(initial,/Audit scheduler/);
     assert.doesNotMatch(initial,/aaaaaaaa|bbbbbbbb|Full original assignment/);
     const widget=createChildWidget(()=>[a,b],theme,()=>30).render(180).join("\n");
-    assert.match(widget,/Audit parser.*review/);assert.match(widget,/Audit scheduler.*review/);assert.doesNotMatch(widget,/aaaaaaaa|bbbbbbbb/);
+    assert.match(widget,/review.*Audit parser/);assert.match(widget,/review.*Audit scheduler/);assert.doesNotMatch(widget,/aaaaaaaa|bbbbbbbb/);
     hub.handleInput!("\t");assert.ok(output().includes(`Identity ${a.id} #1`));
     hub.handleInput!("\t");hub.handleInput!("\x1b[F");assert.match(output(),/Successfully wrote complete text/);
     hub.handleInput!("/");hub.handleInput!(b.id);hub.handleInput!("\r");
     assert.match(output(),/> └ Audit scheduler/);assert.doesNotMatch(output(),/> └ Audit parser/);
   } finally {hub.dispose();}
+});
+
+test("Hub native thread opens at live tail, detaches for laptop/page reading, follows updates and resumes on End", async t => {
+  const coordinator=new DelegationCoordinator("unused","root");
+  const child=snapshot("reader",{assignment:"Read newest output"});
+  let messages: ReturnType<DelegationCoordinator["messages"]>=[{role:"user",timestamp:1,content:Array.from({length:100},(_,i)=>`NAV_LINE_${i}`).join("\n")}];
+  let listener!: Parameters<DelegationCoordinator["subscribe"]>[0];
+  t.mock.method(coordinator,"list",()=>[child]);t.mock.method(coordinator,"messages",()=>messages);
+  t.mock.method(coordinator,"subscribe",(callback: typeof listener)=>{listener=callback;return()=>{};});
+  t.mock.method(coordinator,"snapshot",()=>child);
+  const steered: string[]=[];t.mock.method(coordinator,"steer",async(_ref:ChildRef,text:string)=>{steered.push(text);return "queued";});
+  let rows=27;
+  const hub=createHub(coordinator,theme,effectiveKeys,()=>{},()=>{},dependencies,()=>rows);
+  const output=(width=90)=>stripAnsi(hub.render(width).join("\n"));
+  const lines=()=>output().split("\n").filter(line=>line.includes("NAV_LINE_"));
+  try {
+    assert.match(output(),/NAV_LINE_99/);assert.match(output(),/LIVE/);
+    hub.handleInput!("k");assert.match(output(),/READING/);
+    hub.handleInput!("j");assert.match(output(),/LIVE/,"reaching bottom resumes follow visibly");
+    hub.handleInput!("\x1b[5~");assert.match(output(),/READING/);assert.doesNotMatch(output(),/NAV_LINE_99/);
+    hub.handleInput!("k");const before=lines();
+    messages=[...messages,fauxAssistantMessage("NEWEST_MESSAGE")];
+    assert.deepEqual(lines(),before,"appending messages must not move a detached reader");
+    hub.handleInput!("j");assert.notDeepEqual(lines(),before,"laptop line scrolling moves content, not agents");
+    hub.handleInput!("\x15");assert.match(output(),/READING/);
+    hub.handleInput!("\x04");assert.match(output(),/READING/);
+    hub.handleInput!("\x1b[F");assert.match(output(),/NEWEST_MESSAGE/);assert.match(output(),/LIVE/);
+    const partial=fauxAssistantMessage("PARTIAL_NEWEST");
+    listener({type:"sdk",child,event:{type:"message_update",message:partial,assistantMessageEvent:{type:"text_delta",contentIndex:0,delta:"PARTIAL_NEWEST",partial}}});
+    assert.match(output(),/PARTIAL_NEWEST/);
+    rows=14;assert.match(output(36),/PARTIAL_NEWEST/);assert.match(output(36),/LIVE/);
+    messages=[...messages,partial];listener({type:"sdk",child,event:{type:"message_end",message:partial}});
+    assert.match(output(36),/PARTIAL_NEWEST/);assert.match(output(36),/LIVE/);
+    rows=27;hub.handleInput!("\t");assert.match(output(),/Identity reader #1/);assert.doesNotMatch(output(),/LIVE/);
+    hub.handleInput!("\t");hub.handleInput!("\t");assert.match(output(),/LIVE/);
+    hub.handleInput!("s");hub.handleInput!("j");hub.handleInput!("k");output();hub.handleInput!("\r");
+    await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(steered,["jk"],"navigation aliases must not steal native input");
+  } finally {hub.dispose();}
+});
+
+test("Hub normalized wheel is contained to its reading viewport, never the roster or underlying chat", t => {
+  const coordinator=new DelegationCoordinator("unused","root");
+  t.mock.method(coordinator,"list",()=>[snapshot("one"),snapshot("two")]);
+  t.mock.method(coordinator,"messages",()=>[{role:"user",timestamp:1,content:Array.from({length:100},(_,i)=>`WHEEL_LINE_${i}`).join("\n")}]);
+  const hub=createHub(coordinator,theme,effectiveKeys,()=>{},()=>{},dependencies,()=>27);
+  const output=()=>stripAnsi(hub.render(90).join("\n"));
+  const event={type:"wheel" as const,button:"none" as const,x:40,y:5,screenX:45,screenY:7,width:90,height:27,shift:false,alt:false,ctrl:false,wheelDelta:-3};
+  try {
+    output();assert.equal(hub.handleMouse?.(event)?.handled,true);assert.match(output(),/READING/);
+    const before=output();assert.equal(hub.handleMouse?.({...event,x:3})?.handled,true);assert.equal(output(),before,"roster wheel must be contained without changing selection or thread");
+    assert.match(output(),/> └ inspect one/);
+    hub.handleMouse?.({...event,y:26});assert.equal(output(),before,"footer wheel must not move the reading viewport");
+    hub.handleInput!("x");const confirmation=output();hub.handleMouse?.(event);assert.equal(output(),confirmation,"wheel must not disturb a pinned interaction");
+    hub.handleInput!("\x1b");hub.handleInput!("\x1b[F");assert.match(output(),/LIVE/);
+  } finally {hub.dispose();}
+});
+
+test("compact agent tree uses actual status/role/direct stats/activity with truthful queue/overflow and writer budget", () => {
+  const children=[snapshot("A",{assignment:"Audit parser",toolCalls:3,telemetry:{requests:2,tokens:null,cost:null,context:null}}),
+    snapshot("B",{assignment:"Check drain",status:"draining",writerLease:true}),
+    ...Array.from({length:8},(_,i)=>snapshot(`q${i}`,{status:"queued"})),
+    snapshot("done",{assignment:"Finished check",status:"settled",disposed:true,endedAt:2000})];
+  const widget=createChildWidget(()=>children,theme,()=>30);
+  const text=stripAnsi(widget.render(120).join("\n"));
+  assert.match(text,/● Agents/);assert.match(text,/8 queued/);assert.match(text,/[├└]─/);
+  assert.match(text,/scout.*Check drain/);assert.match(text,/└.*Tool: read/);assert.match(text,/more/);assert.match(text,/writer|Model-tool/);
+  assert.doesNotMatch(text,/null|undefined|NaN|context.*%/);
+  const measured=createChildWidget(()=>[snapshot("known",{toolCalls:3,telemetry:{requests:2,tokens:{input:3,output:5,cacheRead:2,cacheWrite:1,total:11},cost:0.125,context:null}})],theme);
+  assert.match(stripAnsi(measured.render(180).join("\n")),/3 tools · 2 req · 11 tok · \$0.125/);
+  for(const rows of [1,4,8,16,30])for(const width of [0,1,8,36,80,120]){
+    const lines=createChildWidget(()=>children,theme,()=>rows).render(width);
+    assert.ok(lines.length<=Math.max(1,Math.min(5,Math.floor(rows/4))));assert.ok(lines.every(line=>visibleWidth(line)<=width));
+  }
 });
