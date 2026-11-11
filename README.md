@@ -1,4 +1,4 @@
-# pi-extended-subagents
+# @howarewoo/pi-subagents
 
 Delegate work to subagents in Pi, follow their progress, and steer or stop them from Subagent Hub. Subagents use your selected model by default, with their own assignments and explicit tool grants.
 
@@ -10,20 +10,25 @@ _Subagent Hub: tasks and conversations side by side, with a full-width rule abov
 
 Requires Node 22.19+; tested against Pi 1.5.2. Other Pi versions are not yet verified.
 
-Until the first npm release is published, install from Git:
+Install from npm:
 
 ```sh
-pi install git:github.com/howarewoo/pi-extended-subagents
+pi install npm:@howarewoo/pi-subagents
 ```
 
-After the first npm release, the recommended install is:
+### Migrate from the old package
+
+If you installed `pi-extended-subagents`, remove it before installing the scoped package
+so Pi does not load the extension twice:
 
 ```sh
-pi install npm:pi-extended-subagents
+pi remove npm:pi-extended-subagents
+pi install npm:@howarewoo/pi-subagents
 ```
 
 Use only one source. When switching from Git to npm, remove the Git registration first with
-`pi remove git:github.com/howarewoo/pi-extended-subagents`.
+`pi remove git:github.com/howarewoo/pi-extended-subagents`. The Git repository has not moved;
+`pi install git:github.com/howarewoo/pi-extended-subagents` remains an alternative.
 
 Restart Pi and run `/subagent-profiles` to check the installation. If you already installed a local checkout, remove that registration first with `pi remove /path/to/pi-extended-subagents` to avoid loading it twice.
 
@@ -35,7 +40,7 @@ auto-updater.
 
 ```sh
 # Update an unpinned npm installation
-pi update npm:pi-extended-subagents
+pi update npm:@howarewoo/pi-subagents
 
 # Or update all installed extension packages
 pi update --extensions
@@ -48,12 +53,11 @@ the repository's default branch, including unreleased commits.
 For a reproducible npm installation or rollback, select an exact published version:
 
 ```sh
-pi install npm:pi-extended-subagents@0.1.0
+pi install npm:@howarewoo/pi-subagents@0.1.1
 ```
 
 For Git, select a published tag, for example
-`pi install git:github.com/howarewoo/pi-extended-subagents@v0.1.0`.
-Version `0.1.0` and tag `v0.1.0` must be published before these examples can be used.
+`pi install git:github.com/howarewoo/pi-extended-subagents@v0.1.1`.
 Exact npm versions and Git tags stay pinned; updating does not advance them to the next release.
 Install a different version explicitly to change the pin.
 
@@ -65,7 +69,7 @@ changelog entries on the next fresh launch after a version increase. See the
 
 Compared with two community alternatives using their documentation, checked on 2026-11-11. This is a feature comparison, not a performance or reliability benchmark. UI cells name documented surfaces; they do not imply other features are absent.
 
-| Feature                  | pi-extended-subagents                                            | [nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents) | [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) |
+| Feature                  | @howarewoo/pi-subagents                                          | [nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents) | [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) |
 | ------------------------ | ---------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | Background tasks         | Until parent exit or reload                                      | ✓ Supported                                                           | ✓ Supported                                                         |
 | Nested delegation        | Opt-in; foreground only                                          | Opt-in                                                                | Opt-in                                                              |

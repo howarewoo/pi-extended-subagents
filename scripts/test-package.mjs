@@ -31,9 +31,9 @@ try {
     ],
     { cwd: root, stdio: "inherit" },
   );
-  const installed = join(root, "node_modules", "pi-extended-subagents");
-  const pkg = JSON.parse(await readFile(join(installed, "package.json"), "utf8"));
   const expected = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  const installed = join(root, "node_modules", ...expected.name.split("/"));
+  const pkg = JSON.parse(await readFile(join(installed, "package.json"), "utf8"));
   assert.equal(pkg.name, expected.name);
   assert.equal(pkg.version, expected.version);
   for (const file of ["CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md"])

@@ -51,7 +51,7 @@ for (const scenario of ["new", "identical", "different", "registry error"])
     try {
       await writeFile(
         join(root, "package.json"),
-        JSON.stringify({ name: "pi-extended-subagents", version: "0.1.0" }),
+        JSON.stringify({ name: "@howarewoo/pi-subagents", version: "0.1.1" }),
       );
       const tarball = join(root, "release.tgz");
       await writeFile(tarball, "controlled tarball bytes");
@@ -69,7 +69,7 @@ for (const scenario of ["new", "identical", "different", "registry error"])
         };
         syncBuiltinESMExports();
         globalThis.fetch = async url => {
-          assert.equal(url, "https://registry.npmjs.org/pi-extended-subagents/0.1.0");
+          assert.equal(url, "https://registry.npmjs.org/%40howarewoo%2Fpi-subagents/0.1.1");
           return {
             status: ${scenario === "new" ? 404 : scenario === "registry error" ? 503 : 200},
             json: async () => ({dist: {integrity: ${JSON.stringify(scenario === "different" ? "sha512-different" : integrity)}}})
