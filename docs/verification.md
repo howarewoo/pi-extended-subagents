@@ -1,5 +1,13 @@
 # Delegation verification
 
+## Resolved Subagent Profiles overlay
+
+The read-only `/subagent-profiles` command now resolves operator and trusted-project policy for the current cwd with the same profile/skill validator as admission. TUI uses a two-panel list/details component, with stacked narrow geometry and a tiny resize fallback. Non-TUI keeps the `{toolPolicy, profiles}` JSON message. Callable tools are explicitly unknown in command context; this is not an active-tool approximation or an admission preview.
+
+Local verification: lint, format check, typecheck and diff whitespace check passed. Focused profile viewer/profile/CLI tests passed **9/9**; the full suite passed **156/156** with no failures, skips or cancellations. The controlled SDK exercise also passed. New tests cover operator/project resolution and trust, command mode routing, unchanged JSON envelope, malformed project config, arbitrary extra roles, selection/detail scrolling, sanitized output and widths 0–120/heights 1–25. One scoped simplification review retained the small snapshot consumer and existing validator/sanitizer/terminal-width helpers; no new runtime, dependency, policy defaults or inheritance mechanism was introduced.
+
+`images/subagent-profiles.svg` typesets actual production `createProfileViewer().render(120)` rows at 23 rows, using synthetic bundled profiles and a neutral injected palette. It is a native-component illustration, **not a terminal screenshot**, live-provider exercise, PTY capture or human visual acceptance. The initial image-generation attempt requested an unexported `theme` symbol and failed before writing; the final illustration uses the explicitly synthetic palette, with no private API. The existing fleet illustrations and their disclosure remain unchanged. Interactive terminal capture and arbitrary custom-theme visual acceptance were not performed for this change.
+
 Current terminology is **Subagent Hub**, **Subagent Profiles** and **Subagents**. Current commands are `/subagent-hub`, `/subagent-profiles`, `/subagent-status`, `/subagent-steer` and `/subagent-stop`; no old aliases are registered. The verification records below describe their original candidates, including historical labels and commands, not current usage instructions. See the [current command reference](delegation-contract.md#registry-controls-and-final-delivery).
 
 ## Workflow-independent discovery
