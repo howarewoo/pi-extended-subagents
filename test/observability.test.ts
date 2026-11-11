@@ -46,9 +46,13 @@ test("real SDK concurrent readers/writer/failure feed fleet, cards and full tran
 import { stripVTControlCharacters } from "node:util";
 import { readFile } from "node:fs/promises";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+initTheme("dark", false);
 import { createHub } from "../src/hub.ts";
 import type { StartTask } from "../src/coordinator.ts";
-import { oklchColor } from "@earendil-works/pi-tui";
+import { ProcessTerminal, TuiMainScreen, oklchColor } from "@earendil-works/pi-tui";
+const dependencies = {tui: new TuiMainScreen(new ProcessTerminal()), cwd: process.cwd()};
+dependencies.tui.requestRender = () => {}; // Rendering only; this public TUI is not started.
 const keys = { matches: (data: string, action: string) => data === ({"tui.select.cancel": "\x1b", "tui.select.confirm": "\r", "tui.select.up": "\x1b[A", "tui.select.down": "\x1b[B", "tui.select.pageUp": "\x1b[5~", "tui.select.pageDown": "\x1b[6~"} as Record<string,string>)[action], getKeys: () => ["escape" as const] };
 const assignmentText = (context: Parameters<import("@earendil-works/pi-ai").FauxResponseFactory>[0]) => {
   const user = context.messages.find(message => message.role === "user");
@@ -76,11 +80,11 @@ test("real SDK Hub stop keeps leased writer draining and queue transcript empty 
   try {
   const warmup = await f.direct("warmup", "implementation"); await f.coordinator.wait(warmup);
   const [first, second] = f.coordinator.admit([{...admission(), assignment: "writer"}, {...admission(), assignment: "queued writer"}]);
-  hub = createHub(f.coordinator, palette, keys, () => {}, () => {}, () => 28);
+  hub = createHub(f.coordinator, palette, keys, () => {}, () => {}, dependencies, () => 28);
   const render = () => stripVTControlCharacters(hub!.render(160).join("\n"));
     await eventually(() => entered);
     hub.handleInput!("/"); hub.handleInput!(first.id); hub.handleInput!("\r");
-    assert.match(render(), new RegExp(`> └ ${first.id.slice(0, 8)} #${first.generation}`));
+    assert.match(render(), /> └ writer/);
     assert.equal(f.coordinator.snapshot(first)!.writerLease, true);
     assert.equal(f.coordinator.snapshot(second)!.status, "queued");
     assert.deepEqual(f.coordinator.messages(second), []);
@@ -114,13 +118,13 @@ test("real SDK selected generation retains full outcomes/transcript/artifacts ac
   const messages = f.coordinator.messages(ref);
   const originalTranscript = await readFile(first.transcript!, "utf8");
   const originalArtifact = await readFile(first.artifacts!.structured!, "utf8");
-  const hub = createHub(f.coordinator, palette, keys, () => {}, () => {}, () => 30);
+  const hub = createHub(f.coordinator, palette, keys, () => {}, () => {}, dependencies, () => 30);
   const render = () => stripVTControlCharacters(hub.render(180).join("\n"));
   try {
     render(); hub.handleInput!("\x1b[B"); render(); // pin original, not the warmup
     const next = f.coordinator.renew(ref, {...admission(), assignment: "successor"});
     await f.coordinator.wait(next);
-    assert.match(render(), new RegExp(`> └ ${ref.id.slice(0, 8)} #1`));
+    assert.match(render(), /> └ original.*#1/);
     hub.handleInput!("\x1b[F");
     assert.match(render(), /structured original/);
     assert.match(render(), /final original/); assert.doesNotMatch(render(), /final successor/);
@@ -159,14 +163,14 @@ test("real SDK filtered/draining target cannot redirect pending Hub message to a
     const warmup = await f.direct("warmup"); await f.coordinator.wait(warmup);
     const [first, second] = f.coordinator.admit([{...admission(), assignment: "first"}, {...admission(), assignment: "second"}]);
     await eventually(() => entered === 2);
-    hub = createHub(f.coordinator, palette, keys, () => {}, () => {}, () => 30);
+    hub = createHub(f.coordinator, palette, keys, () => {}, () => {}, dependencies, () => 30);
     const render = () => stripVTControlCharacters(hub!.render(160).join("\n"));
     hub.handleInput!("/"); hub.handleInput!("running"); hub.handleInput!("\r");
-    assert.match(render(), new RegExp(`> └ ${first.id.slice(0, 8)}`));
+    assert.match(render(), /> └ first/);
     hub.handleInput!("m"); hub.handleInput!("never redirect me");
     stopping = f.coordinator.stop(first);
     await eventually(() => f.coordinator.snapshot(first)!.status === "draining");
-    assert.match(render(), new RegExp(`> └ ${second.id.slice(0, 8)}`));
+    assert.match(render(), /> └ second/);
     assert.match(render(), new RegExp(`Target: ${first.id} #1`));
     const calls = f.model.state.callCount;
     hub.handleInput!("\r");

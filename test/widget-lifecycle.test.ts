@@ -88,7 +88,7 @@ test("real extension widget lifecycle and neutral Hub surfaces for native dark/l
     const palette = { fg: ui.theme.fg.bind(ui.theme), style: ui.theme.style.bind(ui.theme),
       colors: { customMessageBg: name === "tinted-custom" ? rgbColor(255, 0, 128) : ui.theme.colors.customMessageBg } };
     const hub = createHub(new DelegationCoordinator(root, "parent"), palette,
-      { matches: () => false, getKeys: () => [] }, () => {}, () => {});
+      { matches: () => false, getKeys: () => [] }, () => {}, () => {}, {tui, cwd: root});
     try {
       const levels = [1, 4, 8, 40].flatMap(width => hub.render(width).map(line => {
         const ansi = line.match(/^\x1b\[48;(?:2;(\d+);(\d+);(\d+)|5;(\d+))m/);

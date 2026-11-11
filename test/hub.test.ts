@@ -3,10 +3,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createChildWidget, createHub, taskCard, transcriptLines, safe } from "../src/hub.ts";
 import { DelegationCoordinator, type ChildRef, type ChildSnapshot } from "../src/coordinator.ts";
-import { backgroundAnsi, oklchColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
+import { ProcessTerminal, TuiMainScreen, backgroundAnsi, oklchColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import type { ThemeStyle } from "@earendil-works/pi-coding-agent";
+import { initTheme, type ThemeStyle } from "@earendil-works/pi-coding-agent";
 
+initTheme("dark", false);
+const dependencies = {tui: new TuiMainScreen(new ProcessTerminal()), cwd: process.cwd()};
+dependencies.tui.requestRender = () => {}; // Unstarted real TUI: no terminal writes in component tests.
 const keys = { matches: (data: string, action: string) => data === "escape" && action === "tui.select.cancel",
   getKeys: () => ["escape" as const] };
 const theme = { fg: (_color: string, text: string) => text,
@@ -22,7 +25,7 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
   const palette = { ...theme, colors: { ...theme.colors } };
   const darkBg = backgroundAnsi(oklchColor(0.3, 0, 0), "truecolor");
   const hub = createHub(coordinator, palette,
-    keys, () => {}, () => {}, () => rows);
+    keys, () => {}, () => {}, dependencies, () => rows);
   try {
     for (const width of [0, 1, 2, 3, 4, 8, 20, 40, 80]) {
       for (rows of [1, 2, 3, 4, 5, 6, 7, 24]) {
@@ -97,12 +100,12 @@ test("Hub selection survives streaming/new completion; search, tabs, full transc
   t.mock.method(coordinator, "messages", () => [{role: "user", content: Array.from({length: 100}, (_, i) => `FULL LINE ${i} 中文`).join("\n"), timestamp: 1}]);
   t.mock.method(coordinator, "steer", async (ref: ChildRef, text: string) => { calls.push([ref.id, ref.generation, text]); return "queued"; });
   t.mock.method(coordinator, "stop", async (ref: ChildRef) => {calls.push([ref.id, ref.generation, "stop"]);});
-  const hub = createHub(coordinator, theme, effectiveKeys, () => renders++, () => closed++, () => 20);
+  const hub = createHub(coordinator, theme, effectiveKeys, () => renders++, () => closed++, dependencies, () => 20);
   const output = () => stripAnsi(hub.render(100).join("\n"));
-  assert.match(output(), /> └ first/);
-  hub.handleInput!("\x1b[B"); assert.match(output(), /> └ second/);
+  assert.match(output(), /> └ inspect first/);
+  hub.handleInput!("\x1b[B"); assert.match(output(), /> └ inspect second/);
   children = [...children, snapshot("new", {status: "settled", disposed: true})];
-  listener!({type: "changed", child: children[2]}); assert.match(output(), /> └ second/);
+  listener!({type: "changed", child: children[2]}); assert.match(output(), /> └ inspect second/);
   assert.doesNotMatch(output(), /Direct requests/);
   assert.match(output(), /FULL LINE 0/);
   hub.handleInput!("\x1b[6~"); assert.doesNotMatch(output(), /FULL LINE 0 /);
@@ -115,7 +118,7 @@ test("Hub selection survives streaming/new completion; search, tabs, full transc
   hub.handleInput!("x"); hub.handleInput!("\r"); assert.equal(calls.length, 1, "Enter never confirms stop");
   hub.handleInput!("\x1b"); hub.handleInput!("x"); assert.match(output(), /Target: second #7/); hub.handleInput!("y");
   await new Promise(resolve => setImmediate(resolve)); assert.deepEqual(calls[1], ["second", 7, "stop"]);
-  hub.handleInput!("/"); hub.handleInput!("first"); hub.handleInput!("\r"); assert.match(output(), /> └ first/); assert.doesNotMatch(output(), /└ second/);
+  hub.handleInput!("/"); hub.handleInput!("first"); hub.handleInput!("\r"); assert.match(output(), /> └ inspect first/); assert.doesNotMatch(output(), /└ inspect second/);
   hub.handleInput!("\r"); hub.handleInput!("\x1b"); assert.equal(closed, 2);
   assert.equal(calls.length, 2, "navigation/closing never invokes controls");
   hub.dispose(); assert.ok(detached); assert.ok(renders > 0);
@@ -123,7 +126,7 @@ test("Hub selection survives streaming/new completion; search, tabs, full transc
 
 test("cards and transcript project real messages and sanitize controls/bidi without exposing opaque provider payloads", () => {
   const child = snapshot("card", {transcript: "/session/transcript.jsonl", error: "Failed\x1b[31m\u202e"});
-  assert.match(taskCard(child, true).join("\n"), /card #1.*scout.*running/);
+  assert.match(taskCard(child, true).join("\n"), /inspect card.*scout #1.*running/);
   assert.match(taskCard(child).join("\n"), /Full transcript/);
   assert.equal(safe("a\x1b]52;c;secret\x07b\x1b[31m\u200f"), "ab ");
   const messages: ReturnType<DelegationCoordinator["messages"]> = [
@@ -151,7 +154,7 @@ for (const action of ["steer", "stop", "message"] as const) {
     t.mock.method(coordinator, "steer", async (ref: ChildRef) => { dispatches.push({...ref}); return "queued"; });
     t.mock.method(coordinator, "stop", async (ref: ChildRef) => { dispatches.push({...ref}); });
     t.mock.method(coordinator, "message", async (_actor: ChildRef | undefined, ref: ChildRef | undefined) => { dispatches.push({...ref!}); throw new Error("unexpected message dispatch"); });
-    const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {}, () => 24);
+    const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {}, dependencies, () => 24);
     const render = () => stripAnsi(hub.render(100).join("\n"));
     const begin = () => {
       render();
@@ -167,7 +170,7 @@ for (const action of ["steer", "stop", "message"] as const) {
       hub.handleInput!("/"); hub.handleInput!("running"); hub.handleInput!("\r");
       begin();
       children[0] = {...children[0], status: "settled", disposed: true};
-      assert.match(render(), /> └ B/, "ordinary roster fallback still works");
+      assert.match(render(), /> └ inspect B/, "ordinary roster fallback still works");
       assert.match(render(), /Target: A #7/, "confirmation/input still identifies original target");
       await submit();
       assert.deepEqual(lookups, [{id: "A", generation: 7}]);
@@ -210,13 +213,13 @@ test("Hub opens with agents on the left and the selected full thread on the righ
   t.mock.method(coordinator, "list", () => children);
   t.mock.method(coordinator, "messages", (ref: ChildRef) => [{role: "user", timestamp: 1, content: Array.from({length: 90}, (_, index) => `${ref.id} THREAD LINE ${index} 中文`).join("\n")}]);
   let rows = 27;
-  const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {}, () => rows);
+  const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {}, dependencies, () => rows);
   const render = (width = 90) => hub.render(width).map(stripAnsi);
   try {
     const wide = render();
-    const adjacent = wide.find(line => line.includes("AGENTS") && line.includes("agent-0"));
+    const adjacent = wide.find(line => line.includes("AGENTS") && line.includes("Assignment 0"));
     assert.ok(adjacent, "selection heading and selected identity must share the same physical row");
-    assert.ok(wide.some(line => line.includes("> └ agent-0") && line.includes("THREAD")), "left roster and right view must be adjacent");
+    assert.ok(wide.some(line => line.includes("> └ Assignment 0") && line.includes("THREAD")), "left roster and right view must be adjacent");
     assert.match(wide.join("\n"), /agent-0 THREAD LINE 0/);
     assert.doesNotMatch(wide.join("\n"), /Direct tokens|Limits \{|Prewalk/);
     assert.ok(wide.every(line => visibleWidth(line) === 90));
@@ -225,13 +228,13 @@ test("Hub opens with agents on the left and the selected full thread on the righ
     assert.match(render().join("\n"), /agent-0 THREAD LINE/);
     assert.deepEqual(render().slice(1, -1).map(line => line.split("│")[1]), left, "thread scrolling must not scroll the roster");
     for (let index = 0; index < 10; index++) hub.handleInput!("\x1b[B");
-    assert.match(render().join("\n"), /> └ agent-10 #1/);
+    assert.match(render().join("\n"), /> └ Assignment 10/);
     assert.match(render().join("\n"), /agent-10 THREAD LINE 0/);
     rows = 14;
     const narrow = render(36);
     assert.ok(narrow.every(line => visibleWidth(line) === 36));
     assert.ok(narrow.length <= rows);
-    assert.match(narrow.join("\n"), /> └ agent-10 #1/);
+    assert.match(narrow.join("\n"), /> └ Assignment 10/);
     assert.match(narrow.join("\n"), /THREAD LINE 0/);
     assert.doesNotMatch(narrow.join("\n"), /AGENTS/);
   } finally {hub.dispose();}
@@ -248,7 +251,7 @@ test("Hub full thread preserves role/thinking/tool/error text, isolates ANSI and
   t.mock.method(coordinator, "messages", () => messages);
   const palette = {...theme, fg: (_color: string, text: string) => `\x1b[32m${text}\x1b[0m`};
   let rows = 27;
-  const hub = createHub(coordinator, palette, effectiveKeys, () => {}, () => {}, () => rows);
+  const hub = createHub(coordinator, palette, effectiveKeys, () => {}, () => {}, dependencies, () => rows);
   const render = (width = 90) => hub.render(width);
   const plain = () => render().map(stripAnsi);
   try {
@@ -272,7 +275,7 @@ test("Hub full thread preserves role/thinking/tool/error text, isolates ANSI and
     const pages: string[] = [];
     for (let page = 0; page < 12; page++) { pages.push(plain().join("\n")); hub.handleInput!("\x1b[6~"); }
     const full = pages.join("\n");
-    for (const content of ["[user]", "[assistant]", "THINKING_SENTINEL", "ASSISTANT_SENTINEL", "visible.ts", "ERROR", "RESULT_END", "payload omitted", "FINAL_SENTINEL", "ERROR_SENTINEL"]) assert.ok(full.includes(content), content);
+    for (const content of ["USER_BODY0", "THINKING_SENTINEL", "ASSISTANT_SENTINEL", "visible.ts", "RESULT_END", "payload omitted", "FINAL_SENTINEL", "ERROR_SENTINEL"]) assert.ok(full.includes(content), content);
     assert.doesNotMatch(full, /SIGNATURE_SECRET|TOOL_DETAILS_SECRET|IMAGE_BASE64_SECRET|SECRET|\u202e/);
     for (const width of [0, 1, 3, 8, 36, 40, 75, 76, 90, 200]) for (rows of [1, 4, 8, 14, 27]) {
       const lines = render(width);
@@ -280,6 +283,7 @@ test("Hub full thread preserves role/thinking/tool/error text, isolates ANSI and
       for (const line of lines) {
         assert.equal(visibleWidth(line), width, `${width} columns, ${rows} rows`);
         assert.doesNotMatch(line, /\x1b\[91m|\x1b\]52|\u202e|\x1b\[0m(?!\x1b\[48;)/);
+        assert.doesNotMatch(line, /\x1b\[49m(?!\x1b\[0m|$)/, "native background resets must restore the neutral outer panel");
       }
     }
   } finally {hub.dispose();}
@@ -290,7 +294,7 @@ test("Hub empty, filtered, queued/setup and terminal threads explain unavailable
   let children: ChildSnapshot[] = [];
   t.mock.method(coordinator, "list", () => children);
   t.mock.method(coordinator, "messages", () => []);
-  const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {});
+  const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {}, dependencies);
   const output = () => stripAnsi(hub.render(90).join("\n"));
   try {
     assert.match(output(), /No tasks/);
@@ -308,14 +312,14 @@ test("Hub prefilled filter editing starts at the native Input end after an empty
   const coordinator = new DelegationCoordinator("unused", "root");
   t.mock.method(coordinator, "list", () => [snapshot("one", {assignment: "alpha"}), snapshot("two", {assignment: "alpha beta"})]);
   t.mock.method(coordinator, "messages", () => []);
-  const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {});
+  const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {}, dependencies);
   const output = () => stripAnsi(hub.render(90).join("\n"));
   try {
     output(); hub.handleInput!("/"); hub.handleInput!("alpha"); hub.handleInput!("\r");
     hub.handleInput!("s"); hub.handleInput!("\x1b"); // Input cursor is now at zero, filter is still "alpha".
     hub.handleInput!("/"); hub.handleInput!(" beta"); hub.handleInput!("\r");
     assert.match(output(), /Filter: alpha beta · 1 generations/);
-    assert.match(output(), /> └ two #1/);
+    assert.match(output(), /> └ alpha beta.*scout #1/);
     hub.handleInput!("/"); hub.handleInput!("\x15"); hub.handleInput!("alpha"); hub.handleInput!("\r");
     assert.match(output(), /Filter: alpha · 2 generations/, "native Ctrl+U replaces a prefilled filter without an extra cursor workaround");
   } finally {hub.dispose();}
@@ -325,7 +329,7 @@ for (const action of ["stop", "steer", "message"] as const) {
   test(`Hub ${action} keeps the full original target visible at short height and blocks hidden controls until resize`, async t => {
     const coordinator = new DelegationCoordinator("unused", "root");
     const a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
-    let children = [snapshot(a, {generation: 7, progress: "match"}), snapshot(b, {generation: 9, progress: "match"})];
+    let children = [snapshot(a, {assignment: "alpha", generation: 7, progress: "match"}), snapshot(b, {assignment: "beta", generation: 9, progress: "match"})];
     const calls: ChildRef[] = [];
     t.mock.method(coordinator, "list", () => structuredClone(children));
     t.mock.method(coordinator, "messages", () => []);
@@ -334,7 +338,7 @@ for (const action of ["stop", "steer", "message"] as const) {
     t.mock.method(coordinator, "steer", async (ref: ChildRef) => { calls.push({...ref}); return "queued"; });
     t.mock.method(coordinator, "message", async (_actor: ChildRef | undefined, ref: ChildRef | undefined) => { calls.push({...ref!}); throw new Error("receipt fixture"); });
     let rows = 8, width = 90;
-    const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {}, () => rows);
+    const hub = createHub(coordinator, theme, effectiveKeys, () => {}, () => {}, dependencies, () => rows);
     const render = () => {
       const lines = hub.render(width);
       assert.ok(lines.length <= rows);
@@ -348,7 +352,7 @@ for (const action of ["stop", "steer", "message"] as const) {
       begin(); children[0] = {...children[0], progress: "no hit"};
       await submit(); assert.deepEqual(calls, [], "a newly opened but not yet displayed target cannot authorize dispatch");
       const short = render();
-      assert.match(short, /> └ bbbbbbbb #9/);
+      assert.match(short, /> └ beta.*scout #9/);
       assert.ok(short.includes(`Target: ${a} #7`), "full pinned identity must outrank filter/status hints at height 8");
       await submit(); assert.deepEqual(calls, [{id: a, generation: 7}]);
 
@@ -370,3 +374,24 @@ for (const action of ["stop", "steer", "message"] as const) {
     } finally {hub.dispose();}
   });
 }
+
+test("human assignment/role labels distinguish same-role agents without changing identity search or full readonly access", t => {
+  const coordinator = new DelegationCoordinator("unused", "root");
+  const a = snapshot("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", {assignment:"# Audit parser\nFull original assignment",profile:"review"});
+  const b = snapshot("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", {assignment:"Audit scheduler",profile:"review"});
+  t.mock.method(coordinator,"list",()=>[a,b]);
+  t.mock.method(coordinator,"messages",()=>[fauxAssistantMessage(fauxToolCall("write",{path:"result.ts",content:"const result = 1;"},{id:"write-call"}),{stopReason:"toolUse"}),
+    {role:"toolResult",toolName:"write",toolCallId:"write-call",timestamp:2,isError:false,content:[{type:"text",text:"Successfully wrote complete text."}]}]);
+  const hub=createHub(coordinator,theme,effectiveKeys,()=>{},()=>{},dependencies,()=>27);
+  const output=()=>stripAnsi(hub.render(90).join("\n"));
+  try {
+    const initial=output();assert.match(initial,/> └ Audit parser/);assert.match(initial,/Audit scheduler/);
+    assert.doesNotMatch(initial,/aaaaaaaa|bbbbbbbb|Full original assignment/);
+    const widget=createChildWidget(()=>[a,b],theme,()=>30).render(180).join("\n");
+    assert.match(widget,/Audit parser.*review/);assert.match(widget,/Audit scheduler.*review/);assert.doesNotMatch(widget,/aaaaaaaa|bbbbbbbb/);
+    hub.handleInput!("\t");assert.ok(output().includes(`Identity ${a.id} #1`));
+    hub.handleInput!("\t");hub.handleInput!("\x1b[F");assert.match(output(),/Successfully wrote complete text/);
+    hub.handleInput!("/");hub.handleInput!(b.id);hub.handleInput!("\r");
+    assert.match(output(),/> └ Audit scheduler/);assert.doesNotMatch(output(),/> └ Audit parser/);
+  } finally {hub.dispose();}
+});

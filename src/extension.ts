@@ -4,7 +4,7 @@ import { clippedText } from "./outcomes.ts";
 import { readTaskInput } from "./task-input.ts";
 import { join } from "node:path";
 import { Type } from "typebox";
-import { truncateHead, type ExtensionToolContext, type ToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { truncateHead, type ExtensionToolContext, type ToolDefinition, type ToolRenderers, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveScheduling } from "./scheduling.ts";
 import { DelegationCoordinator, type ChildRef, type ChildSnapshot, type StartTask } from "./coordinator.ts";
 import { READ_TOOLS, resolveProfile, bundledProfiles, COORDINATION_ACTIONS, intersectProfileGrants } from "./profiles.ts";
@@ -199,7 +199,8 @@ export default function delegation(pi: ExtensionAPI) {
     },
   });
   pi.registerTool(coordinationTool());
-  pi.registerTool(taskTool());
+  const taskDefinition = taskTool();
+  pi.registerTool(taskDefinition);
   pi.registerCommand("task-profiles", { description: "List bundled profile ceilings (actual tools depend on parent session)", handler: async () => show({ toolPolicy: "Profile tools are maximum allowlists, not requirements. Admission intersects callable parent builtins without activating tools. Inspect each task snapshot tools for its effective grants.", profiles: bundledProfiles() }) });
   pi.registerCommand("task-status", { description: "List delegation identities, states and final results", handler: async args => show(args.trim() ? coordinator.snapshot(ref(args)) : coordinator.list()) });
   pi.registerCommand("task-stop", { description: "Stop <task-id> <generation> and drain it", handler: async args => { await coordinator.stop(ref(args)); } });
@@ -209,7 +210,7 @@ export default function delegation(pi: ExtensionAPI) {
   } });
   pi.registerCommand("task-hub", { description: "Fleet roster, generation history, transcripts and pinned controls (TUI only)", handler: async (_args, ctx) => {
     if (ctx.mode !== "tui") return;
-    await ctx.ui.custom<void>((tui, theme, keys, done) => createHub(coordinator, theme, keys, () => tui.requestRender(), () => done(),
+    await ctx.ui.custom<void>((tui, theme, keys, done) => createHub(coordinator, theme, keys, () => tui.requestRender(), () => done(), {tui, cwd: ctx.cwd, toolRenderers: {delegate_task: {renderShell: taskDefinition.renderShell, renderCall: taskDefinition.renderCall, renderResult: taskDefinition.renderResult} as ToolRenderers}},
       () => Math.max(1, Math.floor(tui.terminal.rows * 0.9))), { overlay: true, overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" } });
   } });
 }

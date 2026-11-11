@@ -1,13 +1,12 @@
 import { colorToOklch, Input, matchesKey, oklchColor, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type KeybindingsManager } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ChildRef, ChildSnapshot, DelegationCoordinator } from "./coordinator.ts";
+import { createNativeThread, safe, type LiveTool, type ThreadDependencies } from "./thread.ts";
+export { safe } from "./thread.ts";
 
 type Palette = Pick<Theme, "fg" | "style"> & { colors: Pick<Theme["colors"], "customMessageBg"> };
-export function safe(text: string): string {
-  return text.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029]/g, " ").replaceAll("\t", "  ");
-}
 const lineText = (text: string) => safe(text).replaceAll("\n", " ");
+export const agentLabel = (child: ChildSnapshot) => `${safe(child.assignment).split("\n").map(line => line.trim()).find(Boolean)?.replace(/^#{1,6}\s+/, "") || "Assignment"} · ${lineText(child.profile)}`;
 const active = (child: ChildSnapshot) => !child.disposed;
 const activity = (child: ChildSnapshot) => child.error || (active(child) ? child.activity || child.progress : child.result) || child.progress || "Waiting for SDK activity";
 export const writerWarning = "Model-tool writer only: no conflicting manual !/!! or external edits";
@@ -28,7 +27,7 @@ export function createChildWidget(snapshot: () => ChildSnapshot[], theme: Pick<T
       const budget = Math.max(1, Math.min(5, Math.floor(availableRows() / 4)));
       const slots = Math.max(0, budget - 2 - (writer ? 1 : 0));
       const shown = [...running, ...children.filter(child => !active(child)).slice(-1)].slice(0, slots);
-      rows.push(...shown.map(child => `${child.id.slice(0, 8)} ${child.profile} ${child.status} · ${truncateToWidth(lineText(child.assignment), Math.max(4, Math.floor(width / 4)))} — ${lineText(activity(child))}`));
+      rows.push(...shown.map(child => `${agentLabel(child)} #${child.generation} · ${child.status} — ${lineText(activity(child))}`));
       if (writer) rows.push(width < 75 ? "Model writer: !/!! + external unsafe" : writerWarning);
       return rows.slice(0, budget).map((line, index) => truncateToWidth(theme.fg(writer && index === rows.length - 1 ? "warning" : index ? "muted" : "accent", lineText(line)), Math.max(0, width)));
     }, invalidate() {},
@@ -38,7 +37,8 @@ export function createChildWidget(snapshot: () => ChildSnapshot[], theme: Pick<T
 export function taskCard(child: ChildSnapshot | undefined, expanded = false): string[] {
   if (!child) return ["Task identity unavailable", "See tool error; /task-hub lists current runtime tasks"];
   return [
-    `${child.id} #${child.generation} · ${child.profile} · ${child.status}`,
+    `${truncateToWidth(agentLabel(child), 240, "… [preview truncated]")} #${child.generation} · ${child.status}`,
+    `Identity ${child.id} #${child.generation}`,
     `${child.model.provider}/${child.model.id} · effort ${child.effort ?? "unavailable"}`,
     truncateToWidth(lineText(activity(child)), 240, "… [preview truncated]"),
     `Prewalk ${child.prewalk ? JSON.stringify(child.prewalk) : "off"} · advisor unavailable`,
@@ -80,7 +80,7 @@ export function transcriptLines(messages: ReturnType<DelegationCoordinator["mess
 export function createHub(
   coordinator: DelegationCoordinator, theme: Palette,
   keybindings: Pick<KeybindingsManager, "matches" | "getKeys">,
-  requestRender: () => void, done: () => void, availableRows = () => 24,
+  requestRender: () => void, done: () => void, dependencies: ThreadDependencies, availableRows = () => 24,
 ): Component & Focusable & { dispose(): void } {
   let selected: string | undefined;
   let query = "";
@@ -93,17 +93,18 @@ export function createHub(
   let notice = "";
   let disposed = false;
   const input = new Input();
+  const nativeThread = createNativeThread(dependencies);
   const refresh = () => { if (!disposed) requestRender(); };
   // In-flight projections only; finalized messages remain in the authoritative registry.
   const streaming = new Map<string, ReturnType<DelegationCoordinator["messages"]>[number]>();
-  const liveTools = new Map<string, string[]>();
+  const liveTools = new Map<string, LiveTool>();
   const unsubscribe = coordinator.subscribe(event => {
     if (event.event?.type === "message_update") streaming.set(identity(event.child), event.event.message);
     if (event.event?.type === "message_end" || event.child.disposed) streaming.delete(identity(event.child));
     const sdk = event.event;
     if (sdk?.type === "tool_execution_start" || sdk?.type === "tool_execution_update") {
-      liveTools.set(identity(event.child), [`Live tool: ${sdk.toolName} ${sdk.toolCallId}`, `Arguments: ${safe(JSON.stringify(sdk.args, null, 2))}`,
-        ...(sdk.type === "tool_execution_update" ? (Array.isArray(sdk.partialResult.content) ? sdk.partialResult.content : []).flatMap((block: unknown) => block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string" ? [safe(block.text)] : []) : [])]);
+      liveTools.set(identity(event.child), {toolName: sdk.toolName, toolCallId: sdk.toolCallId, args: sdk.args,
+        ...(sdk.type === "tool_execution_update" ? {content: sdk.partialResult.content} : {})});
     }
     if (sdk?.type === "tool_execution_end" || event.child.disposed) liveTools.delete(identity(event.child));
     refresh();
@@ -157,7 +158,8 @@ export function createHub(
       const paint = (text: string) => {
         const clipped = truncateToWidth(text, width);
         const padded = clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
-        return padded.split("\x1b[0m").map(part => theme.style(part, { bg: panelBg })).join("\x1b[0m");
+        const restoreBg = theme.style("", {bg: panelBg}).replace(/\x1b\[49m$/, "");
+        return padded.split("\x1b[0m").map(part => theme.style(part.replaceAll("\x1b[49m", restoreBg), { bg: panelBg })).join("\x1b[0m");
       };
       if (width < 4 || height < 3) return [paint(interactionTarget ? "Resize · Esc cancels" : "FLEET " + coordinator.list().length)];
       const inner = Math.max(0, width - 4);
@@ -204,11 +206,12 @@ export function createHub(
       const paneHeight = Math.max(1, height - 2 - shownFooter.length);
       viewport = Math.max(1, paneHeight - 3);
       let detail: string[] = [];
+      let nativeLines: string[] | undefined;
       if (child) {
         if (tab === "details") {
           const metric = (value: unknown) => value === null || value === undefined ? "unavailable" : JSON.stringify(value);
           detail = [
-            "Assignment", safe(child.assignment), "", "Result", safe(child.result || "Not available yet"), "",
+            `Identity ${child.id} #${child.generation}`, "", "Assignment", safe(child.assignment), "", "Result", safe(child.result || "Not available yet"), "",
             ...(child.error ? ["Error", safe(child.error), ""] : []),
             ...(child.outcome ? ["Structured outcome", JSON.stringify(child.outcome, null, 2), ""] : []),
             ...(child.artifacts ? ["Saved artifacts", JSON.stringify(child.artifacts, null, 2), ""] : []),
@@ -230,17 +233,22 @@ export function createHub(
           try {
             const messages = coordinator.messages(child);
             const partial = streaming.get(identity(child));
-            detail = messages.length || partial
-              ? [...transcriptLines(partial ? [...messages, partial] : messages, tab === "tools"), ...(liveTools.get(identity(child)) ?? [])]
+            if (tab === "thread" && (messages.length || partial || liveTools.has(identity(child)))) {
+              nativeLines = nativeThread.render(identity(child), messages, partial, liveTools.get(identity(child)), threadWidth);
+            } else detail = messages.length || partial
+              ? [...transcriptLines(partial ? [...messages, partial] : messages, true),
+                ...(liveTools.get(identity(child)) ? ["Live tool: " + liveTools.get(identity(child))!.toolName,
+                  "Arguments: " + JSON.stringify(liveTools.get(identity(child))!.args, null, 2),
+                  ...(liveTools.get(identity(child))!.content ?? []).flatMap(block => block.type === "text" ? [block.text ?? ""] : [])] : [])]
               : [child.error || child.result || (child.status === "queued" ? "Queued · no SDK messages yet" : "Waiting for SDK messages")];
           } catch (error) { detail = ["Transcript unavailable: " + safe(String(error))]; }
         }
       } else detail = [query ? "No matching tasks · / to change filter" : "No tasks · ask the model to delegate_task"];
-      const wrapped = detail.flatMap(text => safe(text).split("\n").flatMap(line => wrapTextWithAnsi(line, Math.max(1, threadWidth))));
+      const wrapped = nativeLines ?? detail.flatMap(text => safe(text).split("\n").flatMap(line => wrapTextWithAnsi(line, Math.max(1, threadWidth))));
       offset = Math.max(0, Math.min(offset, wrapped.length - viewport));
-      const content = wrapped.slice(offset, offset + viewport).map(line => theme.fg("text", line));
+      const content = wrapped.slice(offset, offset + viewport).map(line => nativeLines ? line : theme.fg("text", line));
       const statusColor = (item: ChildSnapshot): "error" | "warning" | "success" | "accent" => item.status === "failed" ? "error" : item.status === "cancelled" ? "warning" : item.status === "settled" ? "success" : "accent";
-      const selectedLabel = child ? `${child.id.slice(0, 8)} #${child.generation} · ${child.profile} · ${child.status}${historical(child) ? " · history" : ""}` : "No selection";
+      const selectedLabel = child ? `${agentLabel(child)} #${child.generation} · ${child.status}${historical(child) ? " · history" : ""}` : "No selection";
       const viewLabel = `${tab.toUpperCase()} · Tab: ${tab === "thread" ? "details" : tab === "details" ? "tools" : "thread"}`;
       const position = `${offset + 1}–${Math.min(wrapped.length, offset + viewport)}/${wrapped.length} lines${offset + viewport < wrapped.length ? " · more ↓" : ""}`;
       const pane: string[] = [];
@@ -248,17 +256,18 @@ export function createHub(
         const slots = Math.max(1, Math.floor((paneHeight - 2) / 3));
         const start = Math.max(0, index - slots + 1);
         const left = [theme.fg("accent", `AGENTS · ${children.length} generations`), ...children.slice(start, start + slots).flatMap(item => [
-          theme.fg(identity(item) === selected ? "accent" : "text", `${identity(item) === selected ? ">" : " "} ${" ".repeat(Math.min(4, Math.max(0, item.depth - 1)))}└ ${item.id.slice(0, 8)} #${item.generation}${historical(item) ? " · history" : ""}`),
+          theme.fg(identity(item) === selected ? "accent" : "text", `${identity(item) === selected ? ">" : " "} ${" ".repeat(Math.min(4, Math.max(0, item.depth - 1)))}└ ${agentLabel(item)} #${item.generation}${historical(item) ? " · history" : ""}`),
           theme.fg(statusColor(item), `  ${item.profile} · ${item.status}`),
-          theme.fg("muted", "  " + lineText(item.assignment)),
+          theme.fg("muted", `  #${item.generation}${historical(item) ? " · history" : ""}`),
         ])];
         const right = [theme.fg("accent", lineText(selectedLabel)), theme.fg("muted", viewLabel), ...content];
         const cell = (text: string, columns: number) => { const clipped = truncateToWidth(text, columns); return clipped + " ".repeat(Math.max(0, columns - visibleWidth(clipped))); };
         for (let index = 0; index < paneHeight; index++) pane.push(cell(index === paneHeight - 1 ? theme.fg("muted", `${children.length ? start + 1 : 0}–${Math.min(children.length, start + slots)}/${children.length} · ↑↓ select`) : left[index] ?? "", leftWidth) +
           theme.fg("border", " │ ") + cell(index === paneHeight - 1 ? theme.fg("muted", position) : right[index] ?? "", threadWidth));
       } else {
-        pane.push(theme.fg("accent", child ? `> └ ${child.id.slice(0, 8)} #${child.generation} · ${index + 1}/${children.length}` : "No selection"));
-        if (paneHeight > 1) pane.push(theme.fg(child ? statusColor(child) : "muted", `${viewLabel}${child ? ` · ${child.status}` : ""}`));
+        const suffix = child ? ` #${child.generation} · ${index + 1}/${children.length}` : "";
+        pane.push(theme.fg("accent", child ? `> └ ${truncateToWidth(agentLabel(child), Math.max(0, inner - 4 - visibleWidth(suffix)))}${suffix}` : "No selection"));
+        if (paneHeight > 1) pane.push(theme.fg(child ? statusColor(child) : "muted", `${tab.toUpperCase()}${child ? ` · ${child.profile} · ${child.status}` : ""}`));
         if (paneHeight > 2) pane.push(...content.slice(0, paneHeight - 3), ...Array(Math.max(0, paneHeight - 3 - content.length)).fill(""), theme.fg("muted", position));
       }
       return [frame("╭", " Fleet / Agent Hub ", "╮"), ...pane.slice(0, height - 2).map(row), ...shownFooter.map(row), frame("╰", "", "╯")];
@@ -313,7 +322,7 @@ export function createHub(
       }
       refresh();
     },
-    invalidate() { input.invalidate(); },
-    dispose() { disposed = true; interactionTarget = undefined; unsubscribe(); streaming.clear(); liveTools.clear(); },
+    invalidate() { input.invalidate(); nativeThread.invalidate(); },
+    dispose() { disposed = true; interactionTarget = undefined; unsubscribe(); streaming.clear(); liveTools.clear(); nativeThread.clear(); },
   };
 }
