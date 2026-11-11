@@ -1,5 +1,7 @@
 import type { Skill, Theme } from "@earendil-works/pi-coding-agent";
 import {
+  colorToOklch,
+  oklchColor,
   matchesKey,
   truncateToWidth,
   visibleWidth,
@@ -28,7 +30,9 @@ export async function resolvedProfiles(
   );
 }
 
-function details(profile: Profile): string[] {
+type DetailLine = { text: string; heading?: boolean };
+
+function details(profile: Profile): DetailLine[] {
   const list = (items: readonly string[] | undefined) =>
     items?.length ? items.join(", ") : "none";
   const known = new Set([
@@ -44,30 +48,60 @@ function details(profile: Profile): string[] {
     "model",
     "prewalk",
   ]);
+  const heading = (text: string): DetailLine => ({ text, heading: true });
+  const value = (text: string): DetailLine => ({ text });
+  const structured = (label: string, item: unknown, indent = ""): DetailLine[] => {
+    if (Array.isArray(item))
+      return [
+        value(`${indent}${label}:${item.length ? "" : " none (empty grant)"}`),
+        ...item.flatMap((entry, index) =>
+          structured(`Selection ${index + 1}`, entry, indent + "  "),
+        ),
+      ];
+    if (item && typeof item === "object")
+      return [
+        value(`${indent}${label}:`),
+        ...Object.entries(item).flatMap(([key, entry]) => structured(key, entry, indent + "  ")),
+      ];
+    return [value(`${indent}${label}: ${String(item)}`)];
+  };
   return [
-    profile.name,
-    "Description",
-    profile.description,
-    "Prompt",
-    profile.prompt,
-    `Tools ceiling: ${list(profile.tools)}`,
-    "Callable tools: unknown in command context; inspect admitted task tools.",
-    `Skills (exact paths): ${list(profile.skills)}`,
+    heading("Description"),
+    value(profile.description),
+    value(""),
+    heading("Prompt"),
+    value(profile.prompt),
+    value(""),
+    heading("Tools and permissions"),
+    value(`Tools ceiling: ${list(profile.tools)}`),
+    value("Callable tools: unknown in command context; inspect admitted task tools."),
     ...(profile.name === "general"
       ? [
-          "Inheritance: available parent skills and callable builtins; no parent instructions/history.",
+          value(
+            "Inheritance: available parent skills and callable builtins; no parent instructions/history.",
+          ),
         ]
       : []),
-    `Reviewed leaf ceiling: ${list(profile.leafTools)} (writer lease; trusted code, not sandboxed)`,
-    `Spawn ceiling: ${list(profile.spawn)}`,
-    `Coordination: ${list(profile.coordination)}`,
-    `Model default: ${profile.model ? JSON.stringify(profile.model) : "selected parent model"}`,
-    `Models grant: ${profile.models === undefined ? "no explicit override grant" : JSON.stringify(profile.models)}`,
-    `Prewalk: ${profile.prewalk ? JSON.stringify(profile.prewalk) : "off"}`,
+    value(
+      `Reviewed leaf ceiling: ${list(profile.leafTools)} (writer lease; trusted code, not sandboxed)`,
+    ),
+    value(`Spawn ceiling: ${list(profile.spawn)}`),
+    value(`Coordination: ${list(profile.coordination)}`),
+    value(""),
+    heading("Skills (exact paths)"),
+    ...(profile.skills.length ? profile.skills.map(value) : [value("none")]),
+    value(""),
+    heading("Model policy"),
+    ...structured("Model default", profile.model ?? "selected parent model"),
+    ...structured("Models grant", profile.models ?? "no explicit override grant"),
+    ...structured("Prewalk", profile.prewalk ?? "off"),
     ...Object.entries(profile)
       .filter(([key]) => !known.has(key))
-      .map(([key, value]) => `${key}: ${JSON.stringify(value)}`),
-    "Admission also applies parent/ancestry, model availability, capacity and writer checks. This viewer grants nothing.",
+      .map(([key, item]) => value(`${key}: ${JSON.stringify(item)}`)),
+    value(""),
+    value(
+      "Admission also applies parent/ancestry, model availability, capacity and writer checks. This viewer grants nothing.",
+    ),
   ];
 }
 
@@ -93,17 +127,33 @@ export function createProfileViewer(
       width = Math.max(0, width);
       const height = Math.max(1, Math.floor(availableRows()));
       const close = keys.getKeys("tui.select.cancel").join("/") || "Esc";
-      if (width < 24 || height < 7)
-        return [`Profiles · ${close}: close`, "Resize for details"]
-          .slice(0, height)
-          .map((line) => truncateToWidth(line, width));
+      const panelBg = oklchColor(colorToOklch(theme.colors.customMessageBg).l, 0, 0);
+      // Match the Hub: foreground helpers may reset both colors inside a painted line.
+      const paint = (text: string) => {
+        const padded = cell(text, width);
+        const restoreBg = theme.style("", { bg: panelBg }).replace("\x1b[49m", "");
+        return padded
+          .split("\x1b[0m")
+          .map((part) => theme.style(part.replaceAll("\x1b[49m", restoreBg), { bg: panelBg }))
+          .join("\x1b[0m");
+      };
+      const fallback = () =>
+        [`Profiles · ${safe(close)}: close`, "Resize for details"].slice(0, height).map(paint);
+      if (width < 24) return fallback();
       const inner = width - 4;
       const wide = width >= 88;
       const leftWidth = wide ? Math.min(28, Math.floor(inner / 3)) : inner;
       const rightWidth = wide ? inner - leftWidth - 3 : inner;
-      const bodyHeight = height - 4;
+      const footer = [
+        "↑↓ select · j/k scroll · PgUp/Dn · Home/End",
+        `${safe(close)}: close · callable tools unknown here`,
+      ].flatMap((line) => wrapTextWithAnsi(line, inner));
+      // Frames, divider and hints are reserved before assigning any viewport rows.
+      const bodyHeight = height - 3 - footer.length;
       const listHeight = wide ? bodyHeight : Math.min(3, Math.max(1, Math.floor(bodyHeight / 3)));
-      viewport = wide ? bodyHeight : Math.max(1, bodyHeight - listHeight - 1);
+      const detailHeight = wide ? bodyHeight : bodyHeight - listHeight - 1;
+      if (detailHeight < 4) return fallback();
+      viewport = detailHeight - 3;
       const start = Math.max(0, selected - listHeight + 1);
       const roster = profiles
         .slice(start, start + listHeight)
@@ -113,16 +163,33 @@ export function createProfileViewer(
             `${start + index === selected ? ">" : " "} ${safe(profile.name).replaceAll("\n", " ")}`,
           ),
         );
-      const lines = (
-        profiles[selected] ? details(profiles[selected]) : ["No resolved profiles"]
-      ).flatMap((text) =>
+      const profile = profiles[selected];
+      const name = profile ? safe(profile.name).replaceAll("\n", " ") : "No selection";
+      const content = profile ? details(profile) : [{ text: "No resolved profiles" }];
+      // A clipped pinned name still has a complete, scrollable representation.
+      if (profile && (visibleWidth(name) > rightWidth || profile.name.includes("\n")))
+        content.unshift({ text: profile.name });
+      const lines = content.flatMap(({ text, heading }) =>
         safe(text)
           .split("\n")
-          .flatMap((line) => wrapTextWithAnsi(line, rightWidth)),
+          .flatMap((line) =>
+            wrapTextWithAnsi(line, rightWidth).map((wrapped) =>
+              theme.fg(heading ? "accent" : "text", wrapped),
+            ),
+          ),
       );
       maximum = Math.max(0, lines.length - viewport);
       offset = Math.min(maximum, offset);
-      const detail = lines.slice(offset, offset + viewport);
+      const detail = [
+        theme.fg("accent", name),
+        theme.fg("muted", "resolved · read-only"),
+        ...lines.slice(offset, offset + viewport),
+        ...Array(Math.max(0, viewport - (lines.length - offset))).fill(""),
+        theme.fg(
+          "muted",
+          `${profiles.length ? selected + 1 : 0}/${profiles.length} · detail ${offset + 1}–${Math.min(lines.length, offset + viewport)}/${lines.length}`,
+        ),
+      ];
       const body = wide
         ? Array.from(
             { length: bodyHeight },
@@ -134,20 +201,24 @@ export function createProfileViewer(
         : [
             ...roster,
             ...Array(Math.max(0, listHeight - roster.length)).fill(""),
-            "─".repeat(inner),
+            theme.fg("border", "─".repeat(inner)),
             ...detail,
           ];
       const row = (text: string) =>
-        theme.style(`│ ${cell(text, inner)} │`, { bg: theme.colors.customMessageBg });
+        paint(theme.fg("border", "│") + ` ${cell(text, inner)} ` + theme.fg("border", "│"));
+      const frame = (left: string, title: string, right: string) =>
+        paint(
+          theme.fg("border", left) +
+            theme.fg("accent", title) +
+            theme.fg("border", "─".repeat(Math.max(0, width - 2 - visibleWidth(title))) + right),
+        );
       return [
-        row(theme.fg("accent", "Subagent Profiles · resolved · read-only")),
+        frame("╭", " Subagent Profiles ", "╮"),
         ...body.map(row),
-        row(
-          `${selected + (profiles.length ? 1 : 0)}/${profiles.length} · detail ${offset + 1}–${Math.min(lines.length, offset + viewport)}/${lines.length}`,
-        ),
-        row("↑↓ select · j/k scroll · PgUp/Dn · Home/End"),
-        row(`${close}: close · callable tools unknown here`),
-      ].slice(0, height);
+        frame("├", "", "┤"),
+        ...footer.map((line) => row(theme.fg("muted", line))),
+        frame("╰", "", "╯"),
+      ];
     },
     handleInput(data) {
       if (keys.matches(data, "tui.select.cancel")) {
