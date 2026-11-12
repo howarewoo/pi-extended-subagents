@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Create new task/generation, agent and transcript directories with private POSIX mode `0700`, preserving exclusive creation and `0600` outcome artifacts. Existing records and parent/global storage permissions are unchanged; Windows access control remains dependent on filesystem ACLs.
+
 ## [0.1.1]
 
 ### Scoped npm package

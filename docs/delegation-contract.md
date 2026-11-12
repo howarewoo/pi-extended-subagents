@@ -85,7 +85,7 @@ Invalid submission returns actionable JSON-Pointer errors (up to 32) and permits
 
 ## Full output artifacts and previews
 
-New task directories are created exclusively. After prompt resolution and descendant/tool drain, the registry enters `draining` while it publishes fixed-name artifacts alongside `agent/` and `transcripts/`:
+New task and successor-generation directories are created exclusively with POSIX mode `0700`, as are their extension-owned `agent/` and `transcripts/` directories. The SDK manages transcript files inside that private directory. Existing records/files, parent session directories and global storage permissions are not changed; Windows privacy depends on filesystem ACLs rather than these POSIX mode bits (see [security policy](../SECURITY.md)). After prompt resolution and descendant/tool drain, the registry enters `draining` while it publishes fixed-name artifacts alongside `agent/` and `transcripts/`:
 
 - `result.txt`: exact concatenation (no added separators or trimming) of text blocks in the **last assistant message**, including an empty result for a tool-only/aborted last message. It is not the entire conversation. Existing `result` still uses Pi's final-assistant-text helper and retains its historical whitespace trimming/fallback semantics.
 - `structured.json`: JSON serialization of the first accepted structured value, if any; it is not reconstructed from prose or a schema. Read it as JSON to recover the exact submitted value, not original wire formatting.

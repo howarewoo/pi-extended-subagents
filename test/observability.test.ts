@@ -29,8 +29,10 @@ test(
     assert.equal(children.filter((child) => child.status === "failed").length, 1);
     assert.ok(children.every((child) => child.createdAt <= child.endedAt!));
     assert.ok(children.every((child) => !child.writerLease && child.disposed));
-    const activeWriter = f.events.find((event) => event.child.writerLease)?.child;
-    assert.equal(activeWriter?.profile, "implementation");
+    // The general failure child is also writer-capable; either writer may acquire first.
+    assert.ok(
+      f.events.some((event) => event.child.profile === "implementation" && event.child.writerLease),
+    );
     assert.ok(
       f.events.some((event) => event.child.profile === "scout" && event.child.status === "running"),
     );
