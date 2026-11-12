@@ -331,7 +331,11 @@ export default function delegation(pi: ExtensionAPI) {
             signal,
             parent
               ? async () => {
-                  await owner.authorizeSpawn(parent, profile, task.model);
+                  await owner.authorizeSpawn(parent, profile, task.model, {
+                    context: ctx,
+                    toolMetadata: () => pi.getAllTools(),
+                    cwd,
+                  });
                   await owner.taskInputRead(parent, signal);
                 }
               : undefined,

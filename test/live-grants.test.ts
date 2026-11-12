@@ -137,6 +137,71 @@ async function heldFixture(t: Parameters<typeof fixture>[0]) {
   return { f, grants, config, release, heldReads: () => heldReads, secretReads: () => secretReads };
 }
 
+test("nested general admission filters unavailable configured leaf tools", async (t) => {
+  const { f, config, release, heldReads } = await heldFixture(t);
+  await config({
+    general: { tools: ["read"], spawn: ["general"], leafTools: ["unavailable_leaf"] },
+  });
+  const parent = await f.direct("held");
+  await eventually(() => heldReads() === 1);
+  const child = await f.direct("held", "general", { parent });
+  await eventually(() => heldReads() === 2);
+  for (const ref of [parent, child]) {
+    const state = f.coordinator.snapshot(ref)!;
+    assert.deepEqual(state.tools, ["read"]);
+    assert.deepEqual(state.leafTools, []);
+    assert.ok(
+      state.capabilityDenials?.some(
+        (denial) =>
+          denial.name === "unavailable_leaf" && /metadata unavailable/.test(denial.reason),
+      ),
+    );
+  }
+  release();
+});
+
+test("nested general taskFile preflight filters unavailable configured leaf tools", async (t) => {
+  const f = await fixture(t, {
+    speed: 0,
+    response(context) {
+      if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
+      const user = context.messages.findLast((message) => message.role === "user");
+      const text =
+        typeof user?.content === "string"
+          ? user.content
+          : user?.content
+              .filter((b) => b.type === "text")
+              .map((b) => b.text)
+              .join("");
+      const task = text?.startsWith("LAUNCH ")
+        ? JSON.parse(text.slice(7))
+        : text === "probe"
+          ? { profile: "general", taskFile: "task.txt" }
+          : undefined;
+      return task
+        ? fauxAssistantMessage(fauxToolCall("delegate_task", task), { stopReason: "toolUse" })
+        : fauxAssistantMessage("done");
+    },
+  });
+  await mkdir(join(f.root, "operator"), { recursive: true });
+  await writeFile(
+    join(f.root, "operator", "delegation.json"),
+    JSON.stringify({
+      general: { tools: ["read"], spawn: ["general"], leafTools: ["unavailable_leaf"] },
+    }),
+  );
+  await writeFile(join(f.root, "task.txt"), "nested assignment");
+  await f.launch("probe", "general", false);
+  const children = new Map(f.events.map((event) => [event.child.id, event.child]));
+  assert.equal(children.size, 2);
+  assert.ok([...children.values()].some((child) => child.assignment === "nested assignment"));
+  for (const child of children.values()) {
+    assert.deepEqual(child.tools, ["read"]);
+    assert.deepEqual(child.leafTools, []);
+    assert.equal(child.status, "settled");
+  }
+});
+
 // Use a real captured public dispatcher, not a synthetic read result.
 
 test("current ancestor revocation denies taskFile reads and spawning before effects", async (t) => {

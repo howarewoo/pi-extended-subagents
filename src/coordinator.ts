@@ -438,7 +438,45 @@ export class DelegationCoordinator {
     // Policy loading yields: cancellation, pause, shutdown and generation changes win.
     this.assertActive(lineage[0]);
   }
-  async authorizeSpawn(ref: ChildRef, profile: Profile, model?: ModelSelection): Promise<void> {
+  private effectiveCapabilities(
+    profile: Profile,
+    source: Pick<StartTask, "context" | "toolMetadata">,
+    cwd: string,
+  ) {
+    const callable = new Set(source.context.tools.map((tool) => tool.name));
+    const capabilityDenials: CapabilityDenial[] = [];
+    const leafTools: string[] = [];
+    const leafProvenance: Record<string, string> = {};
+    if (profile.name === "general") {
+      const metadata = source.toolMetadata?.() ?? [];
+      const sameWorkspace = cwd === resolveWorkspace(undefined, source.context.cwd);
+      for (const tool of metadata) {
+        if (profile.tools.includes(tool.name as BuiltinTool)) continue;
+        const reason = !callable.has(tool.name)
+          ? "tool is not live callable"
+          : leafDenial(tool, profile.leafTools ?? [], sameWorkspace);
+        if (reason) capabilityDenials.push({ name: tool.name, reason });
+        else {
+          leafTools.push(tool.name);
+          leafProvenance[tool.name] = toolProvenance(tool);
+        }
+      }
+      for (const name of profile.leafTools ?? [])
+        if (!metadata.some((tool) => tool.name === name))
+          capabilityDenials.push({ name, reason: "tool metadata unavailable" });
+    }
+    return {
+      profile: { ...profile, leafTools, tools: profile.tools.filter((name) => callable.has(name)) },
+      capabilityDenials,
+      leafProvenance,
+    };
+  }
+  async authorizeSpawn(
+    ref: ChildRef,
+    profile: Profile,
+    model?: ModelSelection,
+    source?: Pick<StartTask, "context" | "toolMetadata" | "cwd">,
+  ): Promise<void> {
     const parent = this.entry(ref);
     this.assertDescendantModels(
       parent,
@@ -450,9 +488,12 @@ export class DelegationCoordinator {
         },
       model,
     );
-    // Match admission: inactive parent builtins are not requested descendant rights.
-    const callable = new Set(this.entry(ref).input.context.tools.map((tool) => tool.name));
-    profile = { ...profile, tools: profile.tools.filter((tool) => callable.has(tool)) };
+    // Compare effective capabilities, not unavailable configured ceilings.
+    profile = this.effectiveCapabilities(
+      profile,
+      source ?? parent.input,
+      resolveWorkspace(source?.cwd ?? parent.selection.cwd, (source ?? parent.input).context.cwd),
+    ).profile;
     const roles = [profile.name];
     let current: Entry | undefined = this.entry(ref);
     while (current) {
@@ -477,7 +518,7 @@ export class DelegationCoordinator {
     signal?: AbortSignal,
   ): Promise<ChildRef[]> {
     for (const input of inputs)
-      if (input.parent) await this.authorizeSpawn(input.parent, input.profile, input.model);
+      if (input.parent) await this.authorizeSpawn(input.parent, input.profile, input.model, input);
     signal?.throwIfAborted();
     for (const input of inputs) if (input.parent) this.assertActive(this.entry(input.parent));
     return this.admitAuthorized(inputs, replacement);
@@ -496,33 +537,11 @@ export class DelegationCoordinator {
         throw new Error("Follow-up must retain its original workspace");
       if (typeof input.assertTools !== "function")
         throw new Error("Delegation requires a parent builtin provenance validator");
-      const callable = new Set(input.context.tools.map((tool) => tool.name));
-      const capabilityDenials: CapabilityDenial[] = [];
-      const leafTools: string[] = [];
-      const leafProvenance: Record<string, string> = {};
-      if (input.profile.name === "general") {
-        const metadata = input.toolMetadata?.() ?? [];
-        const sameWorkspace = cwd === resolveWorkspace(undefined, input.context.cwd);
-        for (const tool of metadata) {
-          if (input.profile.tools.includes(tool.name as BuiltinTool)) continue;
-          const reason = !callable.has(tool.name)
-            ? "tool is not live callable"
-            : leafDenial(tool, input.profile.leafTools ?? [], sameWorkspace);
-          if (reason) capabilityDenials.push({ name: tool.name, reason });
-          else {
-            leafTools.push(tool.name);
-            leafProvenance[tool.name] = toolProvenance(tool);
-          }
-        }
-        for (const name of input.profile.leafTools ?? [])
-          if (!metadata.some((tool) => tool.name === name))
-            capabilityDenials.push({ name, reason: "tool metadata unavailable" });
-      }
-      const profile = {
-        ...input.profile,
-        leafTools,
-        tools: input.profile.tools.filter((name) => callable.has(name)),
-      };
+      const { profile, capabilityDenials, leafProvenance } = this.effectiveCapabilities(
+        input.profile,
+        input,
+        cwd,
+      );
       if (!profile.tools.length)
         throw new Error(
           `Profile ${profile.name} has no callable parent builtin tools; enable an allowed parent tool or choose a usable profile`,
