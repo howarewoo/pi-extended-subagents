@@ -6,14 +6,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ChildSnapshot } from "./coordinator.ts";
-import {
-  active,
-  activity,
-  assignmentHeadline,
-  lineText,
-  statuses,
-  writerWarning,
-} from "./task-presentation.ts";
+import { active, activity, assignmentHeadline, lineText, statuses } from "./task-presentation.ts";
 
 /** Event-driven, bounded current-agent tree; history and full metrics remain in the Hub. */
 export function createChildWidget(
@@ -45,7 +38,6 @@ export function createChildWidget(
               child.status === "pausing"),
         )
         .sort((a, b) => priority(a) - priority(b));
-      const writer = children.some((child) => child.writerLease);
       const budget = Math.max(1, Math.min(5, Math.floor(availableRows() / 4)));
       const counts =
         width < 60
@@ -59,12 +51,7 @@ export function createChildWidget(
       const rows = [
         theme.fg("accent", `● Subagents ${children.length}`) + theme.fg("muted", ` · ${counts}`),
       ];
-      if (writer && budget === 1)
-        rows[0] = theme.fg(
-          "warning",
-          `● Subagents ${children.length} · Model writer: !/!! + external unsafe · ${queued} queued`,
-        );
-      const room = Math.max(0, budget - 1 - (writer && budget > 1 ? 1 : 0));
+      const room = Math.max(0, budget - 1);
       const activityRows = live.length && room >= (live.length > 1 ? 3 : 2) ? 1 : 0;
       const slots = room - activityRows;
       const overflow = live.length > slots;
@@ -121,10 +108,6 @@ export function createChildWidget(
       });
       if (shown.length < live.length && room)
         rows.push(theme.fg("muted", `└─ ${live.length - shown.length} more · /subagent-hub`));
-      if (writer && budget > 1)
-        rows.push(
-          theme.fg("warning", width < 75 ? "Model writer: !/!! + external unsafe" : writerWarning),
-        );
       return rows.slice(0, budget).map((line) => truncateToWidth(line, width));
     },
     invalidate() {},

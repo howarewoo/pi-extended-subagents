@@ -185,7 +185,7 @@ The thread follows new output until you scroll up. Press End to follow again. Th
 
 These illustrations use native renderer output with synthetic data modeled on the [offline fleet demo](examples/controlled-fleet.ts); they are not terminal screenshots.
 
-![Terminal illustration of the pinned Subagents widget showing four tasks: two running, one queued and one cancelled, with a live activity preview and model-tool writer warning.](docs/images/subagent-widget.svg)
+![Terminal illustration of the pinned Subagents widget showing four tasks: two running, one queued and one cancelled, with a live activity preview.](docs/images/subagent-widget.svg)
 
 _Pinned Subagents widget: task counts and recent activity stay visible above the editor._
 
