@@ -11,7 +11,7 @@ export async function readTaskInput(
   path: string,
   ctx: ExtensionToolContext,
   signal?: AbortSignal,
-  beforeRead?: () => void,
+  beforeRead?: () => void | Promise<void>,
   cwd = ctx.cwd,
 ): Promise<string> {
   if (!path || isAbsolute(path) || path.includes("\0") || hasDeniedTaskComponent(path))
@@ -32,7 +32,8 @@ export async function readTaskInput(
   if (!before.isFile() || before.size === 0 || before.size > 50000)
     throw new Error("taskFile must be a nonempty regular text file of at most 50000 bytes");
   signal?.throwIfAborted();
-  beforeRead?.();
+  await beforeRead?.();
+  signal?.throwIfAborted();
   const outcome = await ctx.executeTool("read", { path: target }, { signal });
   if (outcome.isError)
     throw new Error(

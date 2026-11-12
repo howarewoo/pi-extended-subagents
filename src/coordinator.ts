@@ -360,12 +360,7 @@ export class DelegationCoordinator {
       const parent = this.entry(input.parent);
       if (parent.cancelled || parent.paused || parent.state.disposed)
         throw new Error("Delegating parent is no longer active");
-      if (
-        !admittedModel(parent, effective) ||
-        input.profile.models?.some((model) => !admittedModel(parent, model)) ||
-        (input.profile.prewalk && !input.model && !admittedModel(parent, input.profile.prewalk))
-      )
-        throw new Error("Descendant cannot broaden ancestor model grants");
+      this.assertDescendantModels(parent, input.profile, effective, input.model);
       if (!parent.input.profile.spawn?.includes(input.profile.name))
         throw new Error("Ancestor spawn role denied");
       if (parent.state.depth >= Math.min(this.policy.depth, parent.state.limits.depth))
@@ -389,8 +384,147 @@ export class DelegationCoordinator {
     }
     return selection;
   }
+  private assertDescendantModels(
+    parent: Entry,
+    profile: Profile,
+    effective: ModelSelection,
+    explicit?: ModelSelection,
+  ): void {
+    if (
+      !admittedModel(parent, effective) ||
+      profile.models?.some((model) => !admittedModel(parent, model)) ||
+      (profile.prewalk && !explicit && !admittedModel(parent, profile.prewalk))
+    )
+      throw new Error("Descendant cannot broaden ancestor model grants");
+  }
+  private assertActive(entry: Entry): void {
+    let current: Entry | undefined = entry;
+    while (current) {
+      if (
+        this.entry(current.state) !== current ||
+        current.cancelled ||
+        current.paused ||
+        current.state.disposed ||
+        this.closing
+      )
+        throw new Error("Delegating parent is no longer active");
+      current = current.input.parent ? this.entry(current.input.parent) : undefined;
+    }
+  }
+  /** Each action is bounded by its admission and fresh policy for the whole lineage. */
+  private async authorize(
+    ref: ChildRef,
+    allows: (profile: Profile, index: number) => boolean,
+    denial: string,
+  ): Promise<void> {
+    const lineage: Entry[] = [];
+    let current: Entry | undefined = this.entry(ref);
+    while (current) {
+      this.assertActive(current);
+      if (!allows(current.input.profile, lineage.length)) throw new Error(denial);
+      lineage.push(current);
+      current = current.input.parent ? this.entry(current.input.parent) : undefined;
+    }
+    for (const [index, entry] of lineage.entries()) {
+      const { profile } = await resolveProfile(
+        entry.input.profile.name,
+        entry.input.context.cwd,
+        entry.input.context.isProjectTrusted(),
+        undefined,
+        entry.input.availableSkills?.() ?? entry.input.skills,
+      );
+      if (!allows(profile, index)) throw new Error(denial);
+    }
+    // Policy loading yields: cancellation, pause, shutdown and generation changes win.
+    this.assertActive(lineage[0]);
+  }
+  private effectiveCapabilities(
+    profile: Profile,
+    source: Pick<StartTask, "context" | "toolMetadata">,
+    cwd: string,
+  ) {
+    const callable = new Set(source.context.tools.map((tool) => tool.name));
+    const capabilityDenials: CapabilityDenial[] = [];
+    const leafTools: string[] = [];
+    const leafProvenance: Record<string, string> = {};
+    if (profile.name === "general") {
+      const metadata = source.toolMetadata?.() ?? [];
+      const sameWorkspace = cwd === resolveWorkspace(undefined, source.context.cwd);
+      for (const tool of metadata) {
+        if (profile.tools.includes(tool.name as BuiltinTool)) continue;
+        const reason = !callable.has(tool.name)
+          ? "tool is not live callable"
+          : leafDenial(tool, profile.leafTools ?? [], sameWorkspace);
+        if (reason) capabilityDenials.push({ name: tool.name, reason });
+        else {
+          leafTools.push(tool.name);
+          leafProvenance[tool.name] = toolProvenance(tool);
+        }
+      }
+      for (const name of profile.leafTools ?? [])
+        if (!metadata.some((tool) => tool.name === name))
+          capabilityDenials.push({ name, reason: "tool metadata unavailable" });
+    }
+    return {
+      profile: { ...profile, leafTools, tools: profile.tools.filter((name) => callable.has(name)) },
+      capabilityDenials,
+      leafProvenance,
+    };
+  }
+  async authorizeSpawn(
+    ref: ChildRef,
+    profile: Profile,
+    model?: ModelSelection,
+    source?: Pick<StartTask, "context" | "toolMetadata" | "cwd">,
+  ): Promise<void> {
+    const parent = this.entry(ref);
+    this.assertDescendantModels(
+      parent,
+      profile,
+      model ??
+        profile.model ?? {
+          ...parent.state.model,
+          effort: parent.state.effort as ModelSelection["effort"],
+        },
+      model,
+    );
+    // Compare effective capabilities, not unavailable configured ceilings.
+    profile = this.effectiveCapabilities(
+      profile,
+      source ?? parent.input,
+      resolveWorkspace(source?.cwd ?? parent.selection.cwd, (source ?? parent.input).context.cwd),
+    ).profile;
+    const roles = [profile.name];
+    let current: Entry | undefined = this.entry(ref);
+    while (current) {
+      roles.push(current.input.profile.name);
+      current = current.input.parent ? this.entry(current.input.parent) : undefined;
+    }
+    await this.authorize(
+      ref,
+      (grant, index) =>
+        !!grant.spawn?.includes(roles[index]) &&
+        (["tools", "skills", "leafTools", "spawn", "coordination"] as const).every((key) =>
+          (profile[key] ?? []).every((value) =>
+            (grant[key] as readonly string[] | undefined)?.includes(value),
+          ),
+        ),
+      "Current or admitted ancestor spawn grant denied; descendant cannot broaden ancestor grants",
+    );
+  }
+  async admit(
+    inputs: StartTask[],
+    replacement?: ChildRef,
+    signal?: AbortSignal,
+  ): Promise<ChildRef[]> {
+    for (const input of inputs)
+      if (input.parent) await this.authorizeSpawn(input.parent, input.profile, input.model, input);
+    signal?.throwIfAborted();
+    for (const input of inputs) if (input.parent) this.assertActive(this.entry(input.parent));
+    return this.admitAuthorized(inputs, replacement);
+  }
   /** Whole-batch synchronous validation precedes registry insertion, disk setup or dispatch. */
-  admit(inputs: StartTask[], replacement?: ChildRef): ChildRef[] {
+  private admitAuthorized(inputs: StartTask[], replacement?: ChildRef): ChildRef[] {
     const previous = replacement ? this.entry(replacement) : undefined;
     inputs = inputs.map((input) => {
       const cwd = resolveWorkspace(
@@ -403,33 +537,11 @@ export class DelegationCoordinator {
         throw new Error("Follow-up must retain its original workspace");
       if (typeof input.assertTools !== "function")
         throw new Error("Delegation requires a parent builtin provenance validator");
-      const callable = new Set(input.context.tools.map((tool) => tool.name));
-      const capabilityDenials: CapabilityDenial[] = [];
-      const leafTools: string[] = [];
-      const leafProvenance: Record<string, string> = {};
-      if (input.profile.name === "general") {
-        const metadata = input.toolMetadata?.() ?? [];
-        const sameWorkspace = cwd === resolveWorkspace(undefined, input.context.cwd);
-        for (const tool of metadata) {
-          if (input.profile.tools.includes(tool.name as BuiltinTool)) continue;
-          const reason = !callable.has(tool.name)
-            ? "tool is not live callable"
-            : leafDenial(tool, input.profile.leafTools ?? [], sameWorkspace);
-          if (reason) capabilityDenials.push({ name: tool.name, reason });
-          else {
-            leafTools.push(tool.name);
-            leafProvenance[tool.name] = toolProvenance(tool);
-          }
-        }
-        for (const name of input.profile.leafTools ?? [])
-          if (!metadata.some((tool) => tool.name === name))
-            capabilityDenials.push({ name, reason: "tool metadata unavailable" });
-      }
-      const profile = {
-        ...input.profile,
-        leafTools,
-        tools: input.profile.tools.filter((name) => callable.has(name)),
-      };
+      const { profile, capabilityDenials, leafProvenance } = this.effectiveCapabilities(
+        input.profile,
+        input,
+        cwd,
+      );
       if (!profile.tools.length)
         throw new Error(
           `Profile ${profile.name} has no callable parent builtin tools; enable an allowed parent tool or choose a usable profile`,
@@ -598,7 +710,7 @@ export class DelegationCoordinator {
     return entries.map((entry) => ({ id: entry.state.id, generation: entry.state.generation }));
   }
   async start(input: StartTask): Promise<ChildRef> {
-    const [ref] = this.admit([input]);
+    const [ref] = await this.admit([input]);
     await this.entry(ref).setup;
     return ref;
   }
@@ -611,7 +723,7 @@ export class DelegationCoordinator {
     }
     return parent && { id: parent.id, generation: parent.generation };
   }
-  renew(ref: ChildRef, input: StartTask): ChildRef {
+  async renew(ref: ChildRef, input: StartTask, signal?: AbortSignal): Promise<ChildRef> {
     const previous = this.entry(ref);
     this.renewalParent(ref);
     const profile = intersectProfileGrants(input.profile, previous.input.profile);
@@ -619,19 +731,22 @@ export class DelegationCoordinator {
       previous.state.prewalk && ["handed-off", "no-op"].includes(previous.state.prewalk.status)
         ? previous.state.prewalk.target
         : previous.input.model;
-    const next = this.admit(
-      [
-        {
-          ...input,
-          model: retained ?? input.model,
-          profile,
-          skills: input.skills.filter((skill) => profile.skills.includes(skill.filePath)),
-          resultSchema:
-            input.resultSchema === undefined ? previous.input.resultSchema : input.resultSchema,
-          limits: narrowLimits(previous.state.limits, input.limits ?? {}),
-        },
-      ],
-      ref,
+    const next = (
+      await this.admit(
+        [
+          {
+            ...input,
+            model: retained ?? input.model,
+            profile,
+            skills: input.skills.filter((skill) => profile.skills.includes(skill.filePath)),
+            resultSchema:
+              input.resultSchema === undefined ? previous.input.resultSchema : input.resultSchema,
+            limits: narrowLimits(previous.state.limits, input.limits ?? {}),
+          },
+        ],
+        ref,
+        signal,
+      )
     )[0];
     if (previous.state.prewalk && previous.state.prewalk.status !== "armed")
       this.update(this.entry(next), { prewalk: previous.state.prewalk });
@@ -899,9 +1014,11 @@ export class DelegationCoordinator {
           ? entry.state.id
           : `${entry.state.id}-g${entry.state.generation}`,
       );
-      await mkdir(taskDir); // exclusive ownership: never reuse an existing task record
+      await mkdir(taskDir, { mode: 0o700 }); // exclusive ownership: never reuse an existing task record
       const agentDir = join(taskDir, "agent");
-      await mkdir(agentDir);
+      await mkdir(agentDir, { mode: 0o700 });
+      const transcriptDir = join(taskDir, "transcripts");
+      await mkdir(transcriptDir, { mode: 0o700 });
       const target =
         entry.state.prewalk?.status === "armed"
           ? validateModelSelection(input.context, entry.state.prewalk.target)
@@ -1042,26 +1159,16 @@ export class DelegationCoordinator {
             if (!input.context.tools.some((tool) => tool.name === name))
               throw new Error(`Admitted parent tool is no longer callable: ${name}`);
             const builtin = input.profile.tools.includes(name as BuiltinTool);
-            // Re-read configuration for this generation and every ancestor before dispatch.
-            let current: Entry | undefined = entry;
-            while (current) {
-              const { profile } = await resolveProfile(
-                current.input.profile.name,
-                input.context.cwd,
-                input.context.isProjectTrusted(),
-                undefined,
-                current.input.availableSkills?.() ?? current.input.skills,
-              );
-              if (
+            await this.authorize(
+              entry.state,
+              (profile) =>
                 builtin
-                  ? !profile.tools.includes(name as BuiltinTool)
-                  : !profile.leafTools?.includes(name)
-              )
-                throw new Error(`Current capability grant revoked: ${name}`);
-              current = current.input.parent ? this.entry(current.input.parent) : undefined;
-            }
-            if (entry.cancelled || entry.paused || this.closing)
-              throw new Error("Delegation cancelled");
+                  ? profile.tools.includes(name as BuiltinTool)
+                  : !!profile.leafTools?.includes(name),
+              `Current capability grant revoked: ${name}`,
+            );
+            this.assertActive(entry);
+            signal?.throwIfAborted();
             if (builtin) input.assertTools([name]);
             else {
               const metadata = input.toolMetadata?.().find((tool) => tool.name === name);
@@ -1185,7 +1292,7 @@ export class DelegationCoordinator {
           compaction: { enabled: false },
           retry: { enabled: false },
         }),
-        sessionManager: SessionManager.create(selection.cwd, join(taskDir, "transcripts")),
+        sessionManager: SessionManager.create(selection.cwd, transcriptDir),
       });
       entry.session = session;
       if (session.thinkingLevel !== selection.thinkingLevel)
@@ -1377,7 +1484,10 @@ export class DelegationCoordinator {
   private key(ref?: ChildRef): string {
     return ref ? `${ref.id}/${ref.generation}` : "root";
   }
-  private actor(ref: ChildRef | undefined, action: CoordinationAction): Entry | undefined {
+  private async actor(
+    ref: ChildRef | undefined,
+    action: CoordinationAction,
+  ): Promise<Entry | undefined> {
     if (this.closing) throw new Error("Parent shut down");
     if (!ref) return;
     const actor = this.entry(ref);
@@ -1385,6 +1495,12 @@ export class DelegationCoordinator {
       throw new Error("Sender is no longer running");
     if (!actor.input.profile.coordination?.includes(action))
       throw new Error(`Coordination action denied: ${action}`);
+    await this.authorize(
+      ref,
+      (profile) => !!profile.coordination?.includes(action),
+      `Coordination action denied: ${action}`,
+    );
+    if (actor.state.status !== "running") throw new Error("Sender is no longer running");
     return actor;
   }
   private target(actor: Entry | undefined, ref: ChildRef): Entry {
@@ -1409,8 +1525,11 @@ export class DelegationCoordinator {
       throw new Error("Coordination target outside granted family");
     return target;
   }
-  inbox(actor?: ChildRef): DelegationMessage[] {
-    this.actor(actor, "inbox");
+  async inbox(actor?: ChildRef, signal?: AbortSignal): Promise<DelegationMessage[]> {
+    const sender = await this.actor(actor, "inbox");
+    if (sender) this.assertActive(sender);
+    if (this.closing) throw new Error("Parent shut down");
+    signal?.throwIfAborted();
     return this.takeInbox(actor);
   }
   async message(
@@ -1418,8 +1537,12 @@ export class DelegationCoordinator {
     target: ChildRef | undefined,
     text: string,
     mode: "inbox" | "steer" | "followUp" = "inbox",
+    signal?: AbortSignal,
   ): Promise<DelegationMessage> {
-    const sender = this.actor(actor, "message");
+    const sender = await this.actor(actor, "message");
+    if (sender) this.assertActive(sender);
+    if (this.closing) throw new Error("Parent shut down");
+    signal?.throwIfAborted();
     if (typeof text !== "string" || !text.trim() || Buffer.byteLength(text) > MAX_MESSAGE_BYTES)
       throw new Error("Message requires 1–4096 UTF-8 bytes");
     if (!target && !sender) throw new Error("Root cannot message itself");
@@ -1484,7 +1607,10 @@ export class DelegationCoordinator {
     signal?: AbortSignal,
     messageId?: string,
   ): Promise<CoordinationWait> {
-    const sender = this.actor(actor, "wait");
+    const sender = await this.actor(actor, "wait");
+    if (sender) this.assertActive(sender);
+    if (signal?.aborted) return { status: "cancelled" };
+    if (this.closing) return { status: "shutdown" };
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_WAIT_MS)
       throw new Error("Wait timeout must be 1–60000ms");
     if (this.waiterCount >= MAX_WAITERS) throw new Error("Parent waiter limit");
@@ -1620,16 +1746,15 @@ export class DelegationCoordinator {
     this.notifyCoordination();
     return structuredClone(messages);
   }
-  taskInputRead(ref: ChildRef): void {
+  async taskInputRead(ref: ChildRef, signal?: AbortSignal): Promise<void> {
+    await this.authorize(
+      ref,
+      (profile) => profile.tools.includes("read"),
+      "Delegating parent has no active read grant",
+    );
     const entry = this.entry(ref);
-    if (
-      entry.cancelled ||
-      entry.paused ||
-      entry.state.disposed ||
-      this.closing ||
-      !entry.input.profile.tools.includes("read")
-    )
-      throw new Error("Delegating parent has no active read grant");
+    this.assertActive(entry);
+    signal?.throwIfAborted();
     if (entry.state.toolCalls >= entry.state.limits.tools) {
       this.limit(entry, "tools");
       throw new Error("Tool call limit");

@@ -156,7 +156,7 @@ test(
     try {
       const warmup = await f.direct("warmup", "implementation");
       await f.coordinator.wait(warmup);
-      const [first, second] = f.coordinator.admit([
+      const [first, second] = await f.coordinator.admit([
         { ...admission(), assignment: "writer" },
         { ...admission(), assignment: "queued writer" },
       ]);
@@ -221,7 +221,7 @@ test("real SDK selected generation retains full outcomes/transcript/artifacts ac
   const admission = await captureAdmission(t, f);
   const warmup = await f.direct("warmup", "scout");
   await f.coordinator.wait(warmup);
-  const [ref] = f.coordinator.admit([
+  const [ref] = await f.coordinator.admit([
     {
       ...admission(),
       assignment: "original",
@@ -251,7 +251,7 @@ test("real SDK selected generation retains full outcomes/transcript/artifacts ac
     render();
     hub.handleInput!("\x1b[B");
     render(); // pin original, not the warmup
-    const next = f.coordinator.renew(ref, { ...admission(), assignment: "successor" });
+    const next = await f.coordinator.renew(ref, { ...admission(), assignment: "successor" });
     await f.coordinator.wait(next);
     assert.match(render(), /> └ original/);
     assert.doesNotMatch(render(), /#1/, "generation badge is not shown in the roster");
@@ -319,7 +319,7 @@ test(
     try {
       const warmup = await f.direct("warmup", "scout");
       await f.coordinator.wait(warmup);
-      const [first, second] = f.coordinator.admit([
+      const [first, second] = await f.coordinator.admit([
         { ...admission(), assignment: "first" },
         { ...admission(), assignment: "second" },
       ]);
@@ -349,7 +349,7 @@ test(
       assert.match(render(), /no longer running; no action sent/);
       assert.equal(f.model.state.callCount, calls);
       assert.equal(f.coordinator.snapshot(second)!.status, "running");
-      assert.throws(
+      await assert.rejects(
         () => f.coordinator.inbox(second),
         /denied/,
         "child inbox is default-off; operator cannot impersonate it",

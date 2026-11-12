@@ -410,13 +410,26 @@ test("actual running identities reject self/cycle/queued waits and stop wakes a 
   const c = await f.direct("queued");
   await assert.rejects(f.coordinator.coordinateWait(a, a, 60000), /Self wait/);
   await assert.rejects(f.coordinator.coordinateWait(a, c, 60000), /queued work/);
-  const waiting = f.coordinator.coordinateWait(a, b, 60000);
-  await assert.rejects(f.coordinator.coordinateWait(b, a, 60000), /cycle/);
+  // Fresh policy loads may complete in either order; exactly one opposing wait
+  // must reject the cycle, and stopping the admitted sender must wake its waiter.
+  const wait = (sender: ChildRef, target: ChildRef) =>
+    f.coordinator.coordinateWait(sender, target, 60000).then(
+      (value) => ({ sender, value, error: undefined }),
+      (error: unknown) => ({ sender, value: undefined, error }),
+    );
+  const waiting = [wait(a, b), wait(b, a)];
+  const rejected = await Promise.race(waiting);
+  assert.match(String(rejected.error), /cycle/);
+  const admitted = rejected.sender.id === a.id ? b : a;
   await assert.rejects(f.coordinator.message({ ...a, generation: 99 }, b, "spoof"), /stale/);
-  await f.coordinator.stop(a);
-  assert.deepEqual(await waiting, { status: "cancelled" });
-  assert.equal(f.coordinator.snapshot(b)!.disposed, false);
-  await f.coordinator.stopMany([b, c]);
+  await f.coordinator.stop(admitted);
+  const results = await Promise.all(waiting);
+  assert.deepEqual(results.find((result) => result.sender.id === admitted.id)!.value, {
+    status: "cancelled",
+  });
+  assert.equal(results.filter((result) => result.error !== undefined).length, 1);
+  assert.equal(f.coordinator.snapshot(rejected.sender)!.disposed, false);
+  await f.coordinator.stopMany([rejected.sender, c]);
 });
 
 test("concurrent real root revive calls admit only one fresh generation and revalidate removed model auth", async (t) => {
@@ -512,7 +525,7 @@ test("bounded mailbox/input/retention with actual running SDK recipient", async 
         receipts[0].id,
       );
       await assert.rejects(f.coordinator.message(undefined, child, "overflow"), /limit/);
-      const messages = f.coordinator.inbox(child);
+      const messages = await f.coordinator.inbox(child);
       assert.equal(messages.length, 64);
       assert.ok(messages.every((message) => message.status === "delivered"));
       assert.equal(

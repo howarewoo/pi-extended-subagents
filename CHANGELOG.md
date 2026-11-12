@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Create new task/generation, agent and transcript directories with private POSIX mode `0700`, preserving exclusive creation and `0600` outcome artifacts. Existing records and parent/global storage permissions are unchanged; Windows access control remains dependent on filesystem ACLs.
+- Enforce live initiator/ancestor grant revocation for nested task-file reads, spawning and coordination before protected effects; malformed policy fails closed. Already in-flight work and accepted mailbox effects are not rolled back.
+
 ### Release isolation
 
 - Separate release validation, human-protected npm publication and GitHub release creation into jobs with distinct credentials. Publish only the exact smoke-tested tarball after mandatory SHA-512 and release-identity verification; suppress npm lifecycle scripts.
