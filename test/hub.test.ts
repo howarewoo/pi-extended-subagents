@@ -602,6 +602,47 @@ test("Hub opens with agents on the left and the selected full thread on the righ
   }
 });
 
+test("Hub roster aligns profile and status beneath each name at every nesting depth", (t) => {
+  const coordinator = new DelegationCoordinator("unused", "root");
+  const children = [1, 2, 3, 8].map((depth) =>
+    snapshot(`agent-${depth}`, { assignment: `Agent ${depth}`, depth }),
+  );
+  t.mock.method(coordinator, "list", () => children);
+  t.mock.method(coordinator, "messages", () => []);
+  const hub = createHub(
+    coordinator,
+    theme,
+    effectiveKeys,
+    () => {},
+    () => {},
+    dependencies,
+    () => 27,
+  );
+  try {
+    for (const width of [76, 90, 120]) {
+      for (let selected = 0; selected < children.length; selected++) {
+        const rows = hub.render(width).map(stripAnsi);
+        for (const child of children) {
+          const index = rows.findIndex((row) =>
+            row.split("│")[1]?.includes(`└ Agent ${child.depth}`),
+          );
+          assert.ok(index >= 0);
+          const name = rows[index].split("│")[1];
+          const details = rows[index + 1].split("│")[1];
+          assert.equal(details.indexOf("scout"), name.indexOf("Agent"));
+          assert.match(details, /scout · running/);
+          assert.doesNotMatch(name, /scout/, "profile belongs on its own line, not twice");
+          assert.equal(visibleWidth(rows[index]), width);
+          assert.equal(visibleWidth(rows[index + 1]), width);
+        }
+        hub.handleInput!("\x1b[B");
+      }
+    }
+  } finally {
+    hub.dispose();
+  }
+});
+
 test("Hub full thread preserves role/thinking/tool/error text, isolates ANSI and holds reading position through streamed deltas", (t) => {
   const coordinator = new DelegationCoordinator("unused", "root");
   const child = snapshot("content");
@@ -807,7 +848,14 @@ test("Hub prefilled filter editing starts at the native Input end after an empty
     hub.handleInput!(" beta");
     hub.handleInput!("\r");
     assert.match(output(), /Filter: alpha beta · 1 generations/);
-    assert.match(output(), /> └ alpha beta.*scout #1/);
+    assert.match(output(), /> └ alpha beta/);
+    assert.match(output(), /scout · running/);
+    assert.doesNotMatch(output(), /#\d+/, "wide roster and heading hide generation numbers");
+    assert.doesNotMatch(
+      stripAnsi(hub.render(60).join("\n")),
+      /#\d+/,
+      "narrow selection hides generation numbers",
+    );
     hub.handleInput!("/");
     hub.handleInput!("\x15");
     hub.handleInput!("alpha");
@@ -891,7 +939,7 @@ for (const action of ["stop", "steer", "message"] as const) {
         "a newly opened but not yet displayed target cannot authorize dispatch",
       );
       const short = render();
-      assert.match(short, /beta · scout #9/);
+      assert.match(short, /beta · scout · running/);
       assert.ok(
         short.includes(`Target: ${a} #7`),
         "full pinned identity must outrank filter/status hints at height 8",

@@ -7,7 +7,7 @@ Delegate work to subagents in Pi, follow their progress, and steer or stop them 
 
 ![Terminal illustration of Subagent Hub with a four-task list on the left and the selected Reader alpha conversation on the right, including a native read-tool result containing synthetic input.](docs/images/subagent-hub.svg)
 
-_Subagent Hub: tasks and conversations side by side, with a full-width rule above the footer. Illustrated with synthetic demo data._
+_Subagent Hub: tasks and conversations side by side, with each profile and status aligned beneath its agent’s name. Illustrated with synthetic demo data._
 
 ## Installation
 

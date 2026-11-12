@@ -641,7 +641,7 @@ export function createHub(
               ? "success"
               : "accent";
       const selectedLabel = child
-        ? `${agentLabel(child)} #${child.generation} · ${child.status}${historical(child) ? " · history" : ""}`
+        ? `${agentLabel(child)} · ${child.status}${historical(child) ? " · history" : ""}`
         : "No selection";
       const viewLabel = `${tab.toUpperCase()} · Tab: ${tab === "thread" ? "details" : tab === "details" ? "tools" : "thread"}`;
       const position = `${tab === "thread" ? (following ? "LIVE · " : "READING · ") : ""}${offset + 1}–${Math.min(wrapped.length, offset + viewport)}/${wrapped.length} lines${tab === "thread" ? (following ? " · k/PgUp read" : " · End: live") : offset < maxOffset ? " · more ↓" : ""}`;
@@ -651,16 +651,21 @@ export function createHub(
         const start = Math.max(0, index - slots + 1);
         const left = [
           theme.fg("accent", `SUBAGENTS · ${children.length} generations`),
-          ...children
-            .slice(start, start + slots)
-            .flatMap((item) => [
+          ...children.slice(start, start + slots).flatMap((item) => {
+            const indent = " ".repeat(Math.min(4, Math.max(0, item.depth - 1)));
+            const prefix = `${identity(item) === selected ? ">" : " "} ${indent}└ `;
+            return [
               theme.fg(
                 identity(item) === selected ? "accent" : "text",
-                `${identity(item) === selected ? ">" : " "} ${" ".repeat(Math.min(4, Math.max(0, item.depth - 1)))}└ ${agentLabel(item)} #${item.generation}${historical(item) ? " · history" : ""}`,
+                `${prefix}${assignmentHeadline(item)}${historical(item) ? " · history" : ""}`,
               ),
-              theme.fg(statusColor(item), `  ${item.profile} · ${item.status}`),
-              theme.fg("muted", `  #${item.generation}${historical(item) ? " · history" : ""}`),
-            ]),
+              theme.fg(
+                statusColor(item),
+                `${" ".repeat(visibleWidth(prefix))}${lineText(item.profile)} · ${item.status}`,
+              ),
+              "", // Separate agents without exposing internal generation numbers.
+            ];
+          }),
         ];
         const right = [
           theme.fg("accent", lineText(selectedLabel)),
@@ -689,7 +694,7 @@ export function createHub(
               ),
           );
       } else {
-        const suffix = child ? ` #${child.generation} · ${index + 1}/${children.length}` : "";
+        const suffix = child ? ` · ${index + 1}/${children.length}` : "";
         pane.push(
           theme.fg(
             "accent",

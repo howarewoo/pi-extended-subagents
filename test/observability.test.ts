@@ -251,7 +251,8 @@ test("real SDK selected generation retains full outcomes/transcript/artifacts ac
     render(); // pin original, not the warmup
     const next = f.coordinator.renew(ref, { ...admission(), assignment: "successor" });
     await f.coordinator.wait(next);
-    assert.match(render(), /> └ original.*#1/);
+    assert.match(render(), /> └ original/);
+    assert.doesNotMatch(render(), /#1/, "generation badge is not shown in the roster");
     hub.handleInput!("\x1b[F");
     assert.match(render(), /structured original/);
     assert.match(render(), /final original/);
