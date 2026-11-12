@@ -1,3 +1,4 @@
+import { requireSupportedHost } from "./supported-host.ts";
 import {
   leafDenial,
   toolProvenance,
@@ -391,6 +392,7 @@ export class DelegationCoordinator {
   }
   /** Whole-batch synchronous validation precedes registry insertion, disk setup or dispatch. */
   admit(inputs: StartTask[], replacement?: ChildRef): ChildRef[] {
+    requireSupportedHost();
     const previous = replacement ? this.entry(replacement) : undefined;
     inputs = inputs.map((input) => {
       const cwd = resolveWorkspace(
@@ -612,6 +614,7 @@ export class DelegationCoordinator {
     return parent && { id: parent.id, generation: parent.generation };
   }
   renew(ref: ChildRef, input: StartTask): ChildRef {
+    requireSupportedHost();
     const previous = this.entry(ref);
     this.renewalParent(ref);
     const profile = intersectProfileGrants(input.profile, previous.input.profile);
@@ -737,6 +740,7 @@ export class DelegationCoordinator {
   }
   /** Continue a drained window without replacing the identity or SDK conversation. */
   async resume(ref: ChildRef, text: string): Promise<ChildRef> {
+    requireSupportedHost();
     const entry = this.entry(ref);
     if (entry.resuming || entry.state.status !== "paused" || entry.cancelled || this.closing)
       throw new Error("Resume requires a drained paused assignment; duplicate resume rejected");
@@ -1419,6 +1423,7 @@ export class DelegationCoordinator {
     text: string,
     mode: "inbox" | "steer" | "followUp" = "inbox",
   ): Promise<DelegationMessage> {
+    if (mode !== "inbox") requireSupportedHost();
     const sender = this.actor(actor, "message");
     if (typeof text !== "string" || !text.trim() || Buffer.byteLength(text) > MAX_MESSAGE_BYTES)
       throw new Error("Message requires 1–4096 UTF-8 bytes");
@@ -1637,6 +1642,7 @@ export class DelegationCoordinator {
     this.update(entry, { toolCalls: entry.state.toolCalls + 1 });
   }
   async steer(ref: ChildRef, text: string): Promise<"queued" | "handled"> {
+    requireSupportedHost();
     const entry = this.entry(ref);
     if (!text.trim()) throw new Error("Nonempty steering text is required");
     if (entry.state.status !== "running" || entry.cancelled) throw new Error("No running child");

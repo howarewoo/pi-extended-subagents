@@ -2,6 +2,23 @@
 
 Reference for operators and extension/UI consumers. Authoritative types and execution registry: [`src/coordinator.ts`](../src/coordinator.ts); profiles/grants: [`src/profiles.ts`](../src/profiles.ts); finite policy: [`src/scheduling.ts`](../src/scheduling.ts); public model/auth adapter: [`src/model-adapter.ts`](../src/model-adapter.ts); model tool/lifecycle: [`src/pi-extended-subagents.ts`](../src/pi-extended-subagents.ts). The native interfaces remain supported alongside the bounded orchestration compatibility surface below; this is not full OMP/pi-subagents API parity.
 
+## Supported host
+
+Delegated execution requires **exactly Pi 1.5.2**, checked through the SDK's public `VERSION`
+export. Older, newer, prerelease and unknown versions fail closed before launch/preflight
+content reads, child identity allocation, task-directory setup or child model requests.
+This covers `delegate_task`, compatibility `subagent` launches, resume, followup, revive,
+steering/model-delivering messages and direct coordinator execution. Public tool arguments
+and results are unchanged; unsupported execution errors name the detected and supported versions.
+
+Registration is not rejected wholesale: root status, stop, cleanup and diagnostics remain
+available where the host can load the extension. This does not promise module-load
+compatibility with arbitrary ancient SDKs. Required `"*"` host peer ranges follow Pi's
+packaging contract, not the execution support window; development SDK packages remain pinned.
+To migrate, let active tasks drain, install Pi 1.5.2 and restart Pi. Do not independently
+upgrade the host until an explicitly supported baseline is released. Treat this restriction
+as breaking in the next minor release during 0.x; no package version change is included here.
+
 ## Native orchestration compatibility
 
 The model-only `subagent` tool is registered and described through Pi's public `promptSnippet`/`promptGuidelines` at startup. These describe native worker delegation to the model without requiring any external workflow package or provider-specific user reminder. With an explicit tool allowlist, include `subagent`. Load only one provider of that name: Pi uses the first registered extension, and this package does not disable, reprioritize or uninstall other providers.

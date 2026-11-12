@@ -15,10 +15,17 @@ The repository workflows do not publish on ordinary main-branch pushes.
   user-facing contracts. A small implementation change can still require a breaking release.
 - This pipeline publishes stable versions to npm's `latest` channel. Prerelease versions
   are rejected until a separate channel policy is added.
-- The current tested host is Pi 1.5.2. Wildcard host peer dependencies follow Pi's packaging
-  requirements; they do not promise compatibility with every Pi version. Keep host development
-  dependencies pinned and verify SDK/CLI lifecycle, permission, cancellation/drain and native
-  rendering behavior before changing the documented Pi baseline.
+- Delegated execution supports **exactly Pi 1.5.2**. Older, newer, prerelease and unknown
+  hosts fail closed at execution boundaries, not extension registration. Root status,
+  stop/cleanup and diagnostics remain available if the host can load the module; arbitrary
+  ancient SDK module-load compatibility is not promised. Wildcard host peer dependencies
+  remain required by Pi's packaging format, not an execution compatibility promise.
+- This host restriction is breaking and must ship in the next minor release during 0.x,
+  not as a compatible patch. No version bump is part of the restriction change. Migration:
+  drain active tasks, install Pi 1.5.2 and restart Pi; do not independently upgrade the host
+  until a supported baseline is released. Keep host development dependencies pinned and
+  verify SDK/CLI lifecycle, permission, cancellation/drain and native rendering behavior
+  before changing the exact supported Pi version.
 - Never move a release tag, reuse a published version or overwrite retained user artifacts.
 
 ## One-time setup

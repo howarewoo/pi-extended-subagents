@@ -1,3 +1,4 @@
+import { requireSupportedHost } from "./supported-host.ts";
 import { createProfileViewer, resolvedProfiles, profileToolPolicy } from "./profile-viewer.ts";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { EFFORTS, sameSelection } from "./model-policy.ts";
@@ -280,6 +281,7 @@ export default function delegation(pi: ExtensionAPI) {
       };
     },
     async execute(callerId, args, signal, onUpdate, localContext) {
+      requireSupportedHost();
       const ctx = rootContext ?? localContext;
       const owner = coordinator;
       if (parent && args.background)
@@ -466,6 +468,7 @@ export default function delegation(pi: ExtensionAPI) {
       "Live-parent identity-pinned coordination. message targets a running family agent (omit target for root inbox, direct children only); inbox reads own bounded mailbox; wait targets an outcome or own inbox with required 1–60000ms timeout, retaining capacity. No transcript access. Child actions require explicit operator grants. Root additionally has status/stop/park, paused resume (assignment is the appended continuation), and idle followup/parked revive. Resume retains identity and full context, resets only the deadline window, and requires explicit child resumes after parent resume. Followup/revive create a fresh generation/session with current model/auth and narrowed current grants, no old tool replay or historical recovery. Message accepted/queued is NOT model acknowledgment; delivered means transcript/inbox visibility only. 4096-byte messages, 64 mailbox/waiters, 512 messages and 64 generations per live parent.",
     parameters: coordinationParameters,
     async execute(callerId, args, signal, _update, ctx) {
+      if (["resume", "followup", "revive"].includes(args.action)) requireSupportedHost();
       const registry = owner ?? coordinator;
       signal?.throwIfAborted();
       let value: unknown;
@@ -633,6 +636,8 @@ export default function delegation(pi: ExtensionAPI) {
       "Native delegation for orchestration and coding task owners. Launch {agent,task,cwd?,model?,async?} or an ordered {tasks:[...],async?,cwd?} batch. worker maps explicitly to the implementation profile; unknown/custom agent names reject. Model strings require exact provider/id[:effort] and operator grants. Actions: agents, list, status/stop with exact returned id, steer/resume with id and message. Uses the same registry, parent permissions, limits and global writer lease as delegate_task. Existing workspaces only: file paths and shell cwd are explicitly adapted through root builtin hooks. No automatic worktree creation/commits/apply/deletion, detached survival, script workflows or blanket competing API parity. Do not load another provider of the subagent tool alongside this extension.",
     parameters: compatibleParameters,
     async execute(callerId, args, signal, onUpdate, ctx) {
+      if (!("action" in args) || args.action === "resume" || args.action === "steer")
+        requireSupportedHost();
       const owner = coordinator;
       if (!("action" in args)) {
         const items = "tasks" in args ? args.tasks : [args];

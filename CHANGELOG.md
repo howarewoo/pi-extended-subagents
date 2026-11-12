@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Breaking — next minor release
+
+- Require exactly Pi 1.5.2 for delegated execution, including native and compatibility launches, resume, followup, revive and direct coordinator execution. Older, newer, prerelease and unknown versions reject before task-file reads, child allocation, task-directory setup or child model requests, with an error naming detected and supported versions.
+- Keep required wildcard host peers and pinned SDK development packages unchanged. Wildcard peers are a Pi packaging requirement, not a promise of support for every host. Root status, stop/cleanup and diagnostics remain usable where the host can load the extension; arbitrary ancient SDK module-load compatibility is not promised.
+- Migration: let active tasks drain, install Pi 1.5.2 and restart Pi. Check this restriction before updating Pi independently. Treat this as breaking in the next 0.x minor release; no package version bump is included here.
+
 ## [0.1.1]
 
 ### Scoped npm package
