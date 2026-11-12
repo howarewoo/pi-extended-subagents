@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Compact collapsed Delegate results to task headlines and statuses, keeping error and pause reasons visible. Use Pi’s global tool-output toggle (`Ctrl+O` by default, or the configured binding) to reveal detailed cards; model-facing results, saved artifacts and Subagent Hub behavior are unchanged.
+
 - Remove persistent writer warnings from the pinned Subagents widget and Subagent Hub footer, freeing space for task activity. Keep the coordination caveat in Hub Details and the README; writer serialization is unchanged.
 - Remove unused provider-secret bindings and credential examples from the Pullfrog workflow while retaining its OIDC App token integration.
 - Create new task/generation, agent and transcript directories with private POSIX mode `0700`, preserving exclusive creation and `0600` outcome artifacts. Existing records and parent/global storage permissions are unchanged; Windows access control remains dependent on filesystem ACLs.
