@@ -5,9 +5,9 @@
 
 Delegate work to subagents in Pi, follow their progress, and steer or stop them from Subagent Hub. Subagents use your selected model by default, with their own assignments and explicit tool grants.
 
-![Terminal illustration of the pinned Subagents widget showing 48 tasks: 16 running and 32 queued, with an activity preview and an overflow link to Subagent Hub.](docs/images/subagent-widget.svg)
+![Terminal illustration of the pinned Subagents widget showing 48 tasks: 16 running and 32 queued, with a hidden nested-agent summary and an overflow link to Subagent Hub.](docs/images/subagent-widget.svg)
 
-_Pinned Subagents widget at default capacity: 16 running tasks and 32 queued. Counts and recent activity stay visible above the editor. Synthetic demo data, not a live load test._
+_Pinned Subagents widget at default capacity: 16 running tasks and 32 queued. Counts and nested-agent progress stay visible above the editor. Synthetic demo data, not a live load test._
 
 ## Installation
 

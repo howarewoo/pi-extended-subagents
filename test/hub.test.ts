@@ -10,6 +10,7 @@ import {
   oklchColor,
   styleText,
   visibleWidth,
+  truncateToWidth,
   getKeybindings,
   setKeybindings,
   KeybindingsManager,
@@ -21,6 +22,7 @@ import {
   type ThemeStyle,
 } from "@earendil-works/pi-coding-agent";
 import { fixture } from "./fixtures.ts";
+import { taskTree } from "../src/task-presentation.ts";
 
 initTheme("dark", false);
 const dependencies = { tui: new TuiMainScreen(new ProcessTerminal()), cwd: process.cwd() };
@@ -375,12 +377,12 @@ test("Hub selection survives streaming/new completion; search, tabs, full transc
     () => 20,
   );
   const output = () => stripAnsi(hub.render(100).join("\n"));
-  assert.match(output(), /> └ inspect first/);
+  assert.match(output(), /> [├└] ● inspect first/);
   hub.handleInput!("\x1b[B");
-  assert.match(output(), /> └ inspect second/);
+  assert.match(output(), /> [├└] ● inspect second/);
   children = [...children, snapshot("new", { status: "settled", disposed: true })];
   listener!({ type: "changed", child: children[2] });
-  assert.match(output(), /> └ inspect second/);
+  assert.match(output(), /> [├└] ● inspect second/);
   assert.doesNotMatch(output(), /Direct requests/);
   assert.match(output(), /FULL LINE 99/);
   hub.handleInput!("\x1b[H");
@@ -412,8 +414,8 @@ test("Hub selection survives streaming/new completion; search, tabs, full transc
   hub.handleInput!("/");
   hub.handleInput!("first");
   hub.handleInput!("\r");
-  assert.match(output(), /> └ inspect first/);
-  assert.doesNotMatch(output(), /└ inspect second/);
+  assert.match(output(), /> [├└] ● inspect first/);
+  assert.doesNotMatch(output(), /[├└] ● inspect second/);
   hub.handleInput!("\r");
   hub.handleInput!("\x1b");
   assert.equal(closed, 2);
@@ -650,7 +652,7 @@ for (const action of ["steer", "stop", "message"] as const) {
       hub.handleInput!("\r");
       begin();
       children[0] = { ...children[0], status: "settled", disposed: true };
-      assert.match(render(), /> └ inspect B/, "ordinary roster fallback still works");
+      assert.match(render(), /> [├└] ● inspect B/, "ordinary roster fallback still works");
       assert.match(render(), /Target: A #7/, "confirmation/input still identifies original target");
       await submit();
       assert.deepEqual(lookups, [{ id: "A", generation: 7 }]);
@@ -740,7 +742,7 @@ test("Hub opens with agents on the left and the selected full thread on the righ
     const adjacent = wide.find((line) => line.includes("AGENTS") && line.includes("Assignment 0"));
     assert.ok(adjacent, "selection heading and selected identity must share the same physical row");
     assert.ok(
-      wide.some((line) => line.includes("> └ Assignment 0") && line.includes("THREAD")),
+      wide.some((line) => /> [├└] ● Assignment 0/.test(line) && line.includes("THREAD")),
       "left roster and right view must be adjacent",
     );
     assert.match(wide.join("\n"), /agent-0 THREAD LINE 89/);
@@ -757,13 +759,13 @@ test("Hub opens with agents on the left and the selected full thread on the righ
       "thread scrolling must not scroll the roster",
     );
     for (let index = 0; index < 10; index++) hub.handleInput!("\x1b[B");
-    assert.match(render().join("\n"), /> └ Assignment 10/);
+    assert.match(render().join("\n"), /> [├└] ● Assignment 10/);
     assert.match(render().join("\n"), /agent-10 THREAD LINE 89/);
     rows = 14;
     const narrow = render(36);
     assert.ok(narrow.every((line) => visibleWidth(line) === 36));
     assert.ok(narrow.length <= rows);
-    assert.match(narrow.join("\n"), /> └ Assignment 10/);
+    assert.match(narrow.join("\n"), /> [├└] ● Assignment 10/);
     assert.match(narrow.join("\n"), /THREAD LINE 89/);
     assert.doesNotMatch(narrow.join("\n"), /AGENTS/);
   } finally {
@@ -774,7 +776,7 @@ test("Hub opens with agents on the left and the selected full thread on the righ
 test("Hub roster aligns profile and status beneath each name at every nesting depth", (t) => {
   const coordinator = new DelegationCoordinator("unused", "root");
   const children = [1, 2, 3, 8].map((depth) =>
-    snapshot(`agent-${depth}`, { assignment: `Agent ${depth}`, depth }),
+    snapshot(`agent-${depth}`, { assignment: `A${depth}`, depth }),
   );
   t.mock.method(coordinator, "list", () => children);
   t.mock.method(coordinator, "messages", () => []);
@@ -791,15 +793,31 @@ test("Hub roster aligns profile and status beneath each name at every nesting de
     for (const width of [76, 90, 120]) {
       for (let selected = 0; selected < children.length; selected++) {
         const rows = hub.render(width).map(stripAnsi);
+        const leftWidth = Math.min(32, Math.max(24, Math.floor((width - 4) / 3)));
         for (const child of children) {
           const index = rows.findIndex((row) =>
-            row.split("│")[1]?.includes(`└ Agent ${child.depth}`),
+            row.slice(2, 2 + leftWidth).includes(`A${child.depth}`),
           );
           assert.ok(index >= 0);
-          const name = rows[index].split("│")[1];
-          const details = rows[index + 1].split("│")[1];
-          assert.equal(details.indexOf("scout"), name.indexOf("Agent"));
-          assert.match(details, /scout · running/);
+          const name = rows[index].slice(2, 2 + leftWidth);
+          const details = rows[index + 1].slice(2, 2 + leftWidth);
+          const parentColumn = rows
+            .find((row) => row.slice(2, 2 + leftWidth).includes("A1"))!
+            .slice(2)
+            .indexOf("A");
+          assert.equal(
+            name.indexOf("A") - parentColumn,
+            Math.min(3, child.depth - 1) * 4,
+            "nested names advance four columns per level, capped at three levels",
+          );
+          assert.equal(details.indexOf("sco"), name.indexOf("A"));
+          assert.equal(
+            details.replaceAll("│", " ").trim(),
+            stripAnsi(
+              truncateToWidth(" ".repeat(name.indexOf("A")) + "scout · running", leftWidth),
+            ).trim(),
+            "details remain aligned and truncate only at the pane boundary",
+          );
           assert.doesNotMatch(name, /scout/, "profile belongs on its own line, not twice");
           assert.equal(visibleWidth(rows[index]), width);
           assert.equal(visibleWidth(rows[index + 1]), width);
@@ -1017,7 +1035,7 @@ test("Hub prefilled filter editing starts at the native Input end after an empty
     hub.handleInput!(" beta");
     hub.handleInput!("\r");
     assert.match(output(), /Filter: alpha beta · 1 generations/);
-    assert.match(output(), /> └ alpha beta/);
+    assert.match(output(), /> [├└] ● alpha beta/);
     assert.match(output(), /scout · running/);
     assert.doesNotMatch(output(), /#\d+/, "wide roster and heading hide generation numbers");
     assert.doesNotMatch(
@@ -1225,7 +1243,7 @@ test("human assignment/role labels distinguish same-role agents without changing
   const output = () => stripAnsi(hub.render(90).join("\n"));
   try {
     const initial = output();
-    assert.match(initial, /> └ Audit parser/);
+    assert.match(initial, /> [├└] ● Audit parser/);
     assert.match(initial, /Audit scheduler/);
     assert.doesNotMatch(initial, /aaaaaaaa|bbbbbbbb|Full original assignment/);
     const widget = createChildWidget(
@@ -1246,8 +1264,8 @@ test("human assignment/role labels distinguish same-role agents without changing
     hub.handleInput!("/");
     hub.handleInput!(b.id);
     hub.handleInput!("\r");
-    assert.match(output(), /> └ Audit scheduler/);
-    assert.doesNotMatch(output(), /> └ Audit parser/);
+    assert.match(output(), /> [├└] ● Audit scheduler/);
+    assert.doesNotMatch(output(), /> [├└] ● Audit parser/);
   } finally {
     hub.dispose();
   }
@@ -1401,7 +1419,7 @@ test("Hub normalized wheel is contained to its reading viewport, never the roste
       before,
       "roster wheel must be contained without changing selection or thread",
     );
-    assert.match(output(), /> └ inspect one/);
+    assert.match(output(), /> [├└] ● inspect one/);
     const rendered = before.split("\n");
     const separatorY = rendered.findIndex((line) => line.startsWith("├"));
     assert.equal(separatorY, 23);
@@ -1425,6 +1443,198 @@ test("Hub normalized wheel is contained to its reading viewport, never the roste
     assert.match(output(), /LIVE/);
   } finally {
     hub.dispose();
+  }
+});
+
+test("Hub status dots use lifecycle colors in the roster and compact header", (t) => {
+  const children = (["running", "failed", "cancelled", "settled"] as const).map((status) =>
+    snapshot(status, { assignment: status, status }),
+  );
+  const coordinator = new DelegationCoordinator("unused", "root");
+  t.mock.method(coordinator, "list", () => children);
+  t.mock.method(coordinator, "messages", () => []);
+  const dots: string[] = [];
+  const palette = {
+    ...theme,
+    fg: (color: string, text: string) => {
+      if (text === "● ") dots.push(color);
+      return text;
+    },
+  };
+  const hub = createHub(
+    coordinator,
+    palette,
+    effectiveKeys,
+    () => {},
+    () => {},
+    dependencies,
+    () => 27,
+  );
+  try {
+    hub.render(120);
+    assert.deepEqual(dots, ["accent", "error", "warning", "success"]);
+    dots.length = 0;
+    const narrow = hub.render(36).map(stripAnsi);
+    assert.deepEqual(dots, ["accent"]);
+    assert.match(narrow.join("\n"), /> └ ● running/);
+    assert.ok(narrow.every((row) => visibleWidth(row) === 36));
+  } finally {
+    hub.dispose();
+  }
+});
+
+test("family branches close at the last sibling and ancestor pipes span compact Hub and widget rows", (t) => {
+  const lead = snapshot("lead", { assignment: "Lead" });
+  const next = snapshot("next", { assignment: "Other" });
+  const nested = snapshot("nested", {
+    assignment: "Nested",
+    parentId: lead.id,
+    parentGeneration: 1,
+    depth: 2,
+  });
+  const children = [lead, next, nested];
+  assert.deepEqual(
+    taskTree(children).map(({ child, indent, last, continuation }) => [
+      child.id,
+      indent,
+      last,
+      continuation,
+    ]),
+    [
+      ["lead", "", false, "│   "],
+      ["nested", "│   ", true, "│       "],
+      ["next", "", true, "    "],
+    ],
+  );
+  const rows = createChildWidget(() => children, theme)
+    .render(120)
+    .map(stripAnsi);
+  assert.ok(rows[1].startsWith("├─ ● scout Lead"));
+  assert.ok(rows[2].startsWith("│  ├ Tool: read"));
+  assert.ok(rows[3].startsWith("│  └─ ● scout Nested"));
+  assert.ok(rows[4].startsWith("└─ ● scout Other"));
+
+  const coordinator = new DelegationCoordinator("unused", "root");
+  t.mock.method(coordinator, "list", () => children);
+  t.mock.method(coordinator, "messages", () => []);
+  const hub = createHub(
+    coordinator,
+    theme,
+    effectiveKeys,
+    () => {},
+    () => {},
+    dependencies,
+    () => 27,
+  );
+  try {
+    const left = hub
+      .render(120)
+      .map(stripAnsi)
+      .slice(2, 8)
+      .map((row) => row.slice(2, 34).trimEnd());
+    assert.deepEqual(left, [
+      "> ├ ● Lead",
+      "  │   scout · running",
+      "  │   └ ● Nested",
+      "  │       scout · running",
+      "  └ ● Other",
+      "      scout · running",
+    ]);
+  } finally {
+    hub.dispose();
+  }
+});
+
+test("tree connectors account for hidden siblings, exact parent generations and missing ancestors", () => {
+  const lead = snapshot("lead");
+  const a = snapshot("a", { parentId: lead.id, parentGeneration: 1, depth: 2 });
+  const b = snapshot("b", { parentId: lead.id, parentGeneration: 1, depth: 2 });
+  const next = snapshot("next");
+  const rows = taskTree([lead, next, a, b]);
+  assert.equal(rows[1].last, false);
+  assert.equal(rows[2].last, true);
+  assert.equal(rows[2].indent, "│   ");
+  const grandchild = snapshot("grandchild", { parentId: a.id, parentGeneration: 1, depth: 3 });
+  const deep = taskTree([lead, next, a, b, grandchild]);
+  assert.deepEqual(
+    deep.map(({ child }) => child.id),
+    ["lead", "a", "grandchild", "b", "next"],
+  );
+  assert.equal(deep[2].indent, "│   │   ", "both unfinished ancestor lanes continue");
+  assert.equal(deep[2].last, true);
+  const closed = taskTree([lead, a, grandchild]);
+  assert.equal(closed[2].indent, "        ", "completed ancestor lanes contain no pipes");
+  const widget = createChildWidget(() => [lead, next, a, b], theme)
+    .render(120)
+    .map(stripAnsi);
+  assert.ok(widget[1].startsWith("├─"), "the root lane continues to the overflow row");
+  assert.ok(
+    widget[2].startsWith("│  ├─"),
+    "the visible child continues to the hidden-child summary",
+  );
+  assert.equal(widget[3], "│  └─ 1 more nested subagent running");
+  assert.equal(widget[2].indexOf("├─"), 3, "widget lanes use exactly three columns");
+  assert.equal(widget[4], "└─ 2 more · /subagent-hub");
+  assert.equal(
+    taskTree([{ ...lead, generation: 2 }, a])[1].indent,
+    "    ",
+    "old child cannot attach to a new generation",
+  );
+  assert.equal(taskTree([a])[0].indent, "    ", "missing parent keeps depth without a false pipe");
+});
+
+test("widget summarizes two hidden running children below one visible child without double-counting fleet overflow", () => {
+  const lead = snapshot("lead", {
+    assignment: "Coordinate audit",
+    activity: "Waiting for 3 audits",
+  });
+  const nested = (id: string, extra: Partial<ChildSnapshot> = {}) =>
+    snapshot(id, { parentId: lead.id, parentGeneration: 1, depth: 2, ...extra });
+  const children = [
+    lead,
+    nested("one", { assignment: "Visible audit" }),
+    nested("two"),
+    nested("three"),
+    nested("queued", { status: "queued" }),
+    nested("finished", { status: "settled", disposed: true }),
+    nested("other-generation", { parentGeneration: 2 }),
+    ...Array.from({ length: 11 }, (_, i) => snapshot(`root-${i}`)),
+  ];
+  const widget = createChildWidget(() => children, theme);
+  const rows = widget.render(120).map(stripAnsi);
+  assert.equal(rows.length, 5);
+  assert.ok(rows[1].includes("Coordinate audit"));
+  assert.ok(rows[2].startsWith("│  ├─ ● scout Visible audit"));
+  assert.equal(rows[3], "│  └─ 2 more nested subagents running");
+  assert.equal(rows[4], "└─ 14 more · /subagent-hub");
+  assert.doesNotMatch(rows.join("\n"), /Waiting for/);
+  for (const height of [1, 4, 8, 12, 16, 30])
+    for (const width of [0, 1, 8, 36, 80, 120]) {
+      const lines = createChildWidget(
+        () => children,
+        theme,
+        () => height,
+      ).render(width);
+      assert.ok(lines.length <= Math.max(1, Math.min(5, Math.floor(height / 4))));
+      assert.ok(lines.every((line) => visibleWidth(line) <= width));
+    }
+});
+
+test("widget indents nested agents and activity three columns per level within its row budget", () => {
+  for (const depth of [1, 2, 3, 8]) {
+    const widget = createChildWidget(
+      () => [snapshot("nested", { depth, assignment: "Nested audit" })],
+      theme,
+    );
+    const rows = widget.render(120).map(stripAnsi);
+    const indent = " ".repeat(Math.min(3, depth - 1) * 3);
+    assert.ok(rows[1].startsWith(`${indent}└─ ● scout Nested audit`));
+    assert.ok(rows[2].startsWith(`${indent}   └ Tool: read`));
+    for (const width of [0, 1, 8, 36, 80]) {
+      const narrow = widget.render(width);
+      assert.ok(narrow.length <= 5);
+      assert.ok(narrow.every((row) => visibleWidth(row) <= width));
+    }
   }
 });
 

@@ -27,6 +27,7 @@ import {
   assignmentHeadline,
   lineText,
   taskDetails,
+  taskTree,
   transcriptLines,
 } from "./task-presentation.ts";
 
@@ -82,26 +83,28 @@ export function createHub(
   });
   const identity = (ref: ChildRef) => `${ref.id}/${ref.generation}`;
   const roster = () =>
-    coordinator
-      .list()
-      .flatMap((child) => coordinator.generations(child.id))
-      .filter((child) =>
-        lineText(
-          [
-            child.id,
-            child.parentId,
-            child.profile,
-            child.status,
-            child.assignment,
-            child.progress,
-            child.result,
-            child.error,
-            child.model.id,
-          ].join(" "),
-        )
-          .toLowerCase()
-          .includes(query.toLowerCase()),
-      );
+    taskTree(
+      coordinator
+        .list()
+        .flatMap((child) => coordinator.generations(child.id))
+        .filter((child) =>
+          lineText(
+            [
+              child.id,
+              child.parentId,
+              child.profile,
+              child.status,
+              child.assignment,
+              child.progress,
+              child.result,
+              child.error,
+              child.model.id,
+            ].join(" "),
+          )
+            .toLowerCase()
+            .includes(query.toLowerCase()),
+        ),
+    ).map(({ child }) => child);
   const selection = () => {
     const children = roster();
     if (!children.some((child) => identity(child) === selected)) {
@@ -397,25 +400,27 @@ export function createHub(
       const position = `${tab === "thread" ? (following ? "LIVE · " : "READING · ") : ""}${offset + 1}–${Math.min(wrapped.length, offset + viewport)}/${wrapped.length} lines${tab === "thread" ? (following ? " · k/PgUp read" : " · End: live") : offset < maxOffset ? " · more ↓" : ""}`;
       const pane: string[] = [];
       if (wide) {
-        const slots = Math.max(1, Math.floor((paneHeight - 2) / 3));
+        const slots = Math.max(1, Math.floor((paneHeight - 2) / 2));
         const start = Math.max(0, index - slots + 1);
         const left = [
           theme.fg("accent", `SUBAGENTS · ${children.length} generations`),
-          ...children.slice(start, start + slots).flatMap((item) => {
-            const indent = " ".repeat(Math.min(4, Math.max(0, item.depth - 1)));
-            const prefix = `${identity(item) === selected ? ">" : " "} ${indent}└ `;
-            return [
-              theme.fg(
-                identity(item) === selected ? "accent" : "text",
-                `${prefix}${assignmentHeadline(item)}${historical(item) ? " · history" : ""}`,
-              ),
-              theme.fg(
-                statusColor(item),
-                `${" ".repeat(visibleWidth(prefix))}${lineText(item.profile)} · ${item.status}`,
-              ),
-              "", // Separate agents without exposing internal generation numbers.
-            ];
-          }),
+          ...taskTree(children)
+            .slice(start, start + slots)
+            .flatMap(({ child: item, indent, last, continuation }) => {
+              const prefix = `${identity(item) === selected ? ">" : " "} ${indent}${last ? "└" : "├"} `;
+              return [
+                theme.fg(identity(item) === selected ? "accent" : "text", prefix) +
+                  theme.fg(statusColor(item), "● ") +
+                  theme.fg(
+                    identity(item) === selected ? "accent" : "text",
+                    `${assignmentHeadline(item)}${historical(item) ? " · history" : ""}`,
+                  ),
+                theme.fg(
+                  statusColor(item),
+                  `  ${continuation}${lineText(item.profile)} · ${item.status}`,
+                ),
+              ];
+            }),
         ];
         const right = [
           theme.fg("accent", lineText(selectedLabel)),
@@ -446,12 +451,14 @@ export function createHub(
       } else {
         const suffix = child ? ` · ${index + 1}/${children.length}` : "";
         pane.push(
-          theme.fg(
-            "accent",
-            child
-              ? `> └ ${truncateToWidth(agentLabel(child), Math.max(0, inner - 4 - visibleWidth(suffix)))}${suffix}`
-              : "No selection",
-          ),
+          child
+            ? theme.fg("accent", "> └ ") +
+                theme.fg(statusColor(child), "● ") +
+                theme.fg(
+                  "accent",
+                  `${truncateToWidth(agentLabel(child), Math.max(0, inner - 6 - visibleWidth(suffix)))}${suffix}`,
+                )
+            : theme.fg("accent", "No selection"),
         );
         if (paneHeight > 1)
           pane.push(
