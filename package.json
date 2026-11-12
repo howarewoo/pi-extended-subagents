@@ -5,14 +5,14 @@
   "keywords": [
     "pi-package"
   ],
-  "homepage": "https://github.com/howarewoo/pi-extended-subagents#readme",
+  "homepage": "https://github.com/howarewoo/pi-subagents#readme",
   "bugs": {
-    "url": "https://github.com/howarewoo/pi-extended-subagents/issues"
+    "url": "https://github.com/howarewoo/pi-subagents/issues"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/howarewoo/pi-extended-subagents.git"
+    "url": "git+https://github.com/howarewoo/pi-subagents.git"
   },
   "files": [
     "src",
