@@ -29,23 +29,16 @@ Install from npm:
 pi install npm:@howarewoo/pi-subagents
 ```
 
+Alternatively, install from Git with `pi install git:github.com/howarewoo/pi-subagents`.
+Use only one source: when switching between npm, Git or a local checkout, remove the
+previously registered source first so Pi does not load the extension twice.
+
+Restart Pi and run `/subagent-profiles` to check the installation.
+
 ### Migrate from the old package
 
-If you installed `pi-extended-subagents`, remove it before installing the scoped package
-so Pi does not load the extension twice:
-
-```sh
-pi remove npm:pi-extended-subagents
-pi install npm:@howarewoo/pi-subagents
-```
-
-Use only one source. When switching from Git to npm, remove the Git registration first with
-`pi remove git:github.com/howarewoo/pi-subagents`. If you registered the old repository URL,
-use `pi remove git:github.com/howarewoo/pi-extended-subagents` instead. Remove the source you
-actually registered; do not install both. `pi install git:github.com/howarewoo/pi-subagents`
-remains an alternative to npm; the npm package name is unchanged.
-
-Restart Pi and run `/subagent-profiles` to check the installation. If you already installed a local checkout, remove that registration first with `pi remove /path/to/pi-extended-subagents` to avoid loading it twice.
+If you installed the former unscoped package, follow the
+[0.1.1 migration instructions](CHANGELOG.md#011) before installing the current package.
 
 ## Use delegation
 
@@ -248,9 +241,8 @@ pi update --extensions
 ```
 
 Plain `pi update` updates Pi itself, not installed extension packages. For a Git installation,
-use `pi update git:github.com/howarewoo/pi-subagents` with the source you registered;
-if registered under the old repository URL, use that URL instead. An unpinned Git source tracks
-the repository's default branch, including unreleased commits.
+use `pi update git:github.com/howarewoo/pi-subagents`, matching the source you registered.
+An unpinned Git source tracks the repository's default branch, including unreleased commits.
 
 For a reproducible npm installation or rollback, select an exact published version:
 

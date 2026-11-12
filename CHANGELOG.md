@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Simplify README installation and update guidance now that the repository rename is complete. Keep current npm/Git sources, duplicate-loading precautions and a link to the historical package migration instructions.
+
 ## [0.2.0]
 
 Requires Node 22.19+ and stable Pi 1.5.2 or newer. Tested host: Pi 1.5.2; newer stable
