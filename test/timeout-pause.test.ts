@@ -23,7 +23,10 @@ test(
   { timeout: 10000 },
   async (t) => {
     let release!: () => void;
-    let entered = 0;
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
     let gate = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -33,7 +36,7 @@ test(
       extra: (pi) => {
         pi.on("tool_call", async (event) => {
           if (event.toolName === "read") {
-            entered++;
+            markEntered();
             await gate;
           }
         });
@@ -58,6 +61,9 @@ test(
       },
     });
     await writeFile(join(f.root, "input.txt"), "remember this tool result");
+    // The zero-speed provider uses microtasks. Hold the admission deadline until
+    // the real permission hook is entered, regardless of setup time under load.
+    t.mock.timers.enable({ apis: ["setTimeout"] });
     await f.session.prompt(
       "LAUNCH " +
         JSON.stringify({
@@ -67,8 +73,10 @@ test(
           limits: { deadlineMs: 100 },
         }),
     );
-    await eventually(() => entered === 1);
+    await entered;
     const ref = f.events.at(-1)!.child;
+    t.mock.timers.tick(100);
+    t.mock.timers.reset();
     await eventually(() => f.events.some((event) => event.child.status === "pausing"));
     assert.equal(f.events.at(-1)!.child.writerLease, true);
     assert.equal(f.events.at(-1)!.child.disposed, false);

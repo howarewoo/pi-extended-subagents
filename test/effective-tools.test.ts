@@ -186,19 +186,19 @@ test("central direct admission requires live provenance validator and never broa
   const first = await f.direct("original", "scout");
   await f.coordinator.wait(first);
   assert.deepEqual(f.coordinator.snapshot(first)!.tools, ["read"]);
-  assert.throws(
+  await assert.rejects(
     () => f.coordinator.admit([{ ...input, assertTools: undefined! }]),
     /provenance validator/,
   );
   f.session.setActiveToolsByName([...f.session.getActiveToolNames(), "grep", "find", "ls"]);
-  const next = f.coordinator.renew(first, { ...input, assignment: "followup" });
+  const next = await f.coordinator.renew(first, { ...input, assignment: "followup" });
   await f.coordinator.wait(next);
   assert.deepEqual(f.coordinator.snapshot(next)!.tools, ["read"]);
   f.coordinator.park(next);
-  const third = f.coordinator.renew(next, { ...input, assignment: "revival" });
+  const third = await f.coordinator.renew(next, { ...input, assignment: "revival" });
   await f.coordinator.wait(third);
   assert.deepEqual(f.coordinator.snapshot(third)!.tools, ["read"]);
-  const [fresh] = f.coordinator.admit([{ ...input, assignment: "new identity" }]);
+  const [fresh] = await f.coordinator.admit([{ ...input, assignment: "new identity" }]);
   await f.coordinator.wait(fresh);
   assert.deepEqual(f.coordinator.snapshot(fresh)!.tools, ["read", "grep", "find", "ls"]);
   assert.deepEqual(
@@ -213,7 +213,7 @@ test("central direct admission requires live provenance validator and never broa
   );
   const current = await resolveProfile("scout", f.root, false);
   const count = f.coordinator.generations(first.id).length;
-  assert.throws(
+  await assert.rejects(
     () => f.coordinator.renew(third, { ...input, ...current, assignment: "cannot regain grep" }),
     /no callable parent builtin tools/,
   );
