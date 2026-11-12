@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Simplify the README: put delegation examples before comparisons and architectural rationale, shorten repeated explanations, and make native controls and execution limits easier to scan. Preserve examples, section anchors and safety boundaries.
 - Replace the README's unknown tintinweb messaging comparison with source-verified limited support: parent-to-child steering and result return, without built-in child-initiated or sibling messaging.
 - Clarify in the README that worktree lifecycle management is intentionally caller-owned, not a deferred extension feature. Existing `cwd` support, parent permission hooks and global writer serialization are unchanged; workspace selection is not filesystem containment.
 - Enable child-local codemode for every subagent profile, including nested agents, when codemode is enabled in the parent. Scripts expose only child-authorized tools, with the `models` API disabled; existing permission hooks, workspace mapping, tool budgets and cancellation remain enforced. Failed or permission-blocked edits and writes do not trigger the prewalk model handoff.
