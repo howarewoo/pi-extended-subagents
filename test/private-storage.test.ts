@@ -20,12 +20,10 @@ test(
       const env: NodeJS.ProcessEnv = { ...process.env, PI_PRIVATE_STORAGE_TEST: "1" };
       delete env.NODE_TEST_CONTEXT;
       const { stdout, stderr } = await promisify(execFile)(
-        "/bin/sh",
+        process.execPath,
         [
-          "-c",
-          'umask 000; exec "$@"',
-          "sh",
-          process.execPath,
+          "--import",
+          "data:text/javascript,process.umask(0)",
           "--test",
           "--test-reporter=tap",
           fileURLToPath(import.meta.url),
