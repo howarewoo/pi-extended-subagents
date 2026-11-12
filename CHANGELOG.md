@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Keep Hub tree lanes, unselected agent names and status text in the normal foreground color. Highlight the selected name and selection marker with the accent color, while profile words and status circles retain lifecycle coloring, including compact views.
+
 - Replace the widget activity preview with a summary below the visible child when its parent has additional hidden running children. Show “2 more nested subagents running” for the capacity illustration while keeping the total hidden-fleet overflow count unchanged.
 
 - Add lifecycle-colored status circles to the Hub roster and compact selected-agent header. Use a tee for widget activity when a visible child follows, preserving the last child's elbow connector.

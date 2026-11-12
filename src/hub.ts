@@ -409,16 +409,16 @@ export function createHub(
             .flatMap(({ child: item, indent, last, continuation }) => {
               const prefix = `${identity(item) === selected ? ">" : " "} ${indent}${last ? "└" : "├"} `;
               return [
-                theme.fg(identity(item) === selected ? "accent" : "text", prefix) +
+                theme.fg(identity(item) === selected ? "accent" : "text", prefix[0]) +
+                  theme.fg("text", prefix.slice(1)) +
                   theme.fg(statusColor(item), "● ") +
                   theme.fg(
                     identity(item) === selected ? "accent" : "text",
                     `${assignmentHeadline(item)}${historical(item) ? " · history" : ""}`,
                   ),
-                theme.fg(
-                  statusColor(item),
-                  `  ${continuation}${lineText(item.profile)} · ${item.status}`,
-                ),
+                theme.fg("text", `  ${continuation}`) +
+                  theme.fg(statusColor(item), lineText(item.profile)) +
+                  theme.fg("text", ` · ${item.status}`),
               ];
             }),
         ];
@@ -452,7 +452,8 @@ export function createHub(
         const suffix = child ? ` · ${index + 1}/${children.length}` : "";
         pane.push(
           child
-            ? theme.fg("accent", "> └ ") +
+            ? theme.fg("accent", ">") +
+                theme.fg("text", " └ ") +
                 theme.fg(statusColor(child), "● ") +
                 theme.fg(
                   "accent",
@@ -462,10 +463,11 @@ export function createHub(
         );
         if (paneHeight > 1)
           pane.push(
-            theme.fg(
-              child ? statusColor(child) : "muted",
-              `${tab.toUpperCase()}${child ? ` · ${child.profile} · ${child.status}` : ""}`,
-            ),
+            child
+              ? theme.fg("text", `${tab.toUpperCase()} · `) +
+                  theme.fg(statusColor(child), lineText(child.profile)) +
+                  theme.fg("text", ` · ${child.status}`)
+              : theme.fg("muted", tab.toUpperCase()),
           );
         if (paneHeight > 2)
           pane.push(

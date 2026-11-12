@@ -1446,7 +1446,7 @@ test("Hub normalized wheel is contained to its reading viewport, never the roste
   }
 });
 
-test("Hub status dots use lifecycle colors in the roster and compact header", (t) => {
+test("Hub lanes stay neutral, selected names use accent, and dots/profiles retain lifecycle colors", (t) => {
   const children = (["running", "failed", "cancelled", "settled"] as const).map((status) =>
     snapshot(status, { assignment: status, status }),
   );
@@ -1454,10 +1454,34 @@ test("Hub status dots use lifecycle colors in the roster and compact header", (t
   t.mock.method(coordinator, "list", () => children);
   t.mock.method(coordinator, "messages", () => []);
   const dots: string[] = [];
+  const profiles: string[] = [];
   const palette = {
     ...theme,
     fg: (color: string, text: string) => {
       if (text === "● ") dots.push(color);
+      else if (text === "scout") profiles.push(color);
+      else if (text === ">" || text === "running" || text.startsWith("running · scout"))
+        assert.equal(color, "accent", "selected name and marker retain accent styling");
+      else if (
+        text.includes("scout") ||
+        (text.startsWith("  ") && /^[│ ]+$/.test(text)) ||
+        [
+          " └ ",
+          " ├ ",
+          "failed",
+          "cancelled",
+          "settled",
+          " · running",
+          " · failed",
+          " · cancelled",
+          " · settled",
+          "> ├ ",
+          "  ├ ",
+          "  └ ",
+          "> └ ",
+        ].includes(text)
+      )
+        assert.equal(color, "text", `agent text must not inherit status/selection color: ${text}`);
       return text;
     },
   };
@@ -1473,9 +1497,12 @@ test("Hub status dots use lifecycle colors in the roster and compact header", (t
   try {
     hub.render(120);
     assert.deepEqual(dots, ["accent", "error", "warning", "success"]);
+    assert.deepEqual(profiles, dots);
     dots.length = 0;
+    profiles.length = 0;
     const narrow = hub.render(36).map(stripAnsi);
     assert.deepEqual(dots, ["accent"]);
+    assert.deepEqual(profiles, dots);
     assert.match(narrow.join("\n"), /> └ ● running/);
     assert.ok(narrow.every((row) => visibleWidth(row) === 36));
   } finally {
