@@ -246,8 +246,6 @@ export function createHub(
         footer.push(
           theme.fg("muted", `Filter: ${lineText(query)} · ${children.length} generations`),
         );
-      if (current.some((item) => item.writerLease))
-        footer.push(theme.fg("warning", "WRITER: model tools only; no manual/external writes"));
       if (notice) {
         const lines = wrapTextWithAnsi(lineText(notice), Math.max(1, inner));
         footer.push(

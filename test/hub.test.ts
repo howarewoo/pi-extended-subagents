@@ -256,6 +256,41 @@ const effectiveKeys = {
   getKeys: () => ["escape" as const, "enter" as const],
 };
 
+test("hub active writers add no footer warning while Details retains the coordination caveat", (t) => {
+  let child = snapshot("active", { profile: "implementation", writerLease: true });
+  const coordinator = new DelegationCoordinator("unused-render-only", "root");
+  t.mock.method(coordinator, "list", () => [child]);
+  t.mock.method(coordinator, "generations", () => [child]);
+  t.mock.method(coordinator, "messages", () => []);
+  const hub = createHub(
+    coordinator,
+    theme,
+    effectiveKeys,
+    () => {},
+    () => {},
+    dependencies,
+    () => 30,
+  );
+  try {
+    for (const width of [40, 100, 180]) {
+      const writerOutput = hub.render(width).map(stripAnsi);
+      assert.doesNotMatch(writerOutput.join("\n"), /WRITER:|manual\/external writes/);
+      child = { ...child, writerLease: false };
+      assert.deepEqual(hub.render(width).map(stripAnsi), writerOutput);
+      child = { ...child, writerLease: true };
+    }
+    hub.handleInput!("\t");
+    hub.render(180);
+    hub.handleInput!("\x1b[F");
+    assert.match(
+      stripAnsi(hub.render(180).join("\n")),
+      /Model-tool writer only: no conflicting manual !\/!! or external edits/,
+    );
+  } finally {
+    hub.dispose();
+  }
+});
+
 test("fleet counts every lifecycle and bounds height independently of task count or writer lease", () => {
   const children = [
     snapshot("reader", { profile: "implementation" }),
