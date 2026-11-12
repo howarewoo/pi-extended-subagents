@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Remove unused provider-secret bindings and credential examples from the Pullfrog workflow while retaining its OIDC App token integration.
+
 ## [0.1.1]
 
 ### Scoped npm package
