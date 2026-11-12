@@ -3,7 +3,6 @@ import {
   Input,
   matchesKey,
   oklchColor,
-  sliceByColumn,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
@@ -15,243 +14,23 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ChildRef, ChildSnapshot, DelegationCoordinator } from "./coordinator.ts";
 import { createNativeThread, safe, type LiveTool, type ThreadDependencies } from "./thread.ts";
 export { safe } from "./thread.ts";
+export { createChildWidget } from "./subagent-widget.ts";
+export {
+  agentLabel,
+  fleetSummary,
+  taskCard,
+  transcriptLines,
+  writerWarning,
+} from "./task-presentation.ts";
+import {
+  agentLabel,
+  assignmentHeadline,
+  lineText,
+  taskDetails,
+  transcriptLines,
+} from "./task-presentation.ts";
 
 type Palette = Pick<Theme, "fg" | "style"> & { colors: Pick<Theme["colors"], "customMessageBg"> };
-const lineText = (text: string) => safe(text).replaceAll("\n", " ");
-const assignmentHeadline = (child: ChildSnapshot) =>
-  safe(child.assignment)
-    .split("\n")
-    .map((line) => line.trim())
-    .find(Boolean)
-    ?.replace(/^#{1,6}\s+/, "") || "Assignment";
-export const agentLabel = (child: ChildSnapshot) =>
-  `${assignmentHeadline(child)} · ${lineText(child.profile)}`;
-const active = (child: ChildSnapshot) => !child.disposed && child.status !== "paused";
-const activity = (child: ChildSnapshot) =>
-  (child.status === "paused"
-    ? `Paused: ${child.pauseReason ?? "deadline"} · context ${child.retainedContext ? "retained" : "not yet available"} · resume via model or stop in Hub`
-    : child.error) ||
-  (active(child) ? child.activity || child.progress : child.result) ||
-  child.progress ||
-  "Waiting for SDK activity";
-export const writerWarning = "Model-tool writer only: no conflicting manual !/!! or external edits";
-const statuses = [
-  "queued",
-  "setup",
-  "running",
-  "draining",
-  "pausing",
-  "paused",
-  "settled",
-  "failed",
-  "cancelled",
-] as const;
-export function fleetSummary(children: ChildSnapshot[]): string {
-  return children.length
-    ? statuses
-        .map((status) => `${status} ${children.filter((child) => child.status === status).length}`)
-        .join(" · ")
-    : "No tasks · ask the model to delegate_task";
-}
-
-/** Event-driven, bounded current-agent tree; history and full metrics remain in the Hub. */
-export function createChildWidget(
-  snapshot: () => ChildSnapshot[],
-  theme: Pick<Theme, "fg"> & Partial<Pick<Theme, "bold">>,
-  availableRows = () => 30,
-): Component {
-  return {
-    render(width) {
-      width = Math.max(0, width);
-      const children = snapshot();
-      if (!children.length) return [];
-      const queued = children.filter((child) => child.status === "queued").length;
-      const priority = (child: ChildSnapshot) =>
-        child.status === "draining" || child.status === "pausing"
-          ? 0
-          : child.status === "running"
-            ? 1
-            : child.status === "setup"
-              ? 2
-              : 3;
-      const live = children
-        .filter(
-          (child) =>
-            !child.disposed &&
-            (child.status === "setup" ||
-              child.status === "running" ||
-              child.status === "draining" ||
-              child.status === "pausing"),
-        )
-        .sort((a, b) => priority(a) - priority(b));
-      const writer = children.some((child) => child.writerLease);
-      const budget = Math.max(1, Math.min(5, Math.floor(availableRows() / 4)));
-      const counts =
-        width < 60
-          ? `${live.filter(active).length} active · ${children.filter((child) => child.status === "paused").length} paused · ${queued} queued`
-          : statuses
-              .flatMap((status) => {
-                const count = children.filter((child) => child.status === status).length;
-                return count ? [`${count} ${status}`] : [];
-              })
-              .join(" · ");
-      const rows = [
-        theme.fg("accent", `● Subagents ${children.length}`) + theme.fg("muted", ` · ${counts}`),
-      ];
-      if (writer && budget === 1)
-        rows[0] = theme.fg(
-          "warning",
-          `● Subagents ${children.length} · Model writer: !/!! + external unsafe · ${queued} queued`,
-        );
-      const room = Math.max(0, budget - 1 - (writer && budget > 1 ? 1 : 0));
-      const activityRows = live.length && room >= (live.length > 1 ? 3 : 2) ? 1 : 0;
-      const slots = room - activityRows;
-      const overflow = live.length > slots;
-      const shown = live.slice(0, Math.max(0, slots - (overflow ? 1 : 0)));
-      shown.forEach((child, index) => {
-        const last = index === shown.length - 1 && shown.length === live.length;
-        const color =
-          child.status === "draining" || child.status === "pausing" ? "warning" : "accent";
-        const role = lineText(child.profile);
-        const indent = "  ".repeat(Math.min(3, Math.max(0, child.depth - 1)));
-        const prefix =
-          theme.fg("muted", `${indent}${last ? "└─" : "├─"} `) +
-          theme.fg(color, "● ") +
-          (theme.bold?.(role) ?? role) +
-          " ";
-        const elapsed = Math.max(
-          0,
-          Math.floor(((child.endedAt ?? Date.now()) - child.createdAt) / 1000),
-        );
-        const stats = [
-          child.status,
-          `${elapsed}s`,
-          `${child.toolCalls} tools`,
-          ...(child.telemetry.requests === null ? [] : [`${child.telemetry.requests} req`]),
-          ...(child.telemetry.tokens ? [`${child.telemetry.tokens.total} tok`] : []),
-          ...(child.telemetry.cost === null ? [] : [`$${child.telemetry.cost.toFixed(3)}`]),
-        ].join(" · ");
-        const metric = truncateToWidth(stats, Math.max(8, Math.floor(width / 2)));
-        const headline = assignmentHeadline(child);
-        rows.push(
-          prefix +
-            theme.fg(
-              "text",
-              truncateToWidth(
-                headline,
-                Math.max(4, width - visibleWidth(prefix) - visibleWidth(metric) - 3),
-              ),
-            ) +
-            theme.fg("muted", " · " + metric),
-        );
-        if (!index && activityRows) {
-          const prefix = `${indent}${last ? "   " : "│  "} └ `;
-          const text = lineText(activity(child));
-          const columns = Math.max(0, width - visibleWidth(prefix));
-          const length = visibleWidth(text);
-          // Progress is an accumulated tail; keep its newest text, not a frozen opening paragraph.
-          const preview =
-            length > columns
-              ? "…" +
-                sliceByColumn(text, length - Math.max(0, columns - 1), Math.max(0, columns - 1))
-              : text;
-          rows.push(theme.fg("muted", prefix + preview));
-        }
-      });
-      if (shown.length < live.length && room)
-        rows.push(theme.fg("muted", `└─ ${live.length - shown.length} more · /subagent-hub`));
-      if (writer && budget > 1)
-        rows.push(
-          theme.fg("warning", width < 75 ? "Model writer: !/!! + external unsafe" : writerWarning),
-        );
-      return rows.slice(0, budget).map((line) => truncateToWidth(line, width));
-    },
-    invalidate() {},
-  };
-}
-
-export function taskCard(child: ChildSnapshot | undefined, expanded = false): string[] {
-  if (!child)
-    return [
-      "Task identity unavailable",
-      "See tool error; /subagent-hub lists current runtime tasks",
-    ];
-  return [
-    `${truncateToWidth(agentLabel(child), 240, "… [preview truncated]")} #${child.generation} · ${child.status}`,
-    `Identity ${child.id} #${child.generation}`,
-    `${child.model.provider}/${child.model.id} · effort ${child.effort ?? "unavailable"}`,
-    truncateToWidth(lineText(activity(child)), 240, "… [preview truncated]"),
-    `Prewalk ${child.prewalk ? JSON.stringify(child.prewalk) : "off"} · advisor unavailable`,
-    `Parent ${child.parentId}${child.parentGeneration ? ` #${child.parentGeneration}` : ""} · depth ${child.depth} · writer lease ${child.writerLease}`,
-    ...(child.outcome
-      ? [
-          `Structured ${child.outcome.validation} · ${child.outcome.finalized ? "finalized" : "provisional"} · attempts ${child.outcome.attempts}`,
-        ]
-      : []),
-    ...(child.limitReason ? [`Limit: ${child.limitReason}`] : []),
-    ...(child.pauseReason
-      ? [
-          `Pause: ${child.pauseReason} · context ${child.retainedContext ? "retained" : "not yet available"} · resume via model control after drain`,
-        ]
-      : []),
-    `Window ${child.window ?? 1} · cumulative requests ${child.telemetry.requests ?? 0}/${child.limits.requests} · tools ${child.toolCalls}/${child.limits.tools} · spawns ${child.spawned ?? 0}/${child.limits.spawns}`,
-    ...(child.artifacts ? [`Artifacts: ${JSON.stringify(child.artifacts)}`] : []),
-    ...(expanded
-      ? [
-          "Assignment: " +
-            truncateToWidth(lineText(child.assignment), 480, "… [preview truncated]"),
-          "Result: " +
-            truncateToWidth(
-              lineText(child.result || child.error || "Not available yet"),
-              480,
-              "… [preview truncated]",
-            ),
-        ]
-      : []),
-    child.transcript
-      ? `Full transcript: ${child.transcript} · /subagent-hub`
-      : "Transcript unavailable (setup) · /subagent-hub",
-  ].map(lineText);
-}
-
-/** Read-only content projection: never dumps provider/auth objects, image payloads or opaque signatures. */
-export function transcriptLines(
-  messages: ReturnType<DelegationCoordinator["messages"]>,
-  toolsOnly = false,
-): string[] {
-  const lines: string[] = [];
-  for (const message of messages) {
-    if (message.role === "system") continue;
-    const start = lines.length;
-    const blocks = "content" in message ? message.content : undefined;
-    if (!toolsOnly || message.role === "toolResult") {
-      lines.push(
-        `[${message.role}${message.role === "toolResult" ? ` ${message.toolName} ${message.toolCallId} ${message.isError ? "ERROR" : "result"}` : ""}]`,
-      );
-      if (typeof blocks === "string") lines.push(safe(blocks));
-    }
-    if (Array.isArray(blocks))
-      for (const block of blocks) {
-        if (block.type === "toolCall")
-          lines.push(
-            `Tool ${block.name} ${block.id}\nArguments: ${safe(JSON.stringify(block.arguments, null, 2))}`,
-          );
-        else if (!toolsOnly || message.role === "toolResult") {
-          if (block.type === "text") lines.push(safe(block.text));
-          else if (block.type === "thinking") lines.push("Thinking: " + safe(block.thinking));
-          else if (block.type === "image")
-            lines.push(`[image ${safe(block.mimeType)}; payload omitted]`);
-        }
-      }
-    if (message.role === "assistant" && message.errorMessage)
-      lines.push("Error: " + safe(message.errorMessage));
-    if (start && lines.length > start) lines.splice(start, 0, "");
-  }
-  return lines.length
-    ? lines.map(safe)
-    : [toolsOnly ? "No tool calls yet" : "Waiting for SDK messages"];
-}
-
 /** Observation only: closing or disposing never touches child execution. */
 export function createHub(
   coordinator: DelegationCoordinator,
@@ -532,40 +311,13 @@ export function createHub(
       let nativeLines: string[] | undefined;
       if (child) {
         if (tab === "details") {
-          const metric = (value: unknown) =>
-            value === null || value === undefined ? "unavailable" : JSON.stringify(value);
-          detail = [
-            `Identity ${child.id} #${child.generation}`,
-            "",
-            "Assignment",
-            safe(child.assignment),
-            "",
-            "Result",
-            safe(child.result || "Not available yet"),
-            "",
-            ...(child.error ? ["Error", safe(child.error), ""] : []),
-            ...(child.outcome
-              ? ["Structured outcome", JSON.stringify(child.outcome, null, 2), ""]
-              : []),
-            ...(child.artifacts
-              ? ["Saved artifacts", JSON.stringify(child.artifacts, null, 2), ""]
-              : []),
-            `Workspace: ${safe(child.cwd ?? "parent workspace")}`,
-            `Effective builtin tools: ${child.tools.join(", ")}`,
-            `${child.model.provider}/${child.model.id} · effort ${child.effort ?? "unavailable"}`,
-            `Prewalk ${child.prewalk ? JSON.stringify(child.prewalk) : "off"} · advisor unavailable`,
-            `Presence ${coordinator.agents().find((agent) => agent.id === child.id && agent.generation === child.generation)?.presence ?? "historical"} · resources ${child.disposed ? "disposed" : child.status === "paused" ? "idle SDK; context retained; model resume required" : "live"}`,
-            `Elapsed ${Math.max(0, Math.floor(((child.endedAt ?? Date.now()) - child.createdAt) / 1000))}s`,
-            `Direct requests ${metric(child.telemetry.requests)} · cost ${metric(child.telemetry.cost)}`,
-            `Direct tokens ${metric(child.telemetry.tokens)}`,
-            `Context ${metric(child.telemetry.context)}`,
-            `Parent ${child.parentId} #${child.parentGeneration ?? "root"} · depth ${child.depth} · direct generation only`,
-            `Limits ${JSON.stringify(child.limits)} · calls ${child.toolCalls} · reason ${child.limitReason ?? "none"}`,
-            "Activity: " + safe(activity(child)),
-            "Full transcript: " + safe(child.transcript ?? "unavailable (queued/setup)"),
-            "Followup/revive: native delegate_coordinate only (Hub has no tool dispatcher)",
-            ...(child.writerLease ? [writerWarning] : []),
-          ];
+          detail = taskDetails(
+            child,
+            coordinator
+              .agents()
+              .find((agent) => agent.id === child.id && agent.generation === child.generation)
+              ?.presence,
+          );
         } else {
           try {
             const messages = coordinator.messages(child);

@@ -226,6 +226,7 @@ for (const revoke of ["config", "callable", "reaches", "provenance"] as const)
     const ref = await f.launch("[]", "general", false);
     const state = final(f, ref.id);
     assert.equal(effects, 1);
+    assert.equal(state.toolCalls, 2, "the rejected executable call still consumes its budget");
     assert.match(await readFile(state.transcript!, "utf8"), /revoked|no longer callable/);
   });
 

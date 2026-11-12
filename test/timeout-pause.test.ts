@@ -791,3 +791,47 @@ test(
     }
   },
 );
+
+test("resume reports the first revoked non-model grant and retains the paused conversation", async (t) => {
+  const f = await fixture(t, { speed: 100 });
+  const skill = join(f.root, "SKILL.md");
+  await writeFile(
+    skill,
+    "---\nname: resume-skill\ndescription: Resume test skill\n---\nInstructions.",
+  );
+  await mkdir(join(f.root, "operator"), { recursive: true });
+  const config = join(f.root, "operator", "delegation.json");
+  const grants = {
+    tools: ["read", "ls"],
+    skills: [skill],
+    spawn: ["review"],
+    coordination: ["message"],
+  };
+  await writeFile(config, JSON.stringify({ general: grants }));
+  f.coordinator.configure({ ...DEFAULT_POLICY, deadlineMs: 50 });
+  const ref = await f.direct("long response ".repeat(100));
+  const paused = await f.coordinator.wait(ref);
+  assert.equal(paused.status, "paused");
+  const messages = f.coordinator.messages(ref);
+  for (const [key, value] of [
+    ["tools", ["read"]],
+    ["skills", []],
+    ["spawn", []],
+    ["coordination", []],
+    ["coordination", undefined],
+  ] as const) {
+    await writeFile(config, JSON.stringify({ general: { ...grants, [key]: value } }));
+    await assert.rejects(f.coordinator.resume(ref, "continue"), {
+      message: `Resume denied: current ${key} grant revoked`,
+    });
+    assert.deepEqual(f.coordinator.snapshot(ref), paused);
+    assert.deepEqual(f.coordinator.messages(ref), messages);
+  }
+  await writeFile(
+    config,
+    JSON.stringify({ general: { tools: ["read"], skills: [], spawn: [], coordination: [] } }),
+  );
+  await assert.rejects(f.coordinator.resume(ref, "continue"), {
+    message: "Resume denied: current tools grant revoked",
+  });
+});
