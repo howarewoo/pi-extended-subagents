@@ -313,7 +313,7 @@ test("new leaf grants cannot broaden an admitted ancestor ceiling", async (t) =>
   await configure(f.root, { tools: ["read"], spawn: ["general"], leafTools: ["leaf"] });
   const { resolveProfile } = await import("../src/profiles.ts");
   const selected = await resolveProfile("general", f.root, false);
-  assert.throws(
+  await assert.rejects(
     () =>
       f.coordinator.admit([
         { ...input!, ...selected, parent, assignment: "cannot regain root leaf" },
