@@ -11,16 +11,19 @@ _Subagent Hub: tasks and conversations side by side, with each profile and statu
 
 ## Installation
 
-Requires Node 22.19+ and **exactly Pi 1.5.2** for delegated execution. Older, newer,
-prerelease and unknown host versions are rejected before task-file reads, child allocation,
-disk setup or child model requests. Wildcard host peer dependencies are required by Pi's
+Requires Node 22.19+ and **stable Pi 1.5.2 or newer** for delegated execution. Pi 1.5.2
+is the minimum; newer stable patch, minor and major versions are allowed. Standard build
+metadata does not affect version precedence. Below-minimum, prerelease, malformed and
+unknown host versions are rejected before task-file reads, child allocation, disk setup
+or child model requests. **Tested host: Pi 1.5.2**; allowing future stable versions is not
+a tested compatibility guarantee. Wildcard host peer dependencies are required by Pi's
 package format; they are not a compatibility promise. SDK development packages stay pinned.
 
-If execution reports an unsupported host, install Pi 1.5.2 and restart Pi after active tasks
-drain. Do not update Pi independently without checking this restriction. Where the host can
-load the extension, root status, stop/cleanup and diagnostics remain available; arbitrary
-ancient SDKs may fail to load the module at all. This restriction is a breaking change for
-the next minor release; the package version is not bumped here.
+If execution reports an unsupported host, install stable Pi 1.5.2 or newer and restart Pi
+after active tasks drain. Where the host can load the extension, root status, stop/cleanup
+and diagnostics remain available; arbitrary ancient SDKs may fail to load the module at all.
+This minimum-host restriction is a breaking change for the next minor release; the package
+version is not bumped here.
 
 Install from npm:
 

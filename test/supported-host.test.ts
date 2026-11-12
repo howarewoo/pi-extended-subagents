@@ -28,7 +28,7 @@ registerHooks({
 const { fixture } = await import("./fixtures.ts");
 const { fauxAssistantMessage, fauxToolCall } = await import("@earendil-works/pi-ai");
 
-test("only exact Pi 1.5.2 admits execution; unsupported hosts retain diagnostics and cleanup", async (t) => {
+test("stable Pi >=1.5.2 admits execution; unsupported hosts retain diagnostics and cleanup", async (t) => {
   let reads = 0;
   let childRequests = 0;
   boundary.setHostVersion("1.5.1");
@@ -68,20 +68,62 @@ test("only exact Pi 1.5.2 admits execution; unsupported hosts retain diagnostics
     return result;
   };
   await writeFile(join(f.root, "task.txt"), "do work");
-  const supported = await call("delegate_task", {
-    profile: "scout",
-    taskFile: "task.txt",
-    background: false,
-  });
-  assert.equal(supported.isError, false, JSON.stringify(supported));
-  assert.equal(reads, 1);
-  assert.equal(childRequests, 1);
-  const state = supported.details as { id: string; generation: number };
+  const stableVersions = [
+    "1.5.2",
+    "1.5.3",
+    "1.6.0",
+    "2.0.0",
+    "1.5.10",
+    "1.10.0",
+    "10.0.0",
+    "1.5.2+build.001",
+    "2.0.0+build-1",
+  ];
+  let state!: { id: string; generation: number };
+  for (const [index, version] of stableVersions.entries()) {
+    boundary.setHostVersion(version);
+    const priorEvents = f.events.length;
+    const priorFiles = await readdir(f.root, { recursive: true });
+    const supported = await call("delegate_task", {
+      profile: "scout",
+      taskFile: "task.txt",
+      background: false,
+    });
+    assert.equal(supported.isError, false, JSON.stringify(supported));
+    assert.equal(reads, index + 1);
+    assert.equal(childRequests, reads);
+    assert.ok(f.events.length > priorEvents, "actual child allocation and state changes");
+    assert.notDeepEqual(await readdir(f.root, { recursive: true }), priorFiles);
+    state = supported.details as { id: string; generation: number };
+  }
   const before = await readdir(f.root, { recursive: true });
   const eventCount = f.events.length;
   const target = { id: state.id, generation: state.generation };
   try {
-    for (const version of ["1.5.1", "1.5.3", "2.0.0", "1.5.2-rc.1", "1.5.2+build", "", undefined]) {
+    for (const version of [
+      "0.9.99",
+      "1.4.99",
+      "1.5.1",
+      "1.5.1+build",
+      "1.5.2-rc.1",
+      "2.0.0-rc.1+build",
+      "1.5",
+      "1.5.2.0",
+      "v1.5.2",
+      "01.5.2",
+      "1.05.2",
+      "1.5.02",
+      "1.5.2+",
+      "1.5.2+build..1",
+      "1.5.2+build_1",
+      " 1.5.2",
+      "1.5.2\n",
+      "unknown",
+      "",
+      undefined,
+      null,
+      152,
+    ]) {
       boundary.setHostVersion(version);
       for (const [name, args] of [
         ["delegate_task", { profile: "scout", taskFile: "task.txt" }],
@@ -105,7 +147,11 @@ test("only exact Pi 1.5.2 admits execution; unsupported hosts retain diagnostics
         const result = await call(name, args);
         assert.equal(result.isError, true);
         assert.match(JSON.stringify(result), /supported.*1\.5\.2/i);
-        assert.ok(JSON.stringify(result).includes(version || "unknown"));
+        assert.ok(
+          JSON.stringify(result).includes(
+            JSON.stringify(String(version || "unknown")).slice(1, -1),
+          ),
+        );
       }
       await assert.rejects(async () => f.coordinator.admit([]), /supported.*1\.5\.2/i);
       await assert.rejects(f.coordinator.start({} as never), /supported.*1\.5\.2/i);
@@ -124,8 +170,8 @@ test("only exact Pi 1.5.2 admits execution; unsupported hosts retain diagnostics
         (await call("delegate_coordinate", { action: "status", target })).isError,
         false,
       );
-      assert.equal(reads, 1, "no taskFile read dispatch");
-      assert.equal(childRequests, 1, "no child model requests");
+      assert.equal(reads, stableVersions.length, "no taskFile read dispatch");
+      assert.equal(childRequests, stableVersions.length, "no child model requests");
       assert.equal(f.events.length, eventCount, "no child allocation or state changes");
       assert.deepEqual(
         await readdir(f.root, { recursive: true }),
