@@ -39,8 +39,10 @@ pi install npm:@howarewoo/pi-subagents
 ```
 
 Use only one source. When switching from Git to npm, remove the Git registration first with
-`pi remove git:github.com/howarewoo/pi-extended-subagents`. The Git repository has not moved;
-`pi install git:github.com/howarewoo/pi-extended-subagents` remains an alternative.
+`pi remove git:github.com/howarewoo/pi-subagents`. If you registered the old repository URL,
+use `pi remove git:github.com/howarewoo/pi-extended-subagents` instead. Remove the source you
+actually registered; do not install both. `pi install git:github.com/howarewoo/pi-subagents`
+remains an alternative to npm; the npm package name is unchanged.
 
 Restart Pi and run `/subagent-profiles` to check the installation. If you already installed a local checkout, remove that registration first with `pi remove /path/to/pi-extended-subagents` to avoid loading it twice.
 
@@ -245,7 +247,8 @@ pi update --extensions
 ```
 
 Plain `pi update` updates Pi itself, not installed extension packages. For a Git installation,
-use `pi update git:github.com/howarewoo/pi-extended-subagents`; an unpinned Git source tracks
+use `pi update git:github.com/howarewoo/pi-subagents` with the source you registered;
+if registered under the old repository URL, use that URL instead. An unpinned Git source tracks
 the repository's default branch, including unreleased commits.
 
 For a reproducible npm installation or rollback, select an exact published version:
@@ -255,7 +258,7 @@ pi install npm:@howarewoo/pi-subagents@0.1.1
 ```
 
 For Git, select a published tag, for example
-`pi install git:github.com/howarewoo/pi-extended-subagents@v0.1.1`.
+`pi install git:github.com/howarewoo/pi-subagents@v0.1.1`.
 Exact npm versions and Git tags stay pinned; updating does not advance them to the next release.
 Install a different version explicitly to change the pin.
 

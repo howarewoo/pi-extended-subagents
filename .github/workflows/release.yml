@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   validation:
-    if: github.repository == 'howarewoo/pi-extended-subagents' && startsWith(github.ref, 'refs/tags/v')
+    if: github.repository == 'howarewoo/pi-subagents' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

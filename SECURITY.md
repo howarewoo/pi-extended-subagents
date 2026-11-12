@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report suspected security vulnerabilities privately through
-[GitHub's vulnerability reporting form](https://github.com/howarewoo/pi-extended-subagents/security/advisories/new).
+[GitHub's vulnerability reporting form](https://github.com/howarewoo/pi-subagents/security/advisories/new).
 Do not disclose vulnerabilities, credentials, or sensitive reproduction details in public
 issues or pull requests.
 

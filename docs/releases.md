@@ -48,12 +48,12 @@ by the local setup scripts.
 4. In **`@howarewoo/pi-subagents` → Settings → Trusted publishing**, add GitHub Actions with:
    The old package's trusted publisher does not carry over to the new scoped package.
 
-   | Field                | Value                   |
-   | -------------------- | ----------------------- |
-   | Organization or user | `howarewoo`             |
-   | Repository           | `pi-extended-subagents` |
-   | Workflow filename    | `release.yml`           |
-   | Environment name     | `npm`                   |
+   | Field                | Value          |
+   | -------------------- | -------------- |
+   | Organization or user | `howarewoo`    |
+   | Repository           | `pi-subagents` |
+   | Workflow filename    | `release.yml`  |
+   | Environment name     | `npm`          |
 
    Permit direct `npm publish` if npm presents an allowed-actions selector. The workflow uses
    GitHub-hosted runners and `id-token: write`; no `NPM_TOKEN` secret is needed. Use npm
@@ -74,6 +74,50 @@ environments or rulesets; npm trusted-publisher account configuration remains un
 Do not treat the workflow's `environment: npm` declaration as an approval rule: GitHub can
 create an unprotected environment when a job references a new name. Confirm these settings
 before any tag push or manual workflow dispatch.
+
+## Repository rename cutover
+
+These file changes prepare the rename from `howarewoo/pi-extended-subagents` to
+`howarewoo/pi-subagents`; they do not rename the GitHub repository or configure npm.
+The npm package remains `@howarewoo/pi-subagents`, and the production entrypoint remains
+`src/pi-extended-subagents.ts`. Existing npm installations need no migration.
+
+A repository owner must coordinate the following before the next release:
+
+1. Rename the GitHub repository to `pi-subagents` and ensure the rename changes are on
+   `main`. Do not push release tags or dispatch Release between those steps: the workflow
+   guard accepts only `howarewoo/pi-subagents`, and `package.json` must identify the actual
+   repository for npm publishing. Do not dispatch old release tags whose workflow still
+   checks the previous repository name.
+2. An npm package owner must inspect **`@howarewoo/pi-subagents` → Settings → Trusted
+   publishing** and verify the connection for `howarewoo/pi-subagents`, `release.yml` and
+   environment `npm`. If the connection needs changing, follow npm's current procedure
+   to replace it and its validation/expiry rules. Do not assume GitHub URL redirects prove
+   OIDC authorization; the account binding remains unverified until checked and exercised
+   by an intentionally authorized release. Retain the protected GitHub `npm` environment
+   and release-tag restrictions.
+3. Update local clones after the rename:
+
+   ```sh
+   git remote set-url origin https://github.com/howarewoo/pi-subagents.git
+   ```
+
+   GitHub redirects the previous web and Git URLs, but do not reuse the old repository
+   name: doing so removes those redirects. For Pi Git installations, use the source URL
+   actually registered when updating or removing it. If switching to the new URL, let tasks
+   drain, remove the old registration, install the new source at the desired version, and
+   restart Pi; never load both registrations. Pi's old-source update path is not verified
+   by local package checks.
+
+4. For the next deliberate release, use a new version and tag containing these changes.
+   Run the normal release gates and verify registry integrity, provenance and the GitHub
+   release afterward. Do not republish an existing version just to update its repository
+   metadata; previously published versions remain unchanged.
+
+See [GitHub's rename documentation](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository)
+and [npm's trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/).
+Preparing or merging this PR does not establish the external rename, account setup or a
+successful publish.
 
 ## Prepare each release
 

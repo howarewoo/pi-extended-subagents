@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Prepare the GitHub repository rename from `howarewoo/pi-extended-subagents` to `howarewoo/pi-subagents`: update canonical links, Git installation examples, package metadata and the release repository guard. The npm package remains `@howarewoo/pi-subagents`; the production entrypoint and runtime behavior are unchanged. The repository owner must coordinate the GitHub rename and verify npm trusted publishing before the next release; these external settings are not changed here.
+
 - Simplify the README: put delegation examples before comparisons and architectural rationale, shorten repeated explanations, and make native controls and execution limits easier to scan. Preserve examples, section anchors and safety boundaries.
 - Replace the README's unknown tintinweb messaging comparison with source-verified limited support: parent-to-child steering and result return, without built-in child-initiated or sibling messaging.
 - Clarify in the README and advanced policy documentation that worktree lifecycle management is intentionally caller-owned, not a deferred extension feature; distinguish it from deferred filesystem isolation. Existing `cwd` support, parent permission hooks and global writer serialization are unchanged; workspace selection is not filesystem containment.
