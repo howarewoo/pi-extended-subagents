@@ -320,7 +320,7 @@ test(
     const nested = f.events.filter((event) => event.child.depth === 2).at(-1)!.child;
     assert.equal(nested.parentGeneration, child.generation);
     assert.match(
-      taskCard(nested).join("\n"),
+      taskCard(nested, true).join("\n"),
       new RegExp(`Parent ${child.id} #${child.generation} · depth 2`),
     );
     await f.session.prompt(`/subagent-stop ${child.id} ${child.generation}`);
