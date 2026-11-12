@@ -321,6 +321,7 @@ export default function delegation(pi: ExtensionAPI) {
             throw new Error("Request cannot mint model grants");
           profile = { ...profile, models: task.models };
         }
+        signal?.throwIfAborted();
         let text = task.assignment;
         if (task.taskFile !== undefined) {
           assertTools(["read"]);
@@ -328,7 +329,12 @@ export default function delegation(pi: ExtensionAPI) {
             task.taskFile,
             ctx,
             signal,
-            parent ? () => owner.taskInputRead(parent) : undefined,
+            parent
+              ? async () => {
+                  await owner.authorizeSpawn(parent, profile, task.model);
+                  await owner.taskInputRead(parent, signal);
+                }
+              : undefined,
             cwd,
           );
         }
@@ -351,7 +357,7 @@ export default function delegation(pi: ExtensionAPI) {
         });
       }
       signal?.throwIfAborted();
-      const children = owner.admit(inputs);
+      const children = await owner.admit(inputs, undefined, signal);
       const stop = () =>
         parent && ["pausing", "paused"].includes(owner.snapshot(parent)!.status)
           ? Promise.resolve()
@@ -470,8 +476,8 @@ export default function delegation(pi: ExtensionAPI) {
       signal?.throwIfAborted();
       let value: unknown;
       if (args.action === "message")
-        value = await registry.message(actor, args.target, args.text, args.mode);
-      else if (args.action === "inbox") value = registry.inbox(actor);
+        value = await registry.message(actor, args.target, args.text, args.mode, signal);
+      else if (args.action === "inbox") value = await registry.inbox(actor, signal);
       else if (args.action === "wait")
         value = await registry.coordinateWait(
           actor,
@@ -543,21 +549,25 @@ export default function delegation(pi: ExtensionAPI) {
                 : { id: original.parentId, generation: original.parentGeneration };
           }
           signal?.throwIfAborted();
-          const next = registry.renew(args.target, {
-            cwd: state.cwd,
-            assignment: args.assignment,
-            resultSchema: args.resultSchema,
-            profile,
-            skills,
-            context: ctx,
-            assertTools,
-            toolMetadata: () => pi.getAllTools(),
-            availableSkills,
-            callerId,
-            parent,
-            coordinationTools: (ref) => [coordinationTool(registry, ref)],
-            nestedTool: (ref) => taskTool(ref, ctx, callerId),
-          });
+          const next = await registry.renew(
+            args.target,
+            {
+              cwd: state.cwd,
+              assignment: args.assignment,
+              resultSchema: args.resultSchema,
+              profile,
+              skills,
+              context: ctx,
+              assertTools,
+              toolMetadata: () => pi.getAllTools(),
+              availableSkills,
+              callerId,
+              parent,
+              coordinationTools: (ref) => [coordinationTool(registry, ref)],
+              nestedTool: (ref) => taskTool(ref, ctx, callerId),
+            },
+            signal,
+          );
           value = registry.snapshot(next);
         }
       }

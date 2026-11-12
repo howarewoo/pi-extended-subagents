@@ -21,7 +21,7 @@ import {
 import { Type } from "typebox";
 import type { TestContext } from "node:test";
 import extension from "../src/pi-extended-subagents.ts";
-import { DelegationCoordinator, type RegistryEvent } from "../src/coordinator.ts";
+import { DelegationCoordinator, type RegistryEvent, type StartTask } from "../src/coordinator.ts";
 import { resolveProfile } from "../src/profiles.ts";
 
 export async function fixture(
@@ -175,7 +175,11 @@ export async function fixture(
       throw new Error(JSON.stringify(result));
     return result.details as { id: string; generation: number };
   }
-  async function direct(assignment: string, profileName = "general") {
+  async function direct(
+    assignment: string,
+    profileName = "general",
+    overrides: Partial<StartTask> = {},
+  ) {
     // Obtain a real public tool context through an actual model-issued parent tool.
     if (!context) {
       model.setResponses([
@@ -199,9 +203,22 @@ export async function fixture(
       assertTools,
       toolMetadata,
       callerId: contextCallerId,
+      ...overrides,
     });
   }
-  return { root, model, runtime, session, coordinator, events, launch, direct };
+  return {
+    root,
+    model,
+    runtime,
+    session,
+    coordinator,
+    events,
+    launch,
+    direct,
+    get context() {
+      return context!;
+    },
+  };
 }
 export async function eventually(predicate: () => boolean, timeout = 5000): Promise<void> {
   const end = Date.now() + timeout;
