@@ -20,7 +20,8 @@ See [host support](docs/delegation-contract.md#supported-host) for version rules
 If the host is unsupported, let active tasks drain, update Pi and restart. Status,
 stop/cleanup and diagnostics remain available where the extension can load; arbitrary
 older SDKs may fail at module load. The minimum-host restriction is a breaking change
-for the next minor release; this checkout does not bump the package version.
+in 0.2.0. When upgrading from 0.1.x, drain active tasks, install stable Pi 1.5.2 or newer,
+update the extension and restart Pi.
 
 Install from npm:
 
@@ -254,11 +255,11 @@ the repository's default branch, including unreleased commits.
 For a reproducible npm installation or rollback, select an exact published version:
 
 ```sh
-pi install npm:@howarewoo/pi-subagents@0.1.1
+pi install npm:@howarewoo/pi-subagents@0.2.0
 ```
 
 For Git, select a published tag, for example
-`pi install git:github.com/howarewoo/pi-subagents@v0.1.1`.
+`pi install git:github.com/howarewoo/pi-subagents@v0.2.0`.
 Exact npm versions and Git tags stay pinned; updating does not advance them to the next release.
 Install a different version explicitly to change the pin.
 

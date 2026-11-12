@@ -22,10 +22,9 @@ The repository workflows do not publish on ordinary main-branch pushes.
   stop/cleanup and diagnostics remain available if the host can load the module; arbitrary
   ancient SDK module-load compatibility is not promised. Wildcard host peer dependencies
   remain required by Pi's packaging format, not an execution compatibility promise.
-- This host restriction is breaking and must ship in the next minor release during 0.x,
-  not as a compatible patch. No version bump is part of the restriction change. Migration:
-  drain active tasks, install stable Pi 1.5.2 or newer and restart Pi. Keep host development
-  dependencies pinned and
+- Version 0.2.0 introduces this breaking host restriction during 0.x. Migration from 0.1.x:
+  drain active tasks, install stable Pi 1.5.2 or newer, update the extension to 0.2.0 and restart Pi.
+  Keep host development dependencies pinned and
   verify SDK/CLI lifecycle, permission, cancellation/drain and native rendering behavior
   before changing the minimum or claiming another tested Pi version.
 - Never move a release tag, reuse a published version or overwrite retained user artifacts.
@@ -125,13 +124,13 @@ successful publish.
 2. On a release-preparation branch, update the manifest and lockfile without creating a tag:
 
    ```sh
-   npm version 0.1.1 --no-git-tag-version
+   npm version 0.2.0 --no-git-tag-version
    ```
 
-   Choose the actual next version; `0.1.1` is prepared for the scoped package rename.
-   Preserve the existing `v0.1.0` tag and historical changelog entry.
+   Choose the actual next version; `0.2.0` includes the breaking minimum-host restriction.
+   Preserve existing release tags and historical changelog entries.
 
-3. Add a nonempty `## [0.1.1]` entry to the root changelog, using the selected version. Include
+3. Add a nonempty `## [0.2.0]` entry to the root changelog, using the selected version. Include
    changes, migrations, Pi compatibility, and relevant permission/lifecycle changes. Do not
    promise verification that has not run. Keep the README's installation and migration examples
    current.
@@ -156,6 +155,9 @@ CI runs all checks and the package smoke test on Node 22.19.0 and Node 24. It us
 
 ## First scoped npm publish only
 
+Historical bootstrap for 0.1.1, which is already published. Do not repeat it for 0.2.0;
+use the tag-triggered workflow after verifying the owner prerequisites above.
+
 After the scoped-package release PR is merged, check out its exact clean commit and run the local gates
 above. Use an npm account with publishing rights and two-factor authentication:
 
@@ -178,8 +180,8 @@ registry SHA-512 integrity matches the newly verified tarball byte for byte.
 From the exact merged release commit (replace the example version as needed):
 
 ```sh
-git tag -a v0.1.1 -m "Release v0.1.1"
-git push origin v0.1.1
+git tag -a v0.2.0 -m "Release v0.2.0"
+git push origin v0.2.0
 ```
 
 `release.yml` accepts tag pushes and manual dispatch on an existing `v*` tag, not branch
