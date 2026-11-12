@@ -45,8 +45,20 @@ export function taskCard(child: ChildSnapshot | undefined, expanded = false): st
       "Task identity unavailable",
       "See tool error; /subagent-hub lists current runtime tasks",
     ];
+  const headline = `${truncateToWidth(assignmentHeadline(child), 240, "… [preview truncated]")} · ${lineText(child.profile)} #${child.generation} · ${child.status}`;
+  if (!expanded)
+    return [
+      headline,
+      ...(child.status === "paused"
+        ? [
+            `Pause: ${truncateToWidth(lineText(child.pauseReason ?? "deadline"), 240, "… [preview truncated]")}`,
+          ]
+        : child.error
+          ? [`Error: ${truncateToWidth(lineText(child.error), 240, "… [preview truncated]")}`]
+          : []),
+    ].map(lineText);
   return [
-    `${truncateToWidth(agentLabel(child), 240, "… [preview truncated]")} #${child.generation} · ${child.status}`,
+    headline,
     `Identity ${child.id} #${child.generation}`,
     `${child.model.provider}/${child.model.id} · effort ${child.effort ?? "unavailable"}`,
     truncateToWidth(lineText(activity(child)), 240, "… [preview truncated]"),
@@ -65,18 +77,13 @@ export function taskCard(child: ChildSnapshot | undefined, expanded = false): st
       : []),
     `Window ${child.window ?? 1} · cumulative requests ${child.telemetry.requests ?? 0}/${child.limits.requests} · tools ${child.toolCalls}/${child.limits.tools} · spawns ${child.spawned ?? 0}/${child.limits.spawns}`,
     ...(child.artifacts ? [`Artifacts: ${JSON.stringify(child.artifacts)}`] : []),
-    ...(expanded
-      ? [
-          "Assignment: " +
-            truncateToWidth(lineText(child.assignment), 480, "… [preview truncated]"),
-          "Result: " +
-            truncateToWidth(
-              lineText(child.result || child.error || "Not available yet"),
-              480,
-              "… [preview truncated]",
-            ),
-        ]
-      : []),
+    "Assignment: " + truncateToWidth(lineText(child.assignment), 480, "… [preview truncated]"),
+    "Result: " +
+      truncateToWidth(
+        lineText(child.result || child.error || "Not available yet"),
+        480,
+        "… [preview truncated]",
+      ),
     child.transcript
       ? `Full transcript: ${child.transcript} · /subagent-hub`
       : "Transcript unavailable (setup) · /subagent-hub",

@@ -53,7 +53,7 @@ test(
       "child usage never billed twice as parent tool usage",
     );
     for (const child of children) {
-      const card = taskCard(child).join("\n");
+      const card = taskCard(child, true).join("\n");
       assert.ok(card.includes(child.id));
       assert.ok(card.includes(child.status));
       assert.ok(card.includes(child.model.id));
