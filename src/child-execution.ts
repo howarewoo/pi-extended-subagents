@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   createAgentSession,
+  createCodemodeExtension,
   createExtensionRuntime,
   DefaultResourceLoader,
   SessionManager,
@@ -98,6 +99,9 @@ export async function createChildExecution(
         ? validateModelSelection(input.context, entry.state.prewalk.target)
         : undefined;
     let policyError: string | undefined;
+    let completedMutation = false;
+    const inheritCodemode = !!input.codemodeEnabled?.();
+    if (!inheritCodemode) input.codemodeEnabled = () => false;
     const effective = (): ModelSelection => ({
       ...entry.state.model,
       effort: entry.state.effort as ModelSelection["effort"],
@@ -132,7 +136,17 @@ export async function createChildExecution(
       noThemes: true,
       noContextFiles: true,
       extensionFactories: [
+        ...(inheritCodemode ? [createCodemodeExtension({ models: false })] : []),
         (pi) => {
+          pi.on("tool_call", (event, ctx) => {
+            if (event.toolName !== "codemode") return;
+            if (entry.cancelled || entry.paused || owner.closing)
+              throw new Error("Delegation cancelled");
+            ctx.signal?.throwIfAborted();
+            owner.chargeToolCall();
+            if (!input.codemodeEnabled?.())
+              return { block: true, reason: "Parent codemode is no longer enabled" };
+          });
           pi.on("turn_start", async () => {
             try {
               await owner.revalidateModel(effective(), entry.state.prewalk?.status === "armed");
@@ -147,11 +161,13 @@ export async function createChildExecution(
               !entry.paused &&
               !owner.closing &&
               entry.state.prewalk?.status === "armed" &&
-              event.toolResults.some(
-                (result) =>
-                  (result.toolName === "edit" || result.toolName === "write") &&
-                  input.profile.tools.includes(result.toolName),
-              )
+              (completedMutation ||
+                event.toolResults.some(
+                  (result) =>
+                    !result.isError &&
+                    (result.toolName === "edit" || result.toolName === "write") &&
+                    input.profile.tools.includes(result.toolName),
+                ))
             ) {
               try {
                 const next = entry.state.prewalk.target;
@@ -204,6 +220,9 @@ export async function createChildExecution(
               : args,
             { signal, onUpdate },
           );
+          // SDK turn results contain only the outer codemode call, not its nested edits.
+          if (!outcome.isError && builtin && (name === "edit" || name === "write"))
+            completedMutation = true;
           return { ...outcome.result, isError: outcome.isError };
         },
       };
@@ -291,7 +310,7 @@ export async function createChildExecution(
         ...(target ? [{ model: target, thinkingLevel: input.profile.prewalk!.effort }] : []),
       ],
       resourceLoader: resources,
-      tools: tools.map((tool) => tool.name),
+      tools: [...tools.map((tool) => tool.name), ...(inheritCodemode ? ["codemode"] : [])],
       customTools: tools,
       settingsManager: SettingsManager.inMemory({
         compaction: { enabled: false },
