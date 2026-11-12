@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Release isolation
+
+- Separate release validation, human-protected npm publication and GitHub release creation into jobs with distinct credentials. Publish only the exact smoke-tested tarball after mandatory SHA-512 and release-identity verification; suppress npm lifecycle scripts.
+- Repository owners must configure the `npm` environment approval and release-tag protections, and verify npm trusted publishing before a live release. These account settings are not configured by the workflow.
+
 ## [0.1.1]
 
 ### Scoped npm package

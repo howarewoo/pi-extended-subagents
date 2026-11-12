@@ -45,17 +45,48 @@ for (const scenario of ["valid", "tag mismatch", "lock mismatch", "missing notes
     }
   });
 
-for (const scenario of ["new", "identical", "different", "registry error"])
+for (const scenario of [
+  "new",
+  "identical",
+  "different",
+  "registry error",
+  "missing tarball",
+  "changed tarball",
+  "missing metadata",
+  "wrong name",
+  "wrong version",
+  "wrong tag",
+  "wrong commit",
+  "wrong path",
+  "wrong digest",
+])
   test(`publication recovery: ${scenario}`, async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-subagents-publish-"));
     try {
-      await writeFile(
-        join(root, "package.json"),
-        JSON.stringify({ name: "@howarewoo/pi-subagents", version: "0.1.1" }),
-      );
       const tarball = join(root, "release.tgz");
       await writeFile(tarball, "controlled tarball bytes");
       const integrity = `sha512-${createHash("sha512").update("controlled tarball bytes").digest("base64")}`;
+      const metadata = {
+        name: "@howarewoo/pi-subagents",
+        version: "0.1.1",
+        tag: "v0.1.1",
+        commit: "a".repeat(40),
+        tarball: "release.tgz",
+        integrity,
+      };
+      if (scenario === "missing tarball") await rm(tarball);
+      if (scenario === "changed tarball") await writeFile(tarball, "changed");
+      const fields = {
+        "wrong name": "name",
+        "wrong version": "version",
+        "wrong tag": "tag",
+        "wrong commit": "commit",
+        "wrong path": "tarball",
+        "wrong digest": "integrity",
+      } as const;
+      if (scenario in fields) metadata[fields[scenario as keyof typeof fields]] = "wrong";
+      if (scenario !== "missing metadata")
+        await writeFile(join(root, "metadata.json"), JSON.stringify(metadata));
       // Replace network and process publication in the subprocess, never contact npm or publish.
       const preload = `
         import assert from "node:assert/strict";
@@ -64,11 +95,13 @@ for (const scenario of ["new", "identical", "different", "registry error"])
         childProcess.execFileSync = (command, args) => {
           assert.equal(${JSON.stringify(scenario)}, "new", "Existing versions must not publish");
           assert.equal(command, "npm");
-          assert.deepEqual(args, ["publish", ${JSON.stringify(tarball)}, "--access", "public"]);
+          assert.deepEqual(args, ["publish", ${JSON.stringify(tarball)}, "--access", "public", "--ignore-scripts"]);
           console.log("CONTROLLED_PUBLISH");
         };
         syncBuiltinESMExports();
         globalThis.fetch = async url => {
+          console.log("CONTROLLED_FETCH");
+          assert.ok(["new", "identical", "different", "registry error"].includes(${JSON.stringify(scenario)}), "Invalid artifact must fail before network access");
           assert.equal(url, "https://registry.npmjs.org/%40howarewoo%2Fpi-subagents/0.1.1");
           return {
             status: ${scenario === "new" ? 404 : scenario === "registry error" ? 503 : 200},
@@ -78,11 +111,24 @@ for (const scenario of ["new", "identical", "different", "registry error"])
       `;
       const result = spawnSync(
         process.execPath,
-        ["--import", `data:text/javascript,${encodeURIComponent(preload)}`, publishScript, tarball],
-        { cwd: root, encoding: "utf8" },
+        ["--import", `data:text/javascript,${encodeURIComponent(preload)}`, publishScript, root],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            RELEASE_TAG: "v0.1.1",
+            RELEASE_COMMIT: "a".repeat(40),
+            RELEASE_INTEGRITY: integrity,
+          },
+        },
       );
       assert.equal(result.status, ["new", "identical"].includes(scenario) ? 0 : 1, result.stderr);
       assert.equal(result.stdout.includes("CONTROLLED_PUBLISH"), scenario === "new");
+      assert.equal(
+        result.stdout.includes("CONTROLLED_FETCH"),
+        ["new", "identical", "different", "registry error"].includes(scenario),
+      );
       if (scenario === "different") assert.match(result.stderr, /different contents/);
       if (scenario === "registry error") assert.match(result.stderr, /Cannot verify/);
     } finally {

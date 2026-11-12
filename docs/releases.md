@@ -29,7 +29,8 @@ by the local setup scripts.
 1. Confirm your npm account can publish `@howarewoo/pi-subagents` in the `@howarewoo` scope.
    The old unscoped `pi-extended-subagents@0.1.0` is already published; this is a new npm package.
 2. Enable GitHub Actions for this repository. Create a GitHub environment named `npm`.
-   Add a required reviewer if desired, and restrict deployment refs to release tags (`v*`).
+   Require human approval by `howarewoo`, allow self-approval, and restrict deployment refs
+   to release tags (`v*`). Do not run a release until this protection is configured.
    Protect `main` with the two CI matrix checks and restrict creation/deletion of `v*` tags
    to release maintainers using repository rulesets.
 3. Bootstrap the package with the first manual npm publish below. A trusted publisher is
@@ -57,6 +58,13 @@ by the local setup scripts.
 See [npm's trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/) for
 current account requirements and troubleshooting. Do not use `npm whoami` to test OIDC: it does
 not validate trusted publishing permissions.
+
+The environment, required reviewer/tag restrictions, and repository rulesets are owner
+prerequisites, not settings created by this change. Read-only inspection found no configured
+environments or rulesets; npm trusted-publisher account configuration remains unverified.
+Do not treat the workflow's `environment: npm` declaration as an approval rule: GitHub can
+create an unprotected environment when a job references a new name. Confirm these settings
+before any tag push or manual workflow dispatch.
 
 ## Prepare each release
 
@@ -103,7 +111,7 @@ npm login
 release_dir="$(mktemp -d)"
 npm pack --pack-destination "$release_dir"
 npm run test:package -- "$release_dir/howarewoo-pi-subagents-0.1.1.tgz"
-npm publish "$release_dir/howarewoo-pi-subagents-0.1.1.tgz" --access public
+npm publish "$release_dir/howarewoo-pi-subagents-0.1.1.tgz" --access public --ignore-scripts
 ```
 
 Inspect the result with `npm view @howarewoo/pi-subagents@0.1.1 version dist.integrity`.
@@ -121,11 +129,36 @@ git tag -a v0.1.1 -m "Release v0.1.1"
 git push origin v0.1.1
 ```
 
-`release.yml` verifies that the commit belongs to `main`, the tag matches the manifest and
-lockfile versions, and a matching changelog entry exists. It runs all checks, packs once,
-installs/smoke-tests that tarball, publishes the same tarball to npm, then creates the GitHub
-release with the extracted notes. The `npm` environment can require human approval. Releases
-serialize; a later tag does not cancel an active publish.
+`release.yml` accepts tag pushes and manual dispatch on an existing `v*` tag, not branch
+dispatch. Its three GitHub-hosted jobs run in order:
+
+1. **validation** has only `contents: read`, no OIDC permission or publishing environment.
+   It checks main ancestry, tag/manifest/lockfile versions and changelog, installs dependencies
+   with `npm ci --ignore-scripts`, runs the existing checks, packs once, and smoke-tests that
+   exact tarball. It uploads package/metadata and notes as separate immutable artifacts.
+2. **publish** depends on validation and requires the protected `npm` environment approval.
+   Only this job has `id-token: write`; it has `contents: read`, never `contents: write`.
+   It selects the package artifact by validation's exact artifact ID from the current run.
+   Before any registry request, the reviewed checked-out, dependency-free publish helper
+   requires regular metadata/tarball files, checks the fixed package name, stable version,
+   tag, commit and fixed tarball filename, and recomputes SHA-512 against validation's job
+   output. A missing or mismatched download is fatal; download-action digest warnings are
+   not the publication gate. It neither installs dependencies nor extracts/executes archive
+   content, runs tests, or repacks. `npm publish --ignore-scripts` suppresses lifecycle scripts.
+3. **github-release** depends on npm success. It has `contents: write` but no OIDC permission,
+   downloads only the selected notes artifact, and creates the GitHub release without checking
+   out or executing package code. An existing release remains unchanged.
+
+Releases serialize; a later tag does not cancel an active publish. Artifact retention is seven
+days. If artifacts expire, rerun validation and all downstream jobs on the same immutable tag
+rather than substituting an artifact from another run. No executable helper comes from the
+transferred artifact. Separation limits credential exposure during tests/builds; it does not
+prove that a compromised validation job produced trustworthy package bytes. Review the release
+commit and approval evidence before authorizing publication.
+
+The artifact behavior follows [GitHub's artifact documentation](https://docs.github.com/en/actions/using-workflows/storing-workflow-data-as-artifacts).
+OIDC still requires the actual npm account setup described above; documentation and job
+permissions alone do not prove that account binding exists.
 
 Verify both the npm version/integrity and the GitHub release before announcing it. Test a clean
 Pi install, then `/subagent-profiles`, and confirm the documented update path. No tag, registry publish,
