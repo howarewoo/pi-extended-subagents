@@ -1014,9 +1014,11 @@ export class DelegationCoordinator {
           ? entry.state.id
           : `${entry.state.id}-g${entry.state.generation}`,
       );
-      await mkdir(taskDir); // exclusive ownership: never reuse an existing task record
+      await mkdir(taskDir, { mode: 0o700 }); // exclusive ownership: never reuse an existing task record
       const agentDir = join(taskDir, "agent");
-      await mkdir(agentDir);
+      await mkdir(agentDir, { mode: 0o700 });
+      const transcriptDir = join(taskDir, "transcripts");
+      await mkdir(transcriptDir, { mode: 0o700 });
       const target =
         entry.state.prewalk?.status === "armed"
           ? validateModelSelection(input.context, entry.state.prewalk.target)
@@ -1290,7 +1292,7 @@ export class DelegationCoordinator {
           compaction: { enabled: false },
           retry: { enabled: false },
         }),
-        sessionManager: SessionManager.create(selection.cwd, join(taskDir, "transcripts")),
+        sessionManager: SessionManager.create(selection.cwd, transcriptDir),
       });
       entry.session = session;
       if (session.thinkingLevel !== selection.thinkingLevel)
