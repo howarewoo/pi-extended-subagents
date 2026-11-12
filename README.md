@@ -84,21 +84,197 @@ changelog entries on the next fresh launch after a version increase. See the
 
 Compared with two community alternatives using their documentation, checked on 2026-11-11. This is a feature comparison, not a performance or reliability benchmark. UI cells name documented surfaces; they do not imply other features are absent.
 
-| Feature                  | @howarewoo/pi-subagents                                          | [nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents) | [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) |
-| ------------------------ | ---------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Background tasks         | Until parent exit or reload                                      | ✓ Supported                                                           | ✓ Supported                                                         |
-| Nested delegation        | Opt-in; foreground only                                          | Opt-in                                                                | Opt-in                                                              |
-| Task list / conversation | Subagent Hub: split panes; full-width thread on narrow terminals | Fleet inspector: roster and output pane                               | FleetView opens a separate conversation viewer                      |
-| Message / tool rendering | Native Pi message and tool components                            | Structured Markdown/tool transcripts                                  | Markdown + session-registered tool renderers                        |
-| Live follow / scrollback | ✓ Scroll up to pause; End to follow                              | ✓ Scroll away to pause; bottom resumes                                | ✓ Scroll up to pause; End to follow                                 |
-| In-UI task controls      | Hub: steer, inbox, stop, wait, park                              | Inspector: steer/follow-up and stop async runs                        | Viewer: steer, stop, foreground-to-background handoff               |
-| Tool / usage inspection  | Tools: sanitized arguments/results; Details: direct usage        | Expandable tool details + token counts                                | Expandable tool output + tokens; optional cost                      |
-| Schema-validated results | ✓ Supported                                                      | ✓ Supported                                                           | Workflow agents only                                                |
-| Managed Git worktrees    | — Not supported                                                  | ✓ Supported                                                           | ✓ Supported                                                         |
-| Workflow scripts         | — Not supported                                                  | ✓ Supported                                                           | ✓ Supported                                                         |
-| Scheduled runs           | — Not supported                                                  | ✓ Supported                                                           | Session-scoped agents only                                          |
+| Feature                        | @howarewoo/pi-subagents                                                                                           | [nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents)                                                                                                                            | [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents)    |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| Background tasks               | ✅ [Parent-bound by design; until exit or reload](#why-background-tasks-are-parent-bound)                         | ✅ Supported                                                                                                                                                                                     | ✅ Supported                                                           |
+| Nested delegation              | ✅ [Supported](#why-nested-delegation-is-foreground-only)                                                         | ✅ Supported                                                                                                                                                                                     | ✅ Supported                                                           |
+| Task list / conversation       | ✅ [Subagent Hub: split panes; full-width thread on narrow terminals](#why-the-ui-observes-one-native-registry)   | ✅ Fleet inspector: roster and output pane                                                                                                                                                       | ✅ FleetView opens a separate conversation viewer                      |
+| Message / tool rendering       | ✅ [Native Pi message and tool components](#why-the-ui-observes-one-native-registry)                              | ✅ Structured Markdown/tool transcripts                                                                                                                                                          | ✅ Markdown + session-registered tool renderers                        |
+| Bi-directional agent messaging | ✅ [Supported; parent/child and siblings](#why-agent-messaging-is-family-scoped)                                  | ⚠️ [Child/supervisor requests and replies](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/workflows.md#supervisor-coordination-child-asks-parent) | ❓ Steering + result delivery; child-initiated dialogue not documented |
+| Live follow / scrollback       | ✅ Scroll up to pause; End to follow                                                                              | ✅ Scroll away to pause; bottom resumes                                                                                                                                                          | ✅ Scroll up to pause; End to follow                                   |
+| In-UI task controls            | ✅ [Hub: steer, inbox, stop, wait, park](#why-controls-are-identity-pinned)                                       | ✅ Inspector: steer/follow-up and stop async runs                                                                                                                                                | ✅ Viewer: steer, stop, foreground-to-background handoff               |
+| Tool / usage inspection        | ✅ [Tools: sanitized arguments/results; Details: direct usage](#why-the-ui-observes-one-native-registry)          | ✅ Expandable tool details + token counts                                                                                                                                                        | ✅ Expandable tool output + tokens; optional cost                      |
+| Schema-validated results       | ✅ [Supported](#why-structured-results-require-explicit-submission)                                               | ✅ Supported                                                                                                                                                                                     | ⚠️ Workflow agents only                                                |
+| Managed Git worktrees          | 🚧 [Caller-managed today; automatic isolation deferred](#why-workspaces-are-caller-managed-and-writers-serialize) | ✅ Supported                                                                                                                                                                                     | ✅ Supported                                                           |
+| Workflow scripts               | 🚫 [By design; caller-owned](#why-orchestration-stays-with-the-caller)                                            | ✅ Supported                                                                                                                                                                                     | ✅ Supported                                                           |
+| Scheduled runs                 | 🚫 [By design; no scheduler](#why-orchestration-stays-with-the-caller)                                            | ✅ Supported                                                                                                                                                                                     | ⚠️ Session-scoped agents only                                          |
+
+Legend: ✅ Supported (stated design boundaries apply) · ⚠️ Supported with scope restrictions · 🚫 By design · 🚧 Deferred / not implemented · ❓ Not established by the cited documentation.
+
+🚫 marks a deliberate product boundary, not a missing implementation within the current
+contract. 🚧 marks an implementation gap; deferral is not a delivery commitment. Linked
+explanations describe the trade-offs behind this repo's choices.
 
 Sources: [our contract](docs/delegation-contract.md); nicobailon's [README](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/README.md), [agents](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/agents.md), [workflows](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/workflows.md) and [observability](https://github.com/nicobailon/pi-subagents/blob/c99503aed6d6b20d2397a1767f7d60730efe3963/docs/observability.md); tintinweb's [README](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/README.md) and [workflows](https://github.com/tintinweb/pi-subagents/blob/8df7fa7d8e8130151a8fbfa991a1d3fa6b443739/docs/workflows.md).
+
+## Architectural decisions
+
+These choices define the current execution contract and its trade-offs. They are not
+claims that other designs are unsafe or impossible. Deferred capabilities are identified
+separately; an unsupported feature is not automatically a permanent exclusion.
+
+### Why background tasks are parent-bound
+
+Background tasks let the parent continue while children work. They remain owned by the
+parent Pi runtime: normal shutdown or `/reload` cancels active children, waits for their
+tools and descendants to drain, and disposes their sessions. Closing Subagent Hub does
+not stop them.
+
+This keeps execution and cleanup under the same owner. A task does not become an
+unattended job that can continue editing files or making provider requests after you
+close Pi. Capacity and writer leases remain held until work actually drains, so a
+replacement writer cannot start while a cancelled tool is still active. Cancellation
+can take time if provider, permission or tool code does not respond to abort; abrupt
+process death cannot guarantee cleanup.
+
+The trade-off is that you must keep the parent runtime alive for work to finish. There
+is no detached runner or restart recovery. Saved transcripts and result artifacts are
+inspection records, not a way to resume running tasks after restart. Within the same
+runtime, paused tasks can continue their retained conversation; follow-up work for a
+completed task starts a fresh session and generation.
+
+The alternatives use different boundaries. In the versions cited above, nicobailon's
+background children run in a detached process that can keep working independently of
+the parent. Tintinweb stops agents on session shutdown, but supports persisted
+conversation resume and moving an active foreground run into the background. Persisting
+a conversation does not itself keep a running job alive after exit.
+
+See [the delegation contract](docs/delegation-contract.md) for cancellation, drain and
+continuation semantics.
+
+### Why nested delegation is foreground-only
+
+A child may delegate only to explicitly granted profiles within its ancestry and depth
+limits. Nested calls wait for their children, and the waiting parent retains its
+execution slot. Admission rejects nested work that cannot start immediately instead of
+queuing it behind its own waiting ancestors or silently lending extra capacity.
+
+This makes ownership and concurrency limits predictable, at the cost of rejecting some
+fan-out patterns that could run with a different scheduler. A writing child cannot
+spawn another writer beneath itself. Parent completion or stop drains descendants;
+there are no detached grandchildren. See [lifecycle and scheduling](ARCHITECTURE.md#lifecycle-and-scheduling).
+
+### Why permissions and resources are explicit
+
+A profile defines a tool ceiling, intersected with the parent's callable tools. Builtin
+calls go through the original parent dispatcher so permission hooks still apply.
+Operator grants define authority; trusted-project configuration and task requests can
+only narrow it. Choosing another workspace does not load that workspace's trust policy.
+
+Children receive their assignment, role prompt and granted skills, without automatically
+receiving parent instructions, conversation history or ambient project context. General
+inherits available skills and can receive exact operator-reviewed leaf tools, but full
+extension/MCP runtime inheritance and tool-to-tool forwarding are unsupported. This
+keeps executable-resource authority explicit, at the cost of requiring complete task
+handoffs and narrower integrations. Tool grants and cwd adaptation are not an OS sandbox.
+See [permission and resource boundaries](ARCHITECTURE.md#permission-and-resource-boundaries).
+
+### Why model routing is exact
+
+Children use the parent's selected model and effort by default. Overrides require exact
+operator-approved provider/model/effort grants; unavailable selections and unsupported
+effort fail visibly instead of falling back. Authentication remains with the parent's
+model registry rather than being copied into child task directories.
+
+This preserves the requested routing and credential owner, but does not automatically
+choose cheaper models or substitute another provider. An explicitly configured role
+prewalk can make one approved model switch after an edit/write call; it adds no hidden
+planning inference. See [models and authentication](ARCHITECTURE.md#models-and-authentication).
+
+### Why workspaces are caller-managed and writers serialize
+
+The caller supplies an existing workspace, which may already be a worktree. The extension
+adapts builtin paths and shell cwd while retaining parent permission hooks. It does not
+create worktrees, commit changes or apply branches back to a checkout. Filesystem
+isolation and automatic worktree management are deferred, unimplemented capabilities.
+
+Within this parent runtime, effective writing tasks share one writer lease, even across
+different workspaces. Coordinated parent model-tool mutations cannot overlap a child
+writer, and the lease is held through actual drain. This avoids assuming that separate
+cwd values isolate every possible write, but sacrifices parallel writing throughput.
+Manual shell commands, external editors and other sessions remain uncoordinated; the
+operator must avoid conflicting writes. See [tool execution and workspaces](ARCHITECTURE.md#tool-execution-and-workspaces)
+and [production isolation status](docs/advanced-policies.md#production-isolation--deferred-and-unimplemented).
+
+### Why structured results require explicit submission
+
+When a task has a result schema, the child must call `submit_result` with a value that
+passes the supported bounded JSON Schema subset. Final prose is not parsed as a result.
+A valid submission remains provisional until execution and descendants drain: it cannot
+turn cancellation or a model failure into success, and missing required submission fails
+the task.
+
+This gives callers an explicit result boundary, at the cost of narrower schema support
+and an extra submission step. Whole batches pass preflight before any child is admitted;
+results remain in input order, and a failed child does not cancel unrelated siblings.
+Background batches deliver one outcome message after the batch drains, so a fast result
+may wait for slower siblings. See [results and persistence](ARCHITECTURE.md#results-and-persistence).
+
+### Why the UI observes one native registry
+
+Subagent Hub, the widget and tool result cards observe the same coordinator; opening a
+viewer does not create another executor. Native Pi message and tool components render
+the child conversation, with terminal-facing content sanitized. The split-pane Hub keeps
+the roster and selected thread together, switching to a full-width thread on narrow
+terminals.
+
+This keeps observation tied to execution state and Pi's rendering conventions, while
+making the interface dependent on supported host components. Usage is reported directly
+for each generation rather than inferred or recursively added into parent totals;
+missing provider usage is not estimated. Sanitized display does not redact saved files.
+See [observation and terminal UI](ARCHITECTURE.md#observation-and-terminal-ui).
+
+### Why controls are identity-pinned
+
+Controls target a UUID and generation so stale selections cannot steer or stop a newer
+assignment. Paused continuation retains the same conversation; follow-up or revival of
+completed work creates a fresh generation under current, narrowed authority. Prior
+transcripts are not automatically replayed, so the caller must supply needed conclusions.
+
+Hub controls use the same registry authority as the tools. Starting a new generation
+requires a model-issued tool call because Pi's Hub command context lacks the
+permission-preserving tool dispatcher. Messaging and waits are opt-in, bounded and
+family-scoped; delivery receipts establish visibility, not model acknowledgment. The
+trade-off is more explicit handoffs and fewer direct UI actions. See [coordination,
+presence and generations](ARCHITECTURE.md#coordination-presence-and-generations).
+
+### Why agent messaging is family-scoped
+
+Explicit coordination grants allow messages in both directions between a parent and its
+children, and between siblings with the same exact parent generation. The sender must
+already know the recipient's UUID and generation from the handoff or a message. There is
+no child-wide registry enumeration, arbitrary cross-session addressing or peer transcript
+access. This allows live collaboration without granting visibility into every agent.
+
+`delegate_coordinate` supports inbox messages, steering/follow-up delivery and bounded
+event-driven waits. Messages require running recipients; an inbox message does not
+automatically trigger parent inference. Receipts distinguish acceptance, queuing and
+actual visibility, none of which proves model acknowledgment. Mailboxes and waits have
+finite limits, waits retain capacity, and dependency cycles are rejected. The trade-off
+is that callers must arrange identities and reply handling; this is not a durable broker
+or an automatic blocking supervisor interview.
+
+In the cited versions, nicobailon documents child-initiated `contact_supervisor` requests
+and parent `subagent_supervisor` replies, including nested supervision. Tintinweb documents
+parent-to-child steering and child result notifications, but the cited README and workflow
+guide do not establish a child-initiated request/reply channel or sibling messaging.
+These are different communication contracts, not equivalent checkmarks. See the
+[live coordination contract](docs/delegation-contract.md#live-parent-messaging-waits-and-presence) for exact grants,
+addressing and limits.
+
+### Why orchestration stays with the caller
+
+The extension provides bounded assignments and live coordination. The caller owns the
+larger plan and workspace preparation. The native `subagent` interface adapts to the same
+executor; it is not a general interpreter for competitors' workflow scripts or custom
+agent definitions.
+
+There is no workflow-script runtime or scheduling service in the current product.
+Keeping those outside this extension avoids a second execution and lifecycle system,
+but means saved scripts, recurring jobs and automatic workspace preparation need other
+tooling. Schedules would also need their own ownership contract beyond the current
+parent-bound assignments. This is the current scope, not a claim that such features
+cannot be built. See [entry points and runtime ownership](ARCHITECTURE.md#entry-points-and-runtime-ownership).
 
 ## Native orchestration
 
