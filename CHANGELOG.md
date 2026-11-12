@@ -5,6 +5,12 @@
 - Create new task/generation, agent and transcript directories with private POSIX mode `0700`, preserving exclusive creation and `0600` outcome artifacts. Existing records and parent/global storage permissions are unchanged; Windows access control remains dependent on filesystem ACLs.
 - Enforce live initiator/ancestor grant revocation for nested task-file reads, spawning and coordination before protected effects; malformed policy fails closed. Already in-flight work and accepted mailbox effects are not rolled back.
 
+### Breaking — next minor release
+
+- Require stable Pi 1.5.2 or newer for delegated execution, including native and compatibility launches, resume, followup, revive and direct coordinator execution. Below-minimum, prerelease, malformed and unknown versions reject before task-file reads, child allocation, task-directory setup or child model requests, with an error naming the detected version and minimum stable version. Newer stable patch, minor and major versions are allowed; standard build metadata has equal precedence. Tested host remains Pi 1.5.2, not a compatibility guarantee for future allowed stable versions.
+- Keep required wildcard host peers and pinned SDK development packages unchanged. Wildcard peers are a Pi packaging requirement, not a promise of support for every host. Root status, stop/cleanup and diagnostics remain usable where the host can load the extension; arbitrary ancient SDK module-load compatibility is not promised.
+- Migration: let active tasks drain, install stable Pi 1.5.2 or newer and restart Pi. Treat this as breaking in the next 0.x minor release; no package version bump is included here.
+
 ## [0.1.1]
 
 ### Scoped npm package
