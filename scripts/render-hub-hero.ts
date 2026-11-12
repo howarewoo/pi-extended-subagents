@@ -17,43 +17,57 @@ import { createHub } from "../src/hub.ts";
 import { createChildWidget } from "../src/subagent-widget.ts";
 import { createProfileViewer } from "../src/profile-viewer.ts";
 import { bundledProfiles } from "../src/profiles.ts";
+import { DEFAULT_POLICY } from "../src/scheduling.ts";
 
 // The SVG converter expects RGB colors, including those from native thread components.
 process.env.COLORTERM = "truecolor";
 initTheme("dark", false);
-const children: ChildSnapshot[] = [
-  ["Reader alpha: inspect input.txt", "scout", "running"],
-  ["Reader beta: inspect input.txt", "review", "cancelled"],
-  ["Writer: create fleet-output.txt", "implementation", "running"],
-  ["Failure: controlled error", "general", "queued"],
-].map(([assignment, profile, status], index) => ({
-  id: `demo-${index}`,
-  generation: 1,
+// Four read-only leads, each with three foreground descendants, fill all 16 slots.
+// Two further root batches of 16 fill the queue. No concurrent writers or extra grants.
+const topics = ["Scheduler", "Permissions", "Lifecycle", "Terminal UI"];
+const checks = ["Trace admission", "Review edge cases", "Inspect tests"];
+const running = topics.flatMap((topic, group) => [
+  { assignment: `${topic}: coordinate audit`, profile: "review", parentId: "root", depth: 1 },
+  ...checks.map((check, index) => ({
+    assignment: `${topic}: ${check.toLowerCase()}`,
+    profile: index === 1 ? "review" : "scout",
+    parentId: `demo-${group * 4}`,
+    depth: DEFAULT_POLICY.depth,
+  })),
+]);
+const queued = Array.from({ length: DEFAULT_POLICY.queue }, (_, index) => ({
+  assignment: `${topics[index % topics.length]}: follow-up ${Math.floor(index / topics.length) + 1}`,
+  profile: index % 2 ? "review" : "scout",
   parentId: "root",
   depth: 1,
-  assignment,
-  profile,
-  status: status as ChildSnapshot["status"],
-  limits: { deadlineMs: 600000, requests: 100, tools: 100, depth: 2, spawns: 8 },
-  toolCalls: 1,
+}));
+if (running.length !== DEFAULT_POLICY.concurrency)
+  throw new Error("Update the illustration tree to match default concurrency");
+const children: ChildSnapshot[] = [...running, ...queued].map((task, index) => ({
+  id: `demo-${index}`,
+  generation: 1,
+  ...task,
+  status: index < running.length ? "running" : "queued",
+  limits: { ...DEFAULT_POLICY },
+  toolCalls: index < running.length ? 12 + index : 0,
   tools: ["read"],
-  activity: "Tool: read",
+  activity: index % 4 === 0 ? "Waiting for 3 nested scout/review audits" : "Tool: read",
   progress: "",
   result: "",
   model: { provider: "synthetic", id: "demo" },
   effort: null,
   telemetry: { requests: null, tokens: null, cost: null, context: null },
-  disposed: status === "cancelled",
+  disposed: false,
   createdAt: 1000,
   endedAt: null,
-  writerLease: profile === "implementation",
+  writerLease: false,
 }));
 const coordinator = new DelegationCoordinator("unused-illustration-only", "root");
 coordinator.list = () => children;
 coordinator.generations = (id) => children.filter((child) => child.id === id);
 coordinator.messages = () => [
   { role: "user", timestamp: 1, content: children[0].assignment },
-  fauxAssistantMessage(fauxToolCall("read", { path: "input.txt" }, { id: "demo-read" }), {
+  fauxAssistantMessage(fauxToolCall("read", { path: "audit-plan.txt" }, { id: "demo-read" }), {
     stopReason: "toolUse",
   }),
   {
@@ -64,7 +78,15 @@ coordinator.messages = () => [
     content: [
       {
         type: "text",
-        text: "Synthetic input for the offline fleet demo.\nNo live provider requests.",
+        text: [
+          "Synthetic capacity-demo plan (not repository source).",
+          "16 running tasks; 32 queued across two root batches.",
+          "4 audit leads + 12 nested scouts/reviewers; depth 2.",
+          "Each lead delegates 3 checks in the foreground.",
+          "Read-only tools; no child messaging grants required.",
+          "Per task: 30 minutes, 100 requests, 100 tool calls.",
+          "No live provider requests or load-test results.",
+        ].join("\n"),
       },
     ],
     isError: false,
@@ -96,7 +118,7 @@ const hub = createHub(
   () => {},
   () => {},
   { tui, cwd: process.cwd() },
-  () => 21,
+  () => 37,
 );
 const profiles = createProfileViewer(
   bundledProfiles(),
@@ -119,10 +141,10 @@ const title = widgetMode
     ? "Subagent Profiles"
     : "Subagent Hub";
 const description = widgetMode
-  ? "Production pinned widget with task counts and live activity. Synthetic offline fleet data; not a terminal screenshot."
+  ? "Production pinned widget at default capacity: 16 running, 32 queued, nesting depth 2. Synthetic data; not a terminal screenshot."
   : profilesMode
     ? "Production profile viewer with bundled profiles and no inherited skills. Synthetic offline data; not a terminal screenshot."
-    : "Production terminal renderer with aligned agent names and profiles, without generation badges. Synthetic offline fleet data; not a terminal screenshot.";
+    : "Production terminal renderer at default capacity: 16 running, 32 queued, nesting depth 2. Synthetic data; not a terminal screenshot.";
 const escape = (text: string) =>
   text
     .replaceAll("&", "&amp;")

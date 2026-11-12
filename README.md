@@ -5,9 +5,9 @@
 
 Delegate work to subagents in Pi, follow their progress, and steer or stop them from Subagent Hub. Subagents use your selected model by default, with their own assignments and explicit tool grants.
 
-![Terminal illustration of Subagent Hub with a four-task list on the left and the selected Reader alpha conversation on the right, including a native read-tool result containing synthetic input.](docs/images/subagent-hub.svg)
+![Terminal illustration of the pinned Subagents widget showing 48 tasks: 16 running and 32 queued, with a hidden nested-agent summary and an overflow link to Subagent Hub.](docs/images/subagent-widget.svg)
 
-_Subagent Hub: tasks and conversations side by side, with each profile and status aligned beneath its agent’s name. Illustrated with synthetic demo data._
+_Pinned Subagents widget at default capacity: 16 running tasks and 32 queued. Counts and nested-agent progress stay visible above the editor. Synthetic demo data, not a live load test._
 
 ## Installation
 
@@ -126,11 +126,11 @@ Subagent Hub shows the task list beside the selected conversation using Pi's nat
 
 The thread follows new output until you scroll up. Press End to follow again. The pinned Subagents widget appears after the first task starts. Closing Subagent Hub does not stop the work.
 
-These illustrations use native renderer output with synthetic data modeled on the [offline fleet demo](examples/controlled-fleet.ts); they are not terminal screenshots.
+The Hub and widget illustrations use native renderer output with a synthetic fleet filling the default 16 concurrent slots and 32-item queue. Four read-only audit leads each have three foreground descendants, reaching the default nesting depth of two. The queue represents two further 16-task root batches, not one oversized batch. These are illustrations, not terminal screenshots or live-provider stress-test evidence. Regenerate them with `node scripts/render-hub-hero.ts` and `node scripts/render-hub-hero.ts --widget`.
 
-![Terminal illustration of the pinned Subagents widget showing four tasks: two running, one queued and one cancelled, with a live activity preview.](docs/images/subagent-widget.svg)
+![Terminal illustration of Subagent Hub at default capacity: 48 tasks, with nested audit agents in the list and a synthetic capacity plan in the selected conversation.](docs/images/subagent-hub.svg)
 
-_Pinned Subagents widget: task counts and recent activity stay visible above the editor._
+_Subagent Hub at default capacity: tasks and conversations side by side, with nested scouts/reviewers at depth two. The roster scrolls through all 48 tasks._
 
 | Key                   | Action                                            |
 | --------------------- | ------------------------------------------------- |

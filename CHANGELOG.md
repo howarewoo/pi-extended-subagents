@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- Keep Hub tree lanes, unselected agent names and status text in the normal foreground color. Highlight the selected name and selection marker with the accent color, while profile words and status circles retain lifecycle coloring, including compact views.
+
+- Replace the widget activity preview with a summary below the visible child when its parent has additional hidden running children. Show “2 more nested subagents running” for the capacity illustration while keeping the total hidden-fleet overflow count unchanged.
+
+- Add lifecycle-colored status circles to the Hub roster and compact selected-agent header. Use a tee for widget activity when a visible child follows, preserving the last child's elbow connector.
+
+- Render connected subagent trees with three-column widget lanes and four-column Hub lanes, last-sibling elbow branches and continuing ancestor pipes, including aligned activity/profile rows. Group descendants by parent generation. The widget closes its last visible nested sibling before the overflow summary; Hub connectors reflect the full roster across viewport clipping. Remove blank separator rows between Hub agents and refresh the README illustrations. Indentation remains capped at three displayed levels and width/row bounds are unchanged.
+
+- Refresh README Hub and widget illustrations to show the default capacity of 16 running tasks and 32 queued, with depth-two scout/review nesting and bounded widget overflow. Move the widget to the README introduction and the Hub image into its own section. Generate fixtures from the scheduling defaults and retain explicit synthetic-data disclosures; runtime limits are unchanged.
+
 - Simplify README installation and update guidance now that the repository rename is complete. Keep current npm/Git sources, duplicate-loading precautions and a link to the historical package migration instructions.
 
 ## [0.2.0]

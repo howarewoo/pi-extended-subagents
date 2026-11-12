@@ -20,6 +20,37 @@ export const activity = (child: ChildSnapshot) =>
   child.progress ||
   "Waiting for SDK activity";
 export const writerWarning = "Model-tool writer only: no conflicting manual !/!! or external edits";
+/** Presentation-only preorder, keyed by exact parent generation. */
+export function taskTree(children: ChildSnapshot[], { laneWidth = 4, rootContinues = false } = {}) {
+  const byIdentity = new Map(children.map((child) => [`${child.id}/${child.generation}`, child]));
+  const siblings = new Map<ChildSnapshot | undefined, ChildSnapshot[]>();
+  for (const child of children) {
+    const candidate = byIdentity.get(
+      `${child.parentId}/${child.parentGeneration ?? child.generation}`,
+    );
+    const parent = candidate && candidate.depth < child.depth ? candidate : undefined;
+    const group = siblings.get(parent) ?? [];
+    group.push(child);
+    siblings.set(parent, group);
+  }
+  const rows: { child: ChildSnapshot; indent: string; last: boolean; continuation: string }[] = [];
+  const visit = (parent: ChildSnapshot | undefined, lanes: string) => {
+    const group = siblings.get(parent) ?? [];
+    group.forEach((child, index) => {
+      const last = index === group.length - 1 && (parent !== undefined || !rootContinues);
+      // Missing/filtered ancestors retain depth without inventing continuation pipes.
+      const indent = parent
+        ? lanes.slice(0, laneWidth * 3)
+        : " ".repeat(laneWidth * Math.min(3, Math.max(0, child.depth - 1)));
+      const continuation = indent + (last ? " " : "│") + " ".repeat(laneWidth - 1);
+      rows.push({ child, indent, last, continuation });
+      visit(child, continuation);
+    });
+  };
+  visit(undefined, "");
+  return rows;
+}
+
 export const statuses = [
   "queued",
   "setup",

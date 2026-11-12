@@ -174,7 +174,7 @@ test(
       hub.handleInput!("/");
       hub.handleInput!(first.id);
       hub.handleInput!("\r");
-      assert.match(render(), /> └ writer/);
+      assert.match(render(), /> [├└] ● writer/);
       assert.equal(f.coordinator.snapshot(first)!.writerLease, true);
       assert.equal(f.coordinator.snapshot(second)!.status, "queued");
       assert.deepEqual(f.coordinator.messages(second), []);
@@ -253,7 +253,7 @@ test("real SDK selected generation retains full outcomes/transcript/artifacts ac
     render(); // pin original, not the warmup
     const next = await f.coordinator.renew(ref, { ...admission(), assignment: "successor" });
     await f.coordinator.wait(next);
-    assert.match(render(), /> └ original/);
+    assert.match(render(), /> [├└] ● original/);
     assert.doesNotMatch(render(), /#1/, "generation badge is not shown in the roster");
     hub.handleInput!("\x1b[F");
     assert.match(render(), /structured original/);
@@ -337,12 +337,12 @@ test(
       hub.handleInput!("/");
       hub.handleInput!("running");
       hub.handleInput!("\r");
-      assert.match(render(), /> └ first/);
+      assert.match(render(), /> [├└] ● first/);
       hub.handleInput!("m");
       hub.handleInput!("never redirect me");
       stopping = f.coordinator.stop(first);
       await eventually(() => f.coordinator.snapshot(first)!.status === "draining");
-      assert.match(render(), /> └ second/);
+      assert.match(render(), /> [├└] ● second/);
       assert.match(render(), new RegExp(`Target: ${first.id} #1`));
       const calls = f.model.state.callCount;
       hub.handleInput!("\r");
