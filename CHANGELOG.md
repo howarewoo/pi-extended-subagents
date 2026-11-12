@@ -5,6 +5,11 @@
 - Create new task/generation, agent and transcript directories with private POSIX mode `0700`, preserving exclusive creation and `0600` outcome artifacts. Existing records and parent/global storage permissions are unchanged; Windows access control remains dependent on filesystem ACLs.
 - Enforce live initiator/ancestor grant revocation for nested task-file reads, spawning and coordination before protected effects; malformed policy fails closed. Already in-flight work and accepted mailbox effects are not rolled back.
 
+### Release isolation
+
+- Separate release validation, human-protected npm publication and GitHub release creation into jobs with distinct credentials. Publish only the exact smoke-tested tarball after mandatory SHA-512 and release-identity verification; suppress npm lifecycle scripts.
+- Repository owners must configure the `npm` environment approval and release-tag protections, and verify npm trusted publishing before a live release. These account settings are not configured by the workflow.
+
 ### Breaking — next minor release
 
 - Require stable Pi 1.5.2 or newer for delegated execution, including native and compatibility launches, resume, followup, revive and direct coordinator execution. Below-minimum, prerelease, malformed and unknown versions reject before task-file reads, child allocation, task-directory setup or child model requests, with an error naming the detected version and minimum stable version. Newer stable patch, minor and major versions are allowed; standard build metadata has equal precedence. Tested host remains Pi 1.5.2, not a compatibility guarantee for future allowed stable versions.
