@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Refresh README Hub and widget illustrations to show the default capacity of 16 running tasks and 32 queued, with depth-two scout/review nesting and bounded widget overflow. Move the widget to the README introduction and the Hub image into its own section. Generate fixtures from the scheduling defaults and retain explicit synthetic-data disclosures; runtime limits are unchanged.
+
 - Simplify README installation and update guidance now that the repository rename is complete. Keep current npm/Git sources, duplicate-loading precautions and a link to the historical package migration instructions.
 
 ## [0.2.0]
