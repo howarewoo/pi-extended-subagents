@@ -17,6 +17,8 @@ import { createHub } from "../src/hub.ts";
 import { createProfileViewer } from "../src/profile-viewer.ts";
 import { bundledProfiles } from "../src/profiles.ts";
 
+// The SVG converter expects RGB colors, including those from native thread components.
+process.env.COLORTERM = "truecolor";
 initTheme("dark", false);
 const children: ChildSnapshot[] = [
   ["Reader alpha: inspect input.txt", "scout", "running"],
