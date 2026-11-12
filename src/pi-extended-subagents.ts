@@ -155,6 +155,13 @@ export default function delegation(pi: ExtensionAPI) {
         throw new Error(`Delegation requires an unmodified built-in parent tool: ${name}`);
     }
   };
+  const codemodeEnabled = () =>
+    pi.getActiveTools().includes("codemode") &&
+    pi
+      .getAllTools()
+      .some(
+        (tool) => tool.name === "codemode" && tool.exposure === "model-only" && !!tool.reachesTools,
+      );
   const taskTool = (
     parent?: ChildRef,
     rootContext?: ExtensionToolContext,
@@ -295,6 +302,7 @@ export default function delegation(pi: ExtensionAPI) {
           context: ctx,
           assertTools,
           toolMetadata: () => pi.getAllTools(),
+          codemodeEnabled,
           availableSkills,
           callerId: rootCallerId ?? callerId,
           parent,
@@ -457,6 +465,7 @@ export default function delegation(pi: ExtensionAPI) {
               context: ctx,
               assertTools,
               toolMetadata: () => pi.getAllTools(),
+              codemodeEnabled,
               availableSkills,
               callerId,
               parent,

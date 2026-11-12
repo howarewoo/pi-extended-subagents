@@ -288,8 +288,18 @@ test(
 );
 
 test("new leaf grants cannot broaden an admitted ancestor ceiling", async (t) => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = false;
   const f = await fixture(t, {
-    speed: 100,
+    speed: 0,
+    response: async () => {
+      entered = true;
+      await gate;
+      return fauxAssistantMessage("done");
+    },
     tools: "default",
     extra: (pi) => {
       pi.registerTool({
@@ -309,19 +319,26 @@ test("new leaf grants cannot broaden an admitted ancestor ceiling", async (t) =>
     return start(value);
   });
   f.session.setActiveToolsByName([...f.session.getActiveToolNames(), "leaf"]);
-  const parent = await f.direct("parent ".repeat(1000));
-  assert.ok(input);
-  await configure(f.root, { tools: ["read"], spawn: ["general"], leafTools: ["leaf"] });
-  const { resolveProfile } = await import("../src/profiles.ts");
-  const selected = await resolveProfile("general", f.root, false);
-  await assert.rejects(
-    () =>
-      f.coordinator.admit([
-        { ...input!, ...selected, parent, assignment: "cannot regain root leaf" },
-      ]),
-    /broaden ancestor grants/,
-  );
-  await f.coordinator.stop(parent);
+  try {
+    const parent = await f.direct("parent");
+    // Hold the actual response until admission finishes, rather than racing streaming speed.
+    await eventually(() => entered);
+    assert.equal(final(f, parent.id).status, "running");
+    assert.ok(input);
+    await configure(f.root, { tools: ["read"], spawn: ["general"], leafTools: ["leaf"] });
+    const { resolveProfile } = await import("../src/profiles.ts");
+    const selected = await resolveProfile("general", f.root, false);
+    await assert.rejects(
+      () =>
+        f.coordinator.admit([
+          { ...input!, ...selected, parent, assignment: "cannot regain root leaf" },
+        ]),
+      /broaden ancestor grants/,
+    );
+  } finally {
+    // Release before fixture shutdown, including when an assertion fails.
+    release();
+  }
 });
 
 test("actual SDK renewal removes revoked leaf/skill grants and cannot regain them later", async (t) => {

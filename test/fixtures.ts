@@ -77,11 +77,20 @@ export async function fixture(
   let context: ExtensionToolContext | undefined;
   let contextCallerId = "";
   let toolMetadata!: ExtensionAPI["getAllTools"];
+  let codemodeEnabled!: () => boolean;
   let assertTools!: (names: readonly string[]) => void;
   const coordinator = new DelegationCoordinator(join(root, "direct"), "test-parent");
   coordinator.subscribe((event) => events.push(event));
   const observer: ExtensionFactory = (pi) => {
     toolMetadata = () => pi.getAllTools();
+    codemodeEnabled = () =>
+      pi.getActiveTools().includes("codemode") &&
+      pi
+        .getAllTools()
+        .some(
+          (tool) =>
+            tool.name === "codemode" && tool.exposure === "model-only" && !!tool.reachesTools,
+        );
     assertTools = (names) => {
       for (const name of names)
         if (
@@ -202,6 +211,7 @@ export async function fixture(
       context: context!,
       assertTools,
       toolMetadata,
+      codemodeEnabled,
       callerId: contextCallerId,
       ...overrides,
     });

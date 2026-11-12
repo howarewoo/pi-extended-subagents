@@ -408,7 +408,18 @@ export class DelegationCoordinator {
           `Profile ${profile.name} has no callable parent builtin tools; enable an allowed parent tool or choose a usable profile`,
         );
       input.assertTools(profile.tools);
-      return { ...input, profile, cwd, capabilityDenials, leafProvenance };
+      // Capture the admitted ceiling, but keep root/ancestor revocation live. A nested
+      // task uses the root dispatcher context, not its immediate parent's SDK context.
+      const inheritedCodemode = input.parent
+        ? this.entry(input.parent).input.codemodeEnabled
+        : undefined;
+      const enabled =
+        !!input.codemodeEnabled?.() &&
+        (!input.parent || !!inheritedCodemode?.()) &&
+        (!previous || !!previous.input.codemodeEnabled?.());
+      const codemodeEnabled = () =>
+        enabled && !!input.codemodeEnabled?.() && (!input.parent || !!inheritedCodemode?.());
+      return { ...input, profile, cwd, capabilityDenials, leafProvenance, codemodeEnabled };
     });
     if (previous) {
       if (

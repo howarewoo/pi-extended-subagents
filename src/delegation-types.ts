@@ -98,6 +98,8 @@ export type StartTask = {
   context: ExtensionToolContext;
   assertTools: (names: readonly string[]) => void;
   toolMetadata?: () => readonly ToolMetadata[];
+  /** Live parent codemode availability; never a grant to forward its dispatcher. */
+  codemodeEnabled?: () => boolean;
   availableSkills?: () => readonly Skill[];
   capabilityDenials?: CapabilityDenial[];
   leafProvenance?: Readonly<Record<string, string>>;
