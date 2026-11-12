@@ -1,41 +1,19 @@
 import { requireSupportedHost } from "./supported-host.ts";
-import {
-  leafDenial,
-  toolProvenance,
-  type ToolMetadata,
-  type CapabilityDenial,
-} from "./capabilities.ts";
+import { leafDenial, toolProvenance, type CapabilityDenial } from "./capabilities.ts";
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import {
-  createAgentSession,
-  createExtensionRuntime,
-  DefaultResourceLoader,
   SessionManager,
-  SettingsManager,
   type AgentSession,
   type AgentSessionEvent,
-  type ExtensionToolContext,
-  type ResourceLoader,
-  type Skill,
-  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import {
-  resultValidator,
-  submissionParameters,
-  saveOutcomeArtifact,
-  type StructuredOutcome,
-} from "./outcomes.ts";
-import type { Validator } from "@earendil-works/pi-schema";
+import { resultValidator } from "./outcomes.ts";
 import {
   allowsModel,
   sameSelection,
   validateModelSelection,
   type ModelSelection,
 } from "./model-policy.ts";
-import { parentModelRuntime } from "./model-adapter.ts";
-import { resolveWorkspace, workspaceArguments } from "./workspace.ts";
+import { resolveWorkspace } from "./workspace.ts";
 import {
   DEFAULT_POLICY,
   resolveScheduling,
@@ -61,129 +39,43 @@ const MAX_WAITERS = 64;
 const MAX_WAIT_MS = 60000;
 const MAX_GENERATIONS = 64;
 
-export type DelegationMessage = {
-  id: string;
-  sender: ChildRef | "root";
-  recipient: ChildRef | "root";
-  text: string;
-  mode: "inbox" | "steer" | "followUp";
-  status: "accepted" | "queued" | "handled" | "delivered" | "not-running" | "error";
-  error?: string;
-};
-export type CoordinationWait =
-  | { status: "timeout" | "cancelled" | "shutdown" }
-  | { status: "messages"; messages: DelegationMessage[] }
-  | { status: "message"; message: DelegationMessage }
-  | {
-      status: "outcome";
-      outcome: Pick<ChildSnapshot, "id" | "generation" | "status" | "limitReason" | "pauseReason">;
-    };
-export type ChildRef = Readonly<{ id: string; generation: number }>;
-export type ChildSnapshot = Readonly<
-  ChildRef & {
-    parentId: string;
-    parentGeneration?: number;
-    depth: number;
-    writerLease: boolean;
-    limits: ExecutionLimits;
-    limitReason?: string;
-    toolCalls: number;
-    spawned?: number;
-    pauseReason?: string;
-    retainedContext?: boolean;
-    window?: number;
-    status:
-      | "queued"
-      | "setup"
-      | "running"
-      | "pausing"
-      | "paused"
-      | "draining"
-      | "settled"
-      | "failed"
-      | "cancelled";
-    profile: string;
-    tools: readonly BuiltinTool[];
-    leafTools?: readonly string[];
-    skills?: readonly string[];
-    capabilityDenials?: readonly CapabilityDenial[];
-    cwd?: string;
-    assignment: string;
-    activity: string;
-    progress: string;
-    result: string;
-    model: { provider: string; id: string };
-    effort: string | null;
-    prewalk?: {
-      target: ModelSelection;
-      status: "armed" | "handed-off" | "suppressed-exact" | "no-op";
-    };
-    telemetry: {
-      requests: number | null;
-      tokens: ReturnType<AgentSession["getSessionStats"]>["tokens"] | null;
-      cost: number | null;
-      context: ReturnType<AgentSession["getContextUsage"]> | null;
-    };
-    outcome?: StructuredOutcome;
-    artifacts?: { text?: string; structured?: string; error?: string };
-    error?: string;
-    transcript?: string;
-    disposed: boolean;
-    createdAt: number;
-    endedAt: number | null;
-  }
->;
-export type RegistryEvent = Readonly<{
-  type: "changed" | "sdk";
-  child: ChildSnapshot;
-  event?: AgentSessionEvent;
-}>;
-export type StartTask = {
-  cwd?: string;
-  model?: ModelSelection;
-  resultSchema?: unknown;
-  assignment: string;
-  profile: Profile;
-  skills: Skill[];
-  context: ExtensionToolContext;
-  assertTools: (names: readonly string[]) => void;
-  toolMetadata?: () => readonly ToolMetadata[];
-  availableSkills?: () => readonly Skill[];
-  capabilityDenials?: CapabilityDenial[];
-  leafProvenance?: Readonly<Record<string, string>>;
-  callerId: string;
-  parent?: ChildRef;
-  limits?: Partial<ExecutionLimits>;
-  coordinationTools?: (actor: ChildRef) => ToolDefinition[];
-  nestedTool?: (parent: ChildRef) => ToolDefinition;
-};
-type ChildSelection = Pick<
-  ExtensionToolContext,
-  "model" | "modelRegistry" | "scopedModels" | "thinkingLevel" | "cwd"
->;
-type Entry = {
-  validator?: Validator;
-  input: StartTask;
-  selection: ChildSelection;
+export type {
+  DelegationMessage,
+  CoordinationWait,
+  ChildRef,
+  ChildSnapshot,
+  RegistryEvent,
+  StartTask,
+} from "./delegation-types.ts";
+import type {
+  DelegationMessage,
+  CoordinationWait,
+  ChildRef,
+  ChildSnapshot,
+  RegistryEvent,
+  StartTask,
+} from "./delegation-types.ts";
+import { createChildExecution, type ExecutionRecord } from "./child-execution.ts";
+export { childResources } from "./child-execution.ts";
+
+type Entry = ExecutionRecord & {
   done: Promise<void>;
   finish: () => void;
-  timer?: ReturnType<typeof setTimeout>;
   spawned: number;
-  state: ChildSnapshot;
   finalizedMessages?: AgentSession["messages"];
   setup?: Promise<void>;
-  run?: Promise<void>;
-  session?: AgentSession;
-  unsubscribe?: () => void;
-  paused?: boolean;
   resuming?: boolean;
   pauseDrain?: Promise<void>;
-  prompt?: (text: string) => Promise<void>;
-  resumeText?: string;
-  prompted?: boolean;
-  cancelled: boolean;
   callerId: string;
 };
+
+function broadenedGrant(profile: Profile, grant: Profile) {
+  return (["tools", "skills", "leafTools", "spawn", "coordination"] as const).find((key) =>
+    (profile[key] ?? []).some(
+      (value) => !(grant[key] as readonly string[] | undefined)?.includes(value),
+    ),
+  );
+}
 
 function admittedModel(entry: Entry, selection: ModelSelection): boolean {
   return entry.input.profile.models === undefined
@@ -192,25 +84,6 @@ function admittedModel(entry: Entry, selection: ModelSelection): boolean {
         effort: entry.state.effort as ModelSelection["effort"],
       })
     : allowsModel(entry.input.profile, selection);
-}
-
-export function childResources(prompt: string, skills: Skill[] = []): ResourceLoader {
-  const extensions = { extensions: [], errors: [], runtime: createExtensionRuntime() };
-  return {
-    getExtensions: () => extensions,
-    getSkills: () => ({ skills, diagnostics: [] }),
-    getPrompts: () => ({ prompts: [], diagnostics: [] }),
-    getThemes: () => ({ themes: [], diagnostics: [] }),
-    getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () =>
-      prompt +
-      "\nYou are a delegated child. Complete only this assignment; use only explicitly granted tools and spawn roles.",
-    getSystemPromptSource: () => undefined,
-    getAppendSystemPrompt: () => [],
-    getAppendSystemPromptSources: () => [],
-    extendResources: () => {},
-    reload: async () => {},
-  };
 }
 
 /** Authoritative parent-lifetime registry. IDs are never reused; controls require their generation. */
@@ -319,7 +192,7 @@ export class DelegationCoordinator {
         !entry.state.disposed && entry.state.status !== "queued" && entry.state.status !== "paused",
     );
   }
-  private validate(input: StartTask): ChildSelection {
+  private validate(input: StartTask): ExecutionRecord["selection"] {
     if (this.closing) throw new Error("Parent shut down");
     if (!input.assignment.trim()) throw new Error("A nonempty assignment is required");
     const selection = {
@@ -366,15 +239,7 @@ export class DelegationCoordinator {
         throw new Error("Ancestor spawn role denied");
       if (parent.state.depth >= Math.min(this.policy.depth, parent.state.limits.depth))
         throw new Error("Delegation depth limit");
-      if (
-        input.profile.tools.some((tool) => !parent.input.profile.tools.includes(tool)) ||
-        input.profile.skills.some((skill) => !parent.input.profile.skills.includes(skill)) ||
-        input.profile.leafTools?.some((name) => !parent.input.profile.leafTools?.includes(name)) ||
-        input.profile.spawn?.some((role) => !parent.input.profile.spawn?.includes(role)) ||
-        input.profile.coordination?.some(
-          (action) => !parent.input.profile.coordination?.includes(action),
-        )
-      )
+      if (broadenedGrant(input.profile, parent.input.profile))
         throw new Error("Descendant cannot broaden ancestor grants");
       let ancestor: Entry | undefined = parent;
       while (ancestor) {
@@ -503,13 +368,7 @@ export class DelegationCoordinator {
     }
     await this.authorize(
       ref,
-      (grant, index) =>
-        !!grant.spawn?.includes(roles[index]) &&
-        (["tools", "skills", "leafTools", "spawn", "coordination"] as const).every((key) =>
-          (profile[key] ?? []).every((value) =>
-            (grant[key] as readonly string[] | undefined)?.includes(value),
-          ),
-        ),
+      (grant, index) => !!grant.spawn?.includes(roles[index]) && !broadenedGrant(profile, grant),
       "Current or admitted ancestor spawn grant denied; descendant cannot broaden ancestor grants",
     );
   }
@@ -572,13 +431,7 @@ export class DelegationCoordinator {
         throw new Error("Follow-up cannot broaden previous model grants");
       if (
         profile.name !== previous.input.profile.name ||
-        profile.tools.some((tool) => !previous.input.profile.tools.includes(tool)) ||
-        profile.skills.some((skill) => !previous.input.profile.skills.includes(skill)) ||
-        profile.leafTools?.some((name) => !previous.input.profile.leafTools?.includes(name)) ||
-        profile.spawn?.some((role) => !previous.input.profile.spawn?.includes(role)) ||
-        profile.coordination?.some(
-          (action) => !previous.input.profile.coordination?.includes(action),
-        )
+        broadenedGrant(profile, previous.input.profile)
       )
         throw new Error("Follow-up cannot broaden previous grants");
     }
@@ -788,7 +641,7 @@ export class DelegationCoordinator {
         ? Promise.resolve().then(() => {
             if (!entry.paused && !entry.cancelled) return entry.prompt!(entry.resumeText!);
           })
-        : this.create(entry, entry.input, entry.selection);
+        : this.create(entry);
       this.update(entry, {});
       void entry.setup.catch(() => {});
     }
@@ -897,13 +750,8 @@ export class DelegationCoordinator {
           throw new Error("Resume denied: ancestor spawn role revoked");
         // Reject revoked grants instead of rebuilding an SDK tool/resource graph. This never
         // broadens the original admission and leaves the paused conversation recoverable.
-        for (const key of ["tools", "skills", "leafTools", "spawn", "coordination"] as const)
-          if (
-            (input.profile[key] ?? []).some(
-              (grant) => !(profile[key] as readonly string[] | undefined)?.includes(grant),
-            )
-          )
-            throw new Error(`Resume denied: current ${key} grant revoked`);
+        const revoked = broadenedGrant(input.profile, profile);
+        if (revoked) throw new Error(`Resume denied: current ${revoked} grant revoked`);
         if (
           current === entry &&
           entry.state.prewalk?.status === "armed" &&
@@ -1009,443 +857,126 @@ export class DelegationCoordinator {
     this.update(entry, { limitReason: reason, error: `Execution limit: ${reason}` });
     void this.stop(entry.state);
   }
-  private async create(entry: Entry, input: StartTask, selection: ChildSelection): Promise<void> {
-    try {
-      await mkdir(this.root, { recursive: true });
-      const taskDir = join(
-        this.root,
-        entry.state.generation === 1
-          ? entry.state.id
-          : `${entry.state.id}-g${entry.state.generation}`,
-      );
-      await mkdir(taskDir, { mode: 0o700 }); // exclusive ownership: never reuse an existing task record
-      const agentDir = join(taskDir, "agent");
-      await mkdir(agentDir, { mode: 0o700 });
-      const transcriptDir = join(taskDir, "transcripts");
-      await mkdir(transcriptDir, { mode: 0o700 });
-      const target =
-        entry.state.prewalk?.status === "armed"
-          ? validateModelSelection(input.context, entry.state.prewalk.target)
-          : undefined;
-      let policyError: string | undefined;
-      const effective = (): ModelSelection => ({
-        ...entry.state.model,
-        effort: entry.state.effort as ModelSelection["effort"],
-      });
-      const revalidate = async (selected: ModelSelection, requirePrewalk: boolean) => {
-        let current: Entry | undefined = entry;
-        while (current) {
-          const policy = (
-            await resolveProfile(
-              current.input.profile.name,
-              input.context.cwd,
-              input.context.isProjectTrusted(),
-              undefined,
-              current.input.availableSkills?.() ?? current.input.skills,
-            )
-          ).profile;
-          if (
-            (current.input.profile.models !== undefined && policy.models === undefined) ||
-            !allowsModel(policy, selected) ||
-            !admittedModel(current, selected)
-          )
-            throw new Error("Current or admitted model policy denied selection");
-          if (
-            current === entry &&
-            requirePrewalk &&
-            (!policy.prewalk || !sameSelection(policy.prewalk, entry.state.prewalk!.target))
-          )
-            throw new Error("Current prewalk grant revoked");
-          current = current.input.parent ? this.entry(current.input.parent) : undefined;
-        }
-        validateModelSelection(input.context, selected);
-      };
-      const runtime = await parentModelRuntime(
-        selection,
-        agentDir,
-        () => {
-          if (policyError) throw new Error(policyError);
-          validateModelSelection(input.context, effective());
-          if (entry.cancelled || entry.paused || this.closing)
-            throw new Error("Delegation cancelled");
-          if ((entry.state.telemetry.requests ?? 0) >= entry.state.limits.requests) {
-            this.limit(entry, "requests");
-            throw new Error("Direct request limit");
-          }
-          this.update(entry, {
-            telemetry: {
-              ...entry.state.telemetry,
-              requests: (entry.state.telemetry.requests ?? 0) + 1,
-            },
-          });
-        },
-        target ? [target] : [],
-      );
-      const resources = childResources(
-        input.profile.prompt +
-          (target
-            ? "\nPrewalk: investigate and plan using only granted context/tools. After the first completed edit or write the same conversation switches once to the explicitly granted implementation target; all normal budgets still apply."
-            : "") +
-          `\nYour delegation identity is ${entry.state.id} generation ${entry.state.generation}; parent ${entry.state.parentId}. Coordination, if granted, is limited to family identities explicitly supplied to you.` +
-          (entry.validator
-            ? "\nThis assignment requires a structured result. Call submit_result with the actual value; final prose is not a submission."
-            : ""),
-        input.skills,
-      );
-      const loader = new DefaultResourceLoader({
-        cwd: selection.cwd,
-        agentDir,
-        settingsManager: SettingsManager.inMemory(),
-        noExtensions: true,
-        noSkills: true,
-        noPromptTemplates: true,
-        noThemes: true,
-        noContextFiles: true,
-        extensionFactories: [
-          (pi) => {
-            pi.on("turn_start", async () => {
-              try {
-                await revalidate(effective(), entry.state.prewalk?.status === "armed");
-                policyError = undefined;
-              } catch (error) {
-                policyError = String(error);
-              }
-            });
-            pi.on("turn_end", async (event) => {
-              if (
-                !entry.cancelled &&
-                !entry.paused &&
-                !this.closing &&
-                entry.state.prewalk?.status === "armed" &&
-                event.toolResults.some(
-                  (result) =>
-                    (result.toolName === "edit" || result.toolName === "write") &&
-                    input.profile.tools.includes(result.toolName),
-                )
-              ) {
-                try {
-                  const next = entry.state.prewalk.target;
-                  await revalidate(next, true);
-                  if (entry.cancelled || entry.paused || this.closing) return;
-                  await entry.session!.setModel(target!);
-                  entry.session!.setThinkingLevel(next.effort);
-                  if (entry.session!.thinkingLevel !== next.effort)
-                    throw new Error("SDK coerced prewalk effort");
-                  this.update(entry, {
-                    model: { provider: next.provider, id: next.id },
-                    effort: next.effort,
-                    prewalk: { target: next, status: "handed-off" },
-                  });
-                } catch (error) {
-                  policyError = String(error);
-                }
-              }
-            });
-          },
-        ],
-      });
-      await loader.reload();
-      resources.getExtensions = () => loader.getExtensions();
-      const tools: ToolDefinition[] = [
-        ...input.profile.tools,
-        ...(input.profile.leafTools ?? []),
-      ].map((name) => {
-        const tool = input.context.tools.find((tool) => tool.name === name);
-        if (!tool) throw new Error(`Admitted parent tool is no longer callable: ${name}`);
-        return {
-          name,
-          label: name,
-          description: tool.description,
-          parameters: tool.parameters,
-          execute: async (_id, args, signal, onUpdate) => {
-            if (entry.cancelled || entry.paused || this.closing)
-              throw new Error("Delegation cancelled");
-            if (!input.context.tools.some((tool) => tool.name === name))
-              throw new Error(`Admitted parent tool is no longer callable: ${name}`);
-            const builtin = input.profile.tools.includes(name as BuiltinTool);
-            await this.authorize(
-              entry.state,
-              (profile) =>
-                builtin
-                  ? profile.tools.includes(name as BuiltinTool)
-                  : !!profile.leafTools?.includes(name),
-              `Current capability grant revoked: ${name}`,
-            );
-            this.assertActive(entry);
-            signal?.throwIfAborted();
-            if (builtin) input.assertTools([name]);
-            else {
-              const metadata = input.toolMetadata?.().find((tool) => tool.name === name);
-              if (
-                !metadata ||
-                leafDenial(
-                  metadata,
-                  input.profile.leafTools ?? [],
-                  selection.cwd === resolveWorkspace(undefined, input.context.cwd),
-                ) ||
-                toolProvenance(metadata) !== input.leafProvenance?.[name]
-              )
-                throw new Error(`Leaf capability revoked or reclassified: ${name}`);
-            }
-            if (!input.context.tools.some((tool) => tool.name === name))
-              throw new Error(`Admitted parent tool is no longer callable: ${name}`);
-            // The public parent dispatcher preserves validation and permission hooks. Do not
-            // call a raw create*Tool.execute here: that would bypass operator policy.
-            const outcome = await input.context.executeTool(
-              name,
-              builtin
-                ? workspaceArguments(name as BuiltinTool, args, selection.cwd, input.context.cwd)
-                : args,
-              { signal, onUpdate },
-            );
-            return { ...outcome.result, isError: outcome.isError };
-          },
-        };
-      });
-      if (entry.validator) {
-        const submission: ToolDefinition<typeof submissionParameters> = {
-          name: "submit_result",
-          label: "Submit result",
-          exposure: "model-only",
-          description: `Submit the assignment's required structured JSON value exactly once. Invalid values return errors and can be corrected within normal limits. Submission is provisional until prompt/tools/descendants drain; it never overrides cancellation or failure. Required schema: ${JSON.stringify(input.resultSchema)}`,
-          parameters: submissionParameters,
-          execute: async (_id, args, signal) => {
-            signal?.throwIfAborted();
-            if (
-              entry.cancelled ||
-              this.closing ||
-              entry.state.disposed ||
-              entry.state.status !== "running"
-            )
-              throw new Error("Submission identity is no longer running");
-            const outcome = entry.state.outcome!;
-            if (outcome.validation === "submitted")
-              throw new Error("A result was already submitted; duplicate submission rejected");
-            const checked = entry.validator!.validate(args.value);
-            if (!checked.ok) {
-              const errors = checked.errors
-                .map((error) => `${error.path || "/"}: ${error.message}`)
-                .slice(0, 32);
-              this.update(entry, {
-                outcome: {
-                  validation: "invalid",
-                  attempts: outcome.attempts + 1,
-                  errors,
-                  finalized: false,
-                },
-              });
-              throw new Error(
-                "Invalid structured result; correct and resubmit: " + errors.join("; "),
-              );
-            }
-            this.update(entry, {
-              outcome: {
-                validation: "submitted",
-                attempts: outcome.attempts + 1,
-                errors: [],
-                value: structuredClone(args.value),
-                finalized: false,
-              },
-            });
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "Structured value submitted; final outcome awaits prompt/tool/descendant drain.",
-                },
-              ],
-              details: {},
-            };
-          },
-        };
-        tools.push(submission);
-      }
-      if (input.profile.coordination?.length && input.coordinationTools)
-        tools.push(
-          ...input.coordinationTools({ id: entry.state.id, generation: entry.state.generation }),
-        );
-      if (input.profile.spawn?.length && input.nestedTool)
-        tools.push(input.nestedTool(entry.state));
-      for (const tool of tools) {
-        const execute = tool.execute;
-        tool.execute = async (...args) => {
-          if (entry.cancelled || entry.paused || this.closing)
-            throw new Error("Delegation cancelled");
-          if (entry.state.toolCalls >= entry.state.limits.tools) {
-            this.limit(entry, "tools");
-            throw new Error("Tool call limit");
-          }
-          this.update(entry, { toolCalls: entry.state.toolCalls + 1 });
-          return execute(...args);
-        };
-      }
-      const { session, modelFallbackMessage } = await createAgentSession({
-        cwd: selection.cwd,
-        agentDir,
-        modelRuntime: runtime,
-        model: selection.model,
-        thinkingLevel: selection.thinkingLevel,
-        scopedModels: [
-          { model: selection.model!, thinkingLevel: selection.thinkingLevel },
-          ...(target ? [{ model: target, thinkingLevel: input.profile.prewalk!.effort }] : []),
-        ],
-        resourceLoader: resources,
-        tools: tools.map((tool) => tool.name),
-        customTools: tools,
-        settingsManager: SettingsManager.inMemory({
-          compaction: { enabled: false },
-          retry: { enabled: false },
-        }),
-        sessionManager: SessionManager.create(selection.cwd, transcriptDir),
-      });
-      entry.session = session;
-      if (session.thinkingLevel !== selection.thinkingLevel)
-        throw new Error("SDK did not preserve selected effort");
-      if (
-        modelFallbackMessage ||
-        session.model?.id !== selection.model?.id ||
-        session.model?.provider !== selection.model?.provider
-      )
-        throw new Error("SDK did not preserve selected model");
-      let markStarted = () => {};
-      entry.unsubscribe = session.subscribe((event) => {
-        const patch: { -readonly [K in keyof ChildSnapshot]?: ChildSnapshot[K] } = {};
-        if (event.type === "agent_start") {
-          patch.status = entry.cancelled ? "draining" : entry.paused ? "pausing" : "running";
-          markStarted();
-        }
-        if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-          patch.progress = (entry.state.progress + event.assistantMessageEvent.delta).slice(-4096);
-          patch.activity = patch.progress;
-        }
-        if (event.type === "message_end" && event.message.role === "user") {
-          const text =
-            typeof event.message.content === "string"
-              ? event.message.content
-              : event.message.content
-                  .filter((block) => block.type === "text")
-                  .map((block) => block.text)
-                  .join("");
-          for (const message of this.coordinationMessages)
-            if (
-              message.recipient !== "root" &&
-              this.key(message.recipient) === this.key(entry.state) &&
-              text ===
-                `Delegation message ${message.id} from ${message.sender === "root" ? "root" : this.key(message.sender)}: ${message.text}`
-            )
-              message.status = "delivered";
-          this.notifyCoordination();
-        }
-        if (event.type === "tool_execution_start") patch.activity = `Tool: ${event.toolName}`;
-        if (event.type === "message_end" && event.message.role === "assistant") {
-          const stats = session.getSessionStats();
-          patch.telemetry = {
-            ...entry.state.telemetry,
-            tokens: stats.tokens,
-            cost: stats.cost,
-            context: session.getContextUsage() ?? null,
-          };
-        }
-        this.update(entry, patch, event);
-      });
-      this.update(entry, { transcript: session.sessionFile });
-      if (this.closing || entry.cancelled) {
-        this.update(entry, { status: "cancelled" });
-        this.dispose(entry);
-        return;
-      }
-      entry.prompt = (text) => {
-        if (!entry.prompted) {
-          text = entry.resumeText ? input.assignment + "\n\n" + entry.resumeText : input.assignment;
-          entry.prompted = true;
-        }
-        const started = new Promise<void>((resolve) => {
-          markStarted = resolve;
-        });
-        entry.run = session
-          .prompt(text, { expandPromptTemplates: false })
-          .then(async () => {
-            if (entry.paused && !entry.cancelled && !this.closing) return;
-            await this.stopMany(this.children(entry).map((child) => child.state));
-            if (entry.paused && !entry.cancelled && !this.closing) return;
-            clearTimeout(entry.timer); // Work has drained; artifact publication is finalization.
-            const last = session.messages.filter((message) => message.role === "assistant").at(-1);
-            const failed = !last || last.stopReason === "error";
-            const stats = session.getSessionStats();
-            this.update(entry, { status: "draining", activity: "Finalizing outcome artifacts" });
-            const result = session.getLastAssistantText() ?? "";
-            const artifacts: NonNullable<ChildSnapshot["artifacts"]> = {};
-            try {
-              artifacts.text = await saveOutcomeArtifact(
-                taskDir,
-                "result.txt",
-                last?.content
-                  .filter((block) => block.type === "text")
-                  .map((block) => block.text)
-                  .join("") ?? "",
-              );
-              if (entry.state.outcome?.validation === "submitted")
-                artifacts.structured = await saveOutcomeArtifact(
-                  taskDir,
-                  "structured.json",
-                  JSON.stringify(entry.state.outcome.value),
-                );
-            } catch (error) {
-              artifacts.error = `Outcome artifact persistence failed: ${String(error)}`;
-            }
-            const missing = entry.validator && entry.state.outcome?.validation !== "submitted";
-            this.update(entry, {
-              artifacts,
-              outcome: entry.state.outcome
-                ? { ...entry.state.outcome, finalized: true }
-                : undefined,
-              status:
-                entry.cancelled || last?.stopReason === "aborted"
-                  ? "cancelled"
-                  : failed || missing || artifacts.error
-                    ? "failed"
-                    : "settled",
-              result,
-              error: entry.state.limitReason
-                ? entry.state.error
-                : failed
-                  ? (last?.errorMessage ?? "No final assistant outcome")
-                  : missing
-                    ? "Required structured result was not submitted successfully"
-                    : artifacts.error,
-              activity: "Prompt completed",
-              telemetry: {
-                requests: entry.state.telemetry.requests,
-                tokens: stats.assistantMessages ? stats.tokens : null,
-                cost: stats.assistantMessages ? stats.cost : null,
-                context: session.getContextUsage() ?? null,
-              },
-            });
-          })
-          .catch(async (error) => {
-            if (entry.paused && !entry.cancelled && !this.closing) return;
-            await this.stopMany(this.children(entry).map((child) => child.state));
-            this.update(entry, {
-              status: entry.cancelled ? "cancelled" : "failed",
-              error: entry.state.limitReason ? entry.state.error : String(error),
-            });
-          })
-          .finally(() => {
-            if (!entry.paused || entry.cancelled || this.closing) this.dispose(entry);
-          });
-        // Prompt preparation precedes abort-signal ownership in every execution window.
-        return Promise.race([started, entry.run]);
-      };
-      if (entry.paused) return;
-      await entry.prompt(entry.resumeText ?? input.assignment);
-    } catch (error) {
-      this.update(entry, {
-        status: entry.cancelled || this.closing ? "cancelled" : "failed",
-        error: String(error),
-      });
-      this.dispose(entry);
-      throw error;
+  private chargeToolCall(entry: Entry): void {
+    if (entry.state.toolCalls >= entry.state.limits.tools) {
+      this.limit(entry, "tools");
+      throw new Error("Tool call limit");
     }
+    this.update(entry, { toolCalls: entry.state.toolCalls + 1 });
+  }
+  private async revalidateExecutionModel(
+    entry: Entry,
+    selected: ModelSelection,
+    requirePrewalk: boolean,
+  ): Promise<void> {
+    const { input } = entry;
+    let current: Entry | undefined = entry;
+    while (current) {
+      const policy = (
+        await resolveProfile(
+          current.input.profile.name,
+          input.context.cwd,
+          input.context.isProjectTrusted(),
+          undefined,
+          current.input.availableSkills?.() ?? current.input.skills,
+        )
+      ).profile;
+      if (
+        (current.input.profile.models !== undefined && policy.models === undefined) ||
+        !allowsModel(policy, selected) ||
+        !admittedModel(current, selected)
+      )
+        throw new Error("Current or admitted model policy denied selection");
+      if (
+        current === entry &&
+        requirePrewalk &&
+        (!policy.prewalk || !sameSelection(policy.prewalk, entry.state.prewalk!.target))
+      )
+        throw new Error("Current prewalk grant revoked");
+      current = current.input.parent ? this.entry(current.input.parent) : undefined;
+    }
+    validateModelSelection(input.context, selected);
+  }
+  private assertExecutionTool(
+    entry: Entry,
+    name: string,
+    builtin: boolean,
+    signal?: AbortSignal,
+  ): void {
+    const { input, selection } = entry;
+    this.assertActive(entry);
+    signal?.throwIfAborted();
+    if (builtin) input.assertTools([name]);
+    else {
+      const metadata = input.toolMetadata?.().find((tool) => tool.name === name);
+      if (
+        !metadata ||
+        leafDenial(
+          metadata,
+          input.profile.leafTools ?? [],
+          selection.cwd === resolveWorkspace(undefined, input.context.cwd),
+        ) ||
+        toolProvenance(metadata) !== input.leafProvenance?.[name]
+      )
+        throw new Error(`Leaf capability revoked or reclassified: ${name}`);
+    }
+    if (!input.context.tools.some((tool) => tool.name === name))
+      throw new Error(`Admitted parent tool is no longer callable: ${name}`);
+  }
+  private chargeExecutionRequest(entry: Entry): void {
+    const { input } = entry;
+    validateModelSelection(input.context, {
+      ...entry.state.model,
+      effort: entry.state.effort as ModelSelection["effort"],
+    });
+    if (entry.cancelled || entry.paused || this.closing) throw new Error("Delegation cancelled");
+    if ((entry.state.telemetry.requests ?? 0) >= entry.state.limits.requests) {
+      this.limit(entry, "requests");
+      throw new Error("Direct request limit");
+    }
+    this.update(entry, {
+      telemetry: {
+        ...entry.state.telemetry,
+        requests: (entry.state.telemetry.requests ?? 0) + 1,
+      },
+    });
+  }
+  private observeExecutionMessage(entry: Entry, text: string): void {
+    for (const message of this.coordinationMessages)
+      if (
+        message.recipient !== "root" &&
+        this.key(message.recipient) === this.key(entry.state) &&
+        text ===
+          `Delegation message ${message.id} from ${message.sender === "root" ? "root" : this.key(message.sender)}: ${message.text}`
+      )
+        message.status = "delivered";
+    this.notifyCoordination();
+  }
+  private create(entry: Entry): Promise<void> {
+    const isClosing = () => this.closing;
+    return createChildExecution(this.root, entry, {
+      get closing() {
+        return isClosing();
+      },
+      update: (patch, event) => this.update(entry, patch, event),
+      revalidateModel: (selected, requirePrewalk) =>
+        this.revalidateExecutionModel(entry, selected, requirePrewalk),
+      authorizeTool: (name, builtin) =>
+        this.authorize(
+          entry.state,
+          (profile) =>
+            builtin
+              ? profile.tools.includes(name as BuiltinTool)
+              : !!profile.leafTools?.includes(name),
+          `Current capability grant revoked: ${name}`,
+        ),
+      assertTool: (name, builtin, signal) => this.assertExecutionTool(entry, name, builtin, signal),
+      chargeRequest: () => this.chargeExecutionRequest(entry),
+      chargeToolCall: () => this.chargeToolCall(entry),
+      observeUserMessage: (text) => this.observeExecutionMessage(entry, text),
+      drainDescendants: () => this.stopMany(this.children(entry).map((child) => child.state)),
+      dispose: () => this.dispose(entry),
+    });
   }
   private closeDescendantPresence(entry: Entry): void {
     for (const child of this.entries.values())
@@ -1760,11 +1291,7 @@ export class DelegationCoordinator {
     const entry = this.entry(ref);
     this.assertActive(entry);
     signal?.throwIfAborted();
-    if (entry.state.toolCalls >= entry.state.limits.tools) {
-      this.limit(entry, "tools");
-      throw new Error("Tool call limit");
-    }
-    this.update(entry, { toolCalls: entry.state.toolCalls + 1 });
+    this.chargeToolCall(entry);
   }
   async steer(ref: ChildRef, text: string): Promise<"queued" | "handled"> {
     requireSupportedHost();

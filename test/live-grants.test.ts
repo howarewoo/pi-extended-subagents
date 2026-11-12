@@ -335,3 +335,42 @@ for (const action of ["spawn", "message", "inbox", "wait"] as const) {
     if (result.status === "message") assert.equal(result.message.status, "not-running");
   });
 }
+
+test("taskFile reads authorize and check abort before charging; exhaustion never dispatches", async (t) => {
+  const { f, grants, config, release, heldReads, secretReads } = await heldFixture(t);
+  const child = await f.direct("held", "scout", { limits: { tools: 1 } });
+  await eventually(() => heldReads() === 1);
+  assert.equal(f.coordinator.snapshot(child)!.toolCalls, 1);
+  const abort = new AbortController();
+  abort.abort(new Error("read aborted"));
+  await config({ ...grants, scout: { ...grants.scout, tools: ["ls"] } });
+  await assert.rejects(f.coordinator.taskInputRead(child, abort.signal), /read grant/);
+  await config(grants);
+  await assert.rejects(f.coordinator.taskInputRead(child, abort.signal), /read aborted/);
+  assert.equal(f.coordinator.snapshot(child)!.limitReason, undefined);
+  assert.equal(f.coordinator.snapshot(child)!.toolCalls, 1);
+  await assert.rejects(
+    readTaskInput("secret.txt", f.context, undefined, () => f.coordinator.taskInputRead(child)),
+    /Tool call limit/,
+  );
+  assert.equal(secretReads(), 0);
+  assert.equal(f.coordinator.snapshot(child)!.toolCalls, 1);
+  assert.equal(f.coordinator.snapshot(child)!.limitReason, "tools");
+  release();
+  assert.equal((await f.coordinator.wait(child)).status, "cancelled");
+});
+
+test("spawn authorization treats omitted and empty optional descendant grants alike", async (t) => {
+  const { f, release, heldReads } = await heldFixture(t);
+  const parent = await f.direct("held", "scout");
+  await eventually(() => heldReads() === 1);
+  const { profile } = await resolveProfile("review", f.root, false);
+  for (const grants of [
+    { leafTools: undefined, spawn: undefined, coordination: undefined },
+    { leafTools: [], spawn: [], coordination: [] },
+  ]) {
+    await f.coordinator.authorizeSpawn(parent, { ...profile, ...grants });
+    assert.equal(f.coordinator.snapshot(parent)!.spawned, 0);
+  }
+  release();
+});
