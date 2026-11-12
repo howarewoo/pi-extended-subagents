@@ -1,4 +1,4 @@
-// Regenerate README illustrations: node scripts/render-hub-hero.ts [--profiles]
+// Regenerate README illustrations: node scripts/render-hub-hero.ts [--profiles | --widget]
 // Uses production components with synthetic data, never a provider or a live session.
 import { writeFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { DelegationCoordinator, type ChildSnapshot } from "../src/coordinator.ts";
 import { createHub } from "../src/hub.ts";
+import { createChildWidget } from "../src/subagent-widget.ts";
 import { createProfileViewer } from "../src/profile-viewer.ts";
 import { bundledProfiles } from "../src/profiles.ts";
 
@@ -81,6 +82,7 @@ const colors: Record<string, string> = {
 const tui = new TuiMainScreen(new ProcessTerminal());
 tui.requestRender = () => {};
 const profilesMode = process.argv.includes("--profiles");
+const widgetMode = process.argv.includes("--widget");
 const palette: Parameters<typeof createHub>[1] = {
   fg: (color, text) =>
     styleText(text, { fg: parseColor(colors[color] ?? colors.text) }, "truecolor"),
@@ -104,12 +106,23 @@ const profiles = createProfileViewer(
   () => {},
   () => 23,
 );
-const lines = (profilesMode ? profiles : hub).render(120);
+// Keep elapsed widget metrics reproducible without a live clock/session.
+const widget = createChildWidget(
+  () => children.map((child) => ({ ...child, endedAt: 2000 })),
+  palette,
+);
+const lines = (widgetMode ? widget : profilesMode ? profiles : hub).render(120);
 hub.dispose();
-const title = profilesMode ? "Subagent Profiles" : "Subagent Hub";
-const description = profilesMode
-  ? "Production profile viewer with bundled profiles and no inherited skills. Synthetic offline data; not a terminal screenshot."
-  : "Production terminal renderer with aligned agent names and profiles, without generation badges. Synthetic offline fleet data; not a terminal screenshot.";
+const title = widgetMode
+  ? "Pinned Subagents widget"
+  : profilesMode
+    ? "Subagent Profiles"
+    : "Subagent Hub";
+const description = widgetMode
+  ? "Production pinned widget with task counts and live activity. Synthetic offline fleet data; not a terminal screenshot."
+  : profilesMode
+    ? "Production profile viewer with bundled profiles and no inherited skills. Synthetic offline data; not a terminal screenshot."
+    : "Production terminal renderer with aligned agent names and profiles, without generation badges. Synthetic offline fleet data; not a terminal screenshot.";
 const escape = (text: string) =>
   text
     .replaceAll("&", "&amp;")
@@ -169,6 +182,9 @@ for (const [row, line] of lines.entries()) {
 }
 svg.push("</svg>\n");
 writeFileSync(
-  new URL(`../docs/images/subagent-${profilesMode ? "profiles" : "hub"}.svg`, import.meta.url),
+  new URL(
+    `../docs/images/subagent-${widgetMode ? "widget" : profilesMode ? "profiles" : "hub"}.svg`,
+    import.meta.url,
+  ),
   svg.join(""),
 );
