@@ -18,8 +18,9 @@ Registration is not rejected wholesale: root status, stop, cleanup and diagnosti
 available where the host can load the extension. This does not promise module-load
 compatibility with arbitrary ancient SDKs. Required `"*"` host peer ranges follow Pi's
 packaging contract, not the execution support window; development SDK packages remain pinned.
-To migrate, let active tasks drain, install stable Pi 1.5.2 or newer and restart Pi. Treat this restriction
-as breaking in the next minor release during 0.x; no package version change is included here.
+This restriction is a breaking change in 0.2.0. To migrate from 0.1.x, let active tasks drain,
+install stable Pi 1.5.2 or newer, update the extension to `@howarewoo/pi-subagents@0.2.0`
+and restart Pi.
 
 ## Native orchestration compatibility
 
