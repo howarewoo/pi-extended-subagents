@@ -195,7 +195,7 @@ export default function delegation(pi: ExtensionAPI) {
         invalidate() {},
       };
     },
-    renderResult(result, options, theme) {
+    renderResult(result, options, theme, context) {
       const stored = result.details as ChildSnapshot | { children: ChildSnapshot[] } | undefined;
       const children =
         stored && "children" in stored ? stored.children : stored && "id" in stored ? [stored] : [];
@@ -219,6 +219,8 @@ export default function delegation(pi: ExtensionAPI) {
                     .join("\n"),
                 ),
               ];
+          if (children.length && !options.expanded)
+            lines.push(context.keyHint("app.tools.expand", "to expand"));
           return new Text(lines.map((line) => theme.fg("text", line)).join("\n"), 0, 0).render(
             width,
           );

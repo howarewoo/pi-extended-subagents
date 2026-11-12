@@ -10,9 +10,17 @@ import {
   oklchColor,
   styleText,
   visibleWidth,
+  getKeybindings,
+  setKeybindings,
+  KeybindingsManager,
 } from "@earendil-works/pi-tui";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { initTheme, type ThemeStyle } from "@earendil-works/pi-coding-agent";
+import {
+  initTheme,
+  ToolExecutionComponent,
+  type ThemeStyle,
+} from "@earendil-works/pi-coding-agent";
+import { fixture } from "./fixtures.ts";
 
 initTheme("dark", false);
 const dependencies = { tui: new TuiMainScreen(new ProcessTerminal()), cwd: process.cwd() };
@@ -415,13 +423,139 @@ test("Hub selection survives streaming/new completion; search, tabs, full transc
   assert.ok(renders > 0);
 });
 
+test("Delegate results collapse single and batch cards, wrap safely, and use the configured global expansion hint", async (t) => {
+  const f = await fixture(t);
+  const definition = f.session.extensionRunner.getToolDefinition("delegate_task");
+  assert.ok(definition?.renderResult);
+  const originalKeys = getKeybindings();
+  t.after(() => setKeybindings(originalKeys));
+  const children = [
+    snapshot("done", {
+      assignment: "# Inspect 中文 👩‍💻\nPrivate assignment details",
+      generation: 3,
+      status: "settled",
+      disposed: true,
+      result: "Private result preview",
+      transcript: "/session/transcript.jsonl",
+      artifacts: { text: "/session/result.txt" },
+    }),
+    snapshot("failed", {
+      status: "failed",
+      error: "Cannot start\n" + "bad\x1b[31m\u202e".repeat(200),
+    }),
+    snapshot("cancelled", { status: "cancelled" }),
+    snapshot("paused", {
+      status: "paused",
+      pauseReason: "ancestor deadline",
+      retainedContext: true,
+    }),
+  ];
+  assert.deepEqual(taskCard(children[0]), ["Inspect 中文 👩‍💻 · scout #3 · settled"]);
+  assert.equal(taskCard(children[1]).length, 2);
+  assert.ok(visibleWidth(taskCard(children[1])[1]) < 260, "error preview is bounded");
+  assert.doesNotMatch(taskCard(children[1]).join("\n"), /\x1b|\u202e/);
+  assert.deepEqual(taskCard(children[2]), ["inspect cancelled · scout #1 · cancelled"]);
+  assert.deepEqual(taskCard(children[3]), [
+    "inspect paused · scout #1 · paused",
+    "Pause: ancestor deadline",
+  ]);
+  assert.match(taskCard({ ...children[3], pauseReason: undefined }).join("\n"), /Pause: deadline/);
+  assert.match(taskCard(undefined).join("\n"), /Task identity unavailable/);
+
+  for (const key of ["ctrl+o", "ctrl+g"] as const) {
+    setKeybindings(
+      new KeybindingsManager(
+        { "app.tools.expand": { defaultKeys: "ctrl+o" } },
+        { "app.tools.expand": key },
+      ),
+    );
+    for (const details of [children[0], { children }]) {
+      const component = new ToolExecutionComponent(
+        "delegate_task",
+        "card-call",
+        {
+          profile: "scout",
+          assignment: "Inspect",
+          ...("children" in details ? { tasks: [] } : {}),
+        },
+        { showImages: false, outputPad: 0 },
+        definition,
+        dependencies.tui,
+        process.cwd(),
+      );
+      component.setArgsComplete();
+      const result = {
+        content: [{ type: "text", text: "MODEL_FACING_OUTPUT" }],
+        details,
+        isError: false,
+      };
+      const before = structuredClone(result);
+      component.updateResult(result);
+      const collapsed = stripAnsi(component.render(500).join("\n"));
+      assert.match(collapsed, /Delegate ·/);
+      assert.ok(collapsed.includes(`${key} to expand`));
+      assert.equal(collapsed.match(/to expand/g)?.length, 1, "one hint for the entire batch");
+      assert.doesNotMatch(
+        collapsed,
+        /Identity|controlled\/model|Window|Artifacts:|Full transcript|Private|MODEL_FACING_OUTPUT/,
+      );
+      assert.equal(taskCard(children[0]).length, 1);
+      if ("children" in details) {
+        assert.match(collapsed, /failed *\nError: Cannot start/);
+        assert.match(collapsed, /cancelled/);
+        assert.match(collapsed, /paused *\nPause: ancestor deadline/);
+      }
+      for (const expanded of [false, true, false]) {
+        component.setExpanded(expanded);
+        for (const width of [12, 24, 40, 80, 500]) {
+          const lines = component.render(width);
+          assert.ok(
+            lines.every((line) => visibleWidth(line) <= width),
+            `fits ${width} columns`,
+          );
+        }
+        const rendered = stripAnsi(component.render(500).join("\n"));
+        if (expanded) {
+          for (const detail of [
+            "Identity done #3",
+            "controlled/model",
+            "Window",
+            "Artifacts:",
+            "Full transcript:",
+            "Assignment:",
+            "Result:",
+            "Private result preview",
+          ])
+            assert.ok(rendered.includes(detail), detail);
+          assert.doesNotMatch(rendered, /to expand/);
+        } else assert.doesNotMatch(rendered, /Identity|Assignment:|Result:/);
+      }
+      assert.deepEqual(
+        result,
+        before,
+        "UI projection never changes model-facing output or artifacts",
+      );
+      component.updateResult({
+        content: [{ type: "text", text: "Setup failed\nUseful cause\x1b[31m\u202e" }],
+        isError: true,
+      });
+      for (const expanded of [false, true]) {
+        component.setExpanded(expanded);
+        const error = stripAnsi(component.render(80).join("\n"));
+        assert.match(error, /Setup failed *\nUseful cause/);
+        assert.doesNotMatch(error, /to expand|\u202e/);
+      }
+    }
+  }
+});
+
 test("cards and transcript project real messages and sanitize controls/bidi without exposing opaque provider payloads", () => {
   const child = snapshot("card", {
     transcript: "/session/transcript.jsonl",
     error: "Failed\x1b[31m\u202e",
   });
   assert.match(taskCard(child, true).join("\n"), /inspect card.*scout #1.*running/);
-  assert.match(taskCard(child).join("\n"), /Full transcript/);
+  assert.match(taskCard(child, true).join("\n"), /Full transcript/);
   assert.equal(safe("a\x1b]52;c;secret\x07b\x1b[31m\u200f"), "ab ");
   const messages: ReturnType<DelegationCoordinator["messages"]> = [
     {
@@ -1437,7 +1571,7 @@ test("paused widget stays summary-only while Hub exposes retained context and st
       stripAnsi(hub.render(180).join("\n")),
       /resources idle SDK; context retained; model resume required/,
     );
-    assert.match(taskCard(child).join("\n"), /resume via model control after drain/);
+    assert.match(taskCard(child, true).join("\n"), /resume via model control after drain/);
     hub.handleInput!("x");
     assert.match(stripAnsi(hub.render(100).join("\n")), /y confirms/);
     hub.handleInput!("y");
