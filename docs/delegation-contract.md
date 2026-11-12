@@ -1,6 +1,25 @@
-# Delegation contract (Pi 1.5.2)
+# Delegation contract (minimum stable Pi 1.5.2)
 
 Reference for operators and extension/UI consumers. Authoritative types and execution registry: [`src/coordinator.ts`](../src/coordinator.ts); profiles/grants: [`src/profiles.ts`](../src/profiles.ts); finite policy: [`src/scheduling.ts`](../src/scheduling.ts); public model/auth adapter: [`src/model-adapter.ts`](../src/model-adapter.ts); model tool/lifecycle: [`src/pi-extended-subagents.ts`](../src/pi-extended-subagents.ts). The native interfaces remain supported alongside the bounded orchestration compatibility surface below; this is not full OMP/pi-subagents API parity.
+
+## Supported host
+
+Delegated execution requires **stable Pi 1.5.2 or newer**, checked through the SDK's public
+`VERSION` export. Newer stable patch, minor and major versions are allowed; standard build
+metadata has equal precedence. **Tested host: Pi 1.5.2**, independently of the minimum;
+allowing future stable versions is not a tested compatibility guarantee.
+Below-minimum, prerelease, malformed and unknown versions fail closed before launch/preflight
+content reads, child identity allocation, task-directory setup or child model requests.
+This covers `delegate_task`, compatibility `subagent` launches, resume, followup, revive,
+steering/model-delivering messages and direct coordinator execution. Public tool arguments
+and results are unchanged; unsupported execution errors name the detected version and minimum stable version.
+
+Registration is not rejected wholesale: root status, stop, cleanup and diagnostics remain
+available where the host can load the extension. This does not promise module-load
+compatibility with arbitrary ancient SDKs. Required `"*"` host peer ranges follow Pi's
+packaging contract, not the execution support window; development SDK packages remain pinned.
+To migrate, let active tasks drain, install stable Pi 1.5.2 or newer and restart Pi. Treat this restriction
+as breaking in the next minor release during 0.x; no package version change is included here.
 
 ## Native orchestration compatibility
 

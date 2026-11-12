@@ -1,3 +1,4 @@
+import { requireSupportedHost } from "./supported-host.ts";
 import {
   leafDenial,
   toolProvenance,
@@ -517,6 +518,7 @@ export class DelegationCoordinator {
     replacement?: ChildRef,
     signal?: AbortSignal,
   ): Promise<ChildRef[]> {
+    requireSupportedHost();
     for (const input of inputs)
       if (input.parent) await this.authorizeSpawn(input.parent, input.profile, input.model, input);
     signal?.throwIfAborted();
@@ -724,6 +726,7 @@ export class DelegationCoordinator {
     return parent && { id: parent.id, generation: parent.generation };
   }
   async renew(ref: ChildRef, input: StartTask, signal?: AbortSignal): Promise<ChildRef> {
+    requireSupportedHost();
     const previous = this.entry(ref);
     this.renewalParent(ref);
     const profile = intersectProfileGrants(input.profile, previous.input.profile);
@@ -852,6 +855,7 @@ export class DelegationCoordinator {
   }
   /** Continue a drained window without replacing the identity or SDK conversation. */
   async resume(ref: ChildRef, text: string): Promise<ChildRef> {
+    requireSupportedHost();
     const entry = this.entry(ref);
     if (entry.resuming || entry.state.status !== "paused" || entry.cancelled || this.closing)
       throw new Error("Resume requires a drained paused assignment; duplicate resume rejected");
@@ -1539,6 +1543,7 @@ export class DelegationCoordinator {
     mode: "inbox" | "steer" | "followUp" = "inbox",
     signal?: AbortSignal,
   ): Promise<DelegationMessage> {
+    if (mode !== "inbox") requireSupportedHost();
     const sender = await this.actor(actor, "message");
     if (sender) this.assertActive(sender);
     if (this.closing) throw new Error("Parent shut down");
@@ -1762,6 +1767,7 @@ export class DelegationCoordinator {
     this.update(entry, { toolCalls: entry.state.toolCalls + 1 });
   }
   async steer(ref: ChildRef, text: string): Promise<"queued" | "handled"> {
+    requireSupportedHost();
     const entry = this.entry(ref);
     if (!text.trim()) throw new Error("Nonempty steering text is required");
     if (entry.state.status !== "running" || entry.cancelled) throw new Error("No running child");
