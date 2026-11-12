@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Enforce live initiator/ancestor grant revocation for nested task-file reads, spawning and coordination before protected effects; malformed policy fails closed. Already in-flight work and accepted mailbox effects are not rolled back.
+
 ## [0.1.1]
 
 ### Scoped npm package
