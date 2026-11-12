@@ -157,7 +157,7 @@ test("widget counts each child state, sanitizes terminal content and shows only 
     writerLease: true,
     disposed: false,
   };
-  assert.match(widget.render(100).join("\n"), /no conflicting manual !\/!! or external edits/);
+  assert.doesNotMatch(widget.render(100).join("\n"), /writer|unsafe|no conflicting|!\/!!/i);
   child = { ...child!, status: "failed", error: "Cannot start\u001b\u0007" };
   assert.doesNotMatch(widget.render(140).join("\n"), /Cannot start|implementation/);
   child = undefined;
@@ -256,7 +256,42 @@ const effectiveKeys = {
   getKeys: () => ["escape" as const, "enter" as const],
 };
 
-test("fleet counts every lifecycle, bounds height independently of task count, and shows actual lease not profile", () => {
+test("hub active writers add no footer warning while Details retains the coordination caveat", (t) => {
+  let child = snapshot("active", { profile: "implementation", writerLease: true });
+  const coordinator = new DelegationCoordinator("unused-render-only", "root");
+  t.mock.method(coordinator, "list", () => [child]);
+  t.mock.method(coordinator, "generations", () => [child]);
+  t.mock.method(coordinator, "messages", () => []);
+  const hub = createHub(
+    coordinator,
+    theme,
+    effectiveKeys,
+    () => {},
+    () => {},
+    dependencies,
+    () => 30,
+  );
+  try {
+    for (const width of [40, 100, 180]) {
+      const writerOutput = hub.render(width).map(stripAnsi);
+      assert.doesNotMatch(writerOutput.join("\n"), /WRITER:|manual\/external writes/);
+      child = { ...child, writerLease: false };
+      assert.deepEqual(hub.render(width).map(stripAnsi), writerOutput);
+      child = { ...child, writerLease: true };
+    }
+    hub.handleInput!("\t");
+    hub.render(180);
+    hub.handleInput!("\x1b[F");
+    assert.match(
+      stripAnsi(hub.render(180).join("\n")),
+      /Model-tool writer only: no conflicting manual !\/!! or external edits/,
+    );
+  } finally {
+    hub.dispose();
+  }
+});
+
+test("fleet counts every lifecycle and bounds height independently of task count or writer lease", () => {
   const children = [
     snapshot("reader", { profile: "implementation" }),
     ...["setup", "running", "settled", "failed", "cancelled"].map((status) =>
@@ -273,7 +308,7 @@ test("fleet counts every lifecycle, bounds height independently of task count, a
   assert.match(text, /1 failed/);
   assert.doesNotMatch(text, /no conflicting/);
   children[0] = { ...children[0], writerLease: true };
-  assert.match(widget.render(180).join("\n"), /no conflicting/);
+  assert.doesNotMatch(widget.render(180).join("\n"), /writer|unsafe|no conflicting|!\/!!/i);
   for (const rows of [4, 8, 16, 30])
     assert.ok(
       createChildWidget(
@@ -1259,7 +1294,7 @@ test("Hub normalized wheel is contained to its reading viewport, never the roste
   }
 });
 
-test("compact agent tree uses actual status/role/direct stats/activity with truthful queue/overflow and writer budget", () => {
+test("compact agent tree uses actual status/role/direct stats/activity with truthful queue/overflow without a writer reservation", () => {
   const children = [
     snapshot("A", {
       assignment: "Audit parser",
@@ -1288,7 +1323,7 @@ test("compact agent tree uses actual status/role/direct stats/activity with trut
   assert.match(text, /└.*Tool: read/);
   assert.match(text, /scout.*Audit parser/);
   assert.doesNotMatch(text, /more|Finished check/);
-  assert.match(text, /writer|Model-tool/);
+  assert.doesNotMatch(text, /writer|unsafe|no conflicting|!\/!!/i);
   assert.doesNotMatch(text, /null|undefined|NaN|context.*%/);
   const measured = createChildWidget(
     () => [
@@ -1315,6 +1350,58 @@ test("compact agent tree uses actual status/role/direct stats/activity with trut
       assert.ok(lines.length <= Math.max(1, Math.min(5, Math.floor(rows / 4))));
       assert.ok(lines.every((line) => visibleWidth(line) <= width));
     }
+});
+
+test("active writers retain normal headers and reclaim task/activity rows at every row budget", () => {
+  let children = [
+    snapshot("writer", {
+      profile: "implementation",
+      assignment: "Update parser",
+      writerLease: true,
+      endedAt: 2000,
+    }),
+    snapshot("reader", { assignment: "Inspect parser", endedAt: 2000 }),
+    snapshot("paused", { status: "paused" }),
+    snapshot("queue", { status: "queued" }),
+  ];
+  for (const width of [36, 55, 60, 74, 75, 120, 180]) {
+    for (const rows of [1, 4, 8, 12, 16, 20, 30]) {
+      const widget = createChildWidget(
+        () => children,
+        theme,
+        () => rows,
+      );
+      const lines = widget.render(width);
+      const text = stripAnsi(lines.join("\n"));
+      const budget = Math.max(1, Math.min(5, Math.floor(rows / 4)));
+      assert.equal(lines.length, Math.min(budget, 4));
+      assert.ok(lines.every((line) => visibleWidth(line) <= width));
+      assert.doesNotMatch(text, /writer|unsafe|no conflicting|!\/!!/i);
+      assert.match(lines[0], /● Subagents 4/);
+      if (width >= 55) assert.match(lines[0], /1 queued/);
+      if (width < 60) assert.match(lines[0], /2 active/);
+      else assert.match(lines[0], /2 running/);
+      if (budget === 2) assert.match(text, /2 more/);
+      if (budget >= 3) {
+        assert.match(text, /implementation.*U/);
+        assert.match(text, /scout.*I/);
+        if (width >= 75) {
+          assert.match(text, /Update parser/);
+          assert.match(text, /Inspect parser/);
+        }
+        assert.doesNotMatch(text, /more/);
+      }
+      if (budget >= 4) assert.match(text, /└.*Tool: read/);
+      const withLease = lines;
+      children = children.map((child) => ({ ...child, writerLease: false }));
+      assert.deepEqual(
+        widget.render(width),
+        withLease,
+        "lease never displaces normal widget content",
+      );
+      children[0] = { ...children[0], writerLease: true };
+    }
+  }
 });
 
 test("paused widget stays summary-only while Hub exposes retained context and stop", async (t) => {
