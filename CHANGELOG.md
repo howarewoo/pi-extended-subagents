@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.3.0]
+
+Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.2.x. Tested host
+remains Pi 1.5.2; newer stable hosts are allowed, not guaranteed compatible.
+
+### Breaking — completed-context resume and migration
+
+- Resume of successfully completed work now continues the same full SDK conversation and tool history, with the same identity, generation and session count, rather than starting a fresh session. To start fresh work in a new generation, use explicit model-issued `delegate_coordinate` `followup` or `revive` and supply the context it needs; those operations do not replay the old conversation.
+- Only the deadline window resets on resume; request/tool/spawn counters remain cumulative, with at most 64 execution windows per generation. Paused windows retain provisional structured submission state and publish no final outcome artifacts. Completed windows preserve immutable outcome/artifact evidence in `completedWindows`; later completed-window artifacts use `window-N/` without replacing earlier files. Resumed completed structured assignments require a new `submit_result`.
+- Context restoration lasts only for the current parent runtime; saved transcripts are not reload/restart recovery state. Let active tasks drain before updating, then restart Pi. Reload/shutdown aborts and drains children rather than migrating them. Resume the exact parent generation first, then explicitly resume selected children; descendants never resume automatically. Existing authority, grants, authentication, capacity and writer checks still apply.
+
+### Changes
+
 - Correct resume to continue paused or successfully completed conversations with the same identity, generation, session count and full SDK/tool history. Completed runtimes restore from the canonical SessionManager into the same transcript, never a result summary or silent fresh generation. Preserve cumulative budgets and earlier window artifacts/outcomes; revalidate current authority/auth/capacity, reject stopped/failed/retired/unavailable identities, and bound continuations to 64 windows. Explicit followup/revive behavior is unchanged.
 
 - Preserve successfully completed descendants across ancestor completion for explicit parent-first same-context resume, without undoing explicit retirement. Validate retained post-handoff model availability on resume rather than requiring the obsolete admission model; keep lineage, grants and writer checks.
