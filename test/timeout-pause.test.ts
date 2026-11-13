@@ -346,7 +346,10 @@ test(
   { timeout: 10000 },
   async (t) => {
     let release!: () => void;
-    let entered = false;
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -356,7 +359,7 @@ test(
       extra: (pi) => {
         pi.on("tool_call", async (event) => {
           if (event.toolName === "read") {
-            entered = true;
+            markEntered();
             await gate;
           }
         });
@@ -371,23 +374,42 @@ test(
       },
     });
     await writeFile(join(f.root, "input.txt"), "data");
+    // Control only the deadline clock: SDK setup and zero-speed responses may take
+    // arbitrarily long in real time, but must not consume a test execution window.
+    t.mock.timers.enable({ apis: ["setTimeout"] });
     f.coordinator.configure({ ...DEFAULT_POLICY, concurrency: 1, deadlineMs: 1000 });
     const active = await f.direct("active");
-    await eventually(() => entered);
+    await entered;
     f.coordinator.configure({ ...DEFAULT_POLICY, concurrency: 1, deadlineMs: 60 });
     const queued = await f.direct("original queued assignment");
+    assert.equal(f.coordinator.snapshot(queued)!.status, "queued");
+    t.mock.timers.tick(60);
     const result = await f.coordinator.wait(queued);
     assert.equal(result.status, "paused");
     assert.equal(result.retainedContext, false);
     assert.equal(result.transcript, undefined);
+    assert.equal(result.pauseReason, "deadline");
+    assert.equal(result.telemetry.requests, null);
     await f.coordinator.resume(queued, "continuation instructions");
     assert.equal(f.coordinator.snapshot(queued)!.status, "queued");
     // The continuation can itself expire before first dispatch; accepted text must survive.
-    assert.equal((await f.coordinator.wait(queued)).status, "paused");
-    await f.coordinator.resume(queued, "second continuation instructions");
-    const stopping = f.coordinator.stop(active);
+    t.mock.timers.tick(60);
+    const pausedAgain = await f.coordinator.wait(queued);
+    assert.equal(pausedAgain.status, "paused");
+    assert.equal(pausedAgain.retainedContext, false);
+    assert.equal(pausedAgain.transcript, undefined);
+    assert.equal(pausedAgain.telemetry.requests, null);
+    // Retain a real SDK session for shutdown, rather than asserting cleanup of
+    // only the queued entry that will already be disposed on successful completion.
+    t.mock.timers.tick(880);
+    assert.equal(f.coordinator.snapshot(active)!.status, "pausing");
     release();
-    await stopping;
+    const retained = await f.coordinator.wait(active);
+    assert.equal(retained.status, "paused");
+    assert.equal(retained.retainedContext, true);
+    assert.equal(retained.disposed, false);
+    await f.coordinator.resume(queued, "second continuation instructions");
+    // Do not advance the deadline during first dispatch and SDK startup.
     const final = await f.coordinator.wait(queued);
     assert.equal(final.status, "settled");
     assert.equal(final.telemetry.requests, 1);
@@ -396,6 +418,9 @@ test(
     assert.match(JSON.stringify(contexts.at(-1)), /second continuation instructions/);
     await f.coordinator.shutdown();
     assert.equal(f.coordinator.snapshot(queued)!.disposed, true);
+    assert.equal(f.coordinator.snapshot(active)!.disposed, true);
+    assert.equal(f.coordinator.snapshot(active)!.status, "cancelled");
+    t.mock.timers.reset();
   },
 );
 
