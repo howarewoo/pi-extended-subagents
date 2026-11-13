@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Clarify the package description, add Pi/subagent discovery keywords, and lead the README with the supervised workflow, execution trade-offs, comparison links and a bounded read-only quick start.
+
 - Shorten README selection guidance while preserving the comparison sources, feature coverage and execution boundaries.
 
 - Add `pi-better-subagents` 0.32.4 to the README feature comparison with versioned sources and explicit unassessed entries. Explain when to choose this repo's permission hooks, exact model routing, validated batch results, Hub supervision and writer coordination, including sandbox, persistence and automation trade-offs. Add competitor-specific selection guidance for nicobailon, tintinweb and pi-better-subagents, identifying overlapping features and cases where each alternative is a better fit.
