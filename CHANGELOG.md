@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Shorten README selection guidance while preserving the comparison sources, feature coverage and execution boundaries.
+
+- Add `pi-better-subagents` 0.32.4 to the README feature comparison with versioned sources and explicit unassessed entries. Explain when to choose this repo's permission hooks, exact model routing, validated batch results, Hub supervision and writer coordination, including sandbox, persistence and automation trade-offs. Add competitor-specific selection guidance for nicobailon, tintinweb and pi-better-subagents, identifying overlapping features and cases where each alternative is a better fit.
+
 ## [0.3.0]
 
 Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.2.x. Tested host
