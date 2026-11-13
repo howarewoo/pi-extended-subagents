@@ -1,6 +1,7 @@
 import { requireSupportedHost } from "./supported-host.ts";
 import { leafDenial, toolProvenance, type CapabilityDenial } from "./capabilities.ts";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   SessionManager,
   type AgentSession,
@@ -226,6 +227,15 @@ export class DelegationCoordinator {
         throw new Error("Prewalk target requires an exact model grant");
       validateModelSelection(selection, input.profile.prewalk);
     }
+    this.validateAdmission(input, effective, input.model);
+    return selection;
+  }
+  /** Shared writer/lineage checks; resume supplies its retained selection, not admission defaults. */
+  private validateAdmission(
+    input: StartTask,
+    effective: ModelSelection,
+    explicit?: ModelSelection,
+  ): void {
     const writer = this.writer ? this.entries.get(this.writer) : undefined;
     if (
       isWriter(input.profile) &&
@@ -236,7 +246,7 @@ export class DelegationCoordinator {
       const parent = this.entry(input.parent);
       if (parent.cancelled || parent.paused || parent.state.disposed)
         throw new Error("Delegating parent is no longer active");
-      this.assertDescendantModels(parent, input.profile, effective, input.model);
+      this.assertDescendantModels(parent, input.profile, effective, explicit);
       if (!parent.input.profile.spawn?.includes(input.profile.name))
         throw new Error("Ancestor spawn role denied");
       if (parent.state.depth >= Math.min(this.policy.depth, parent.state.limits.depth))
@@ -250,7 +260,6 @@ export class DelegationCoordinator {
         ancestor = this.entries.get(ancestor.state.parentId);
       }
     }
-    return selection;
   }
   private assertDescendantModels(
     parent: Entry,
@@ -723,15 +732,56 @@ export class DelegationCoordinator {
   async resume(ref: ChildRef, text: string): Promise<ChildRef> {
     requireSupportedHost();
     const entry = this.entry(ref);
-    if (entry.resuming || entry.state.status !== "paused" || entry.cancelled || this.closing)
-      throw new Error("Resume requires a drained paused assignment; duplicate resume rejected");
+    const completed = entry.state.status === "settled" && entry.state.disposed;
+    const eligible = entry.state.status === "paused" || completed;
+    if (
+      entry.resuming ||
+      !eligible ||
+      entry.cancelled ||
+      this.closing ||
+      this.presence.get(ref.id) === "stopped"
+    )
+      throw new Error(
+        "Resume requires a drained paused or completed conversation; stopped/failed identities and duplicate resume rejected",
+      );
+    if ((entry.state.window ?? 1) >= MAX_GENERATIONS)
+      throw new Error("Resume window limit (64) reached");
+    if (
+      completed &&
+      (!entry.sessionManager ||
+        !entry.finalizedMessages?.length ||
+        JSON.stringify(entry.sessionManager.buildSessionContext().messages) !==
+          JSON.stringify(entry.finalizedMessages))
+    )
+      throw new Error("Resume unavailable: canonical conversation state was not retained");
+    if (completed) {
+      // SessionManager.open() can silently initialize missing/empty files. Never use that
+      // fallback here: the retained tree AND its original persisted transcript must agree.
+      try {
+        const persisted = readFileSync(entry.state.transcript!, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line));
+        const manager = entry.sessionManager!;
+        if (
+          JSON.stringify(persisted) !==
+          JSON.stringify([manager.getHeader(), ...manager.getEntries()])
+        )
+          throw new Error("transcript differs from retained canonical entries");
+      } catch (error) {
+        throw new Error(
+          `Resume unavailable: original transcript cannot be restored: ${String(error)}`,
+        );
+      }
+    } else if (entry.prompted && !entry.session) {
+      throw new Error("Resume unavailable: paused SDK conversation was not retained");
+    }
     if (!text.trim()) throw new Error("Nonempty continuation text is required");
     entry.resuming = true;
     try {
       const parent = this.renewalParent(ref);
       const input = entry.input;
       const policy = await resolveScheduling(input.context.cwd, input.context.isProjectTrusted());
-      this.configure(policy);
       const limits = { ...entry.state.limits };
       for (const key of Object.keys(limits) as (keyof ExecutionLimits)[])
         limits[key] = Math.min(
@@ -812,21 +862,52 @@ export class DelegationCoordinator {
         throw new Error("Resume denied: delegation depth limit");
       // Reuse the original admission's writer and nested no-lending checks, without
       // admitting another task or charging another spawn.
-      this.validate(input);
+      this.validateAdmission(
+        input,
+        selected,
+        entry.state.prewalk?.status === "armed" ? undefined : selected,
+      );
       this.renewalParent(ref);
       const available =
         this.active().length < policy.concurrency &&
         (!isWriter(input.profile) || (!this.writer && !this.parentMutations.size));
       if (parent && (this.queue.size || !available))
         throw new Error("Nested capacity unavailable; no permit lending");
-      this.assertQueueCapacity([input]);
+      const previousPolicy = this.policy;
+      this.policy = policy;
+      try {
+        this.assertQueueCapacity([input]);
+      } finally {
+        this.policy = previousPolicy;
+      }
       if (
         entry.cancelled ||
         this.closing ||
-        entry.state.disposed ||
-        entry.state.status !== "paused"
+        this.presence.get(ref.id) === "stopped" ||
+        (completed ? entry.state.status !== "settled" : entry.state.status !== "paused")
       )
         throw new Error("Resume cancelled by stop or shutdown");
+      if (completed) {
+        const { window, status, result, outcome, artifacts, error, endedAt } = entry.state;
+        entry.state = {
+          ...entry.state,
+          completedWindows: [
+            ...(entry.state.completedWindows ?? []),
+            structuredClone({ window, status, result, outcome, artifacts, error, endedAt }),
+          ],
+          disposed: false,
+          endedAt: null,
+          outcome: entry.validator
+            ? { validation: "awaiting", attempts: 0, errors: [], finalized: false }
+            : undefined,
+          artifacts: undefined,
+          result: "",
+          progress: "",
+        };
+        entry.selection.model = validateModelSelection(input.context, selected);
+        entry.selection.thinkingLevel = selected.effort;
+      }
+      this.policy = policy;
       entry.done = new Promise<void>((resolve) => {
         entry.finish = resolve;
       });
@@ -991,24 +1072,27 @@ export class DelegationCoordinator {
       dispose: () => this.dispose(entry),
     });
   }
-  private closeDescendantPresence(entry: Entry): void {
+  private closeDescendantPresence(entry: Entry, completed = false): void {
     for (const child of this.entries.values())
       if (
         child.state.parentId === entry.state.id &&
         child.state.parentGeneration === entry.state.generation
       ) {
-        this.presence.set(child.state.id, "stopped");
-        this.closeDescendantPresence(child);
+        // Ancestor completion closes live/paused descendants, but does not retire a
+        // successful retained conversation. Explicit stop remains sticky.
+        if (!(completed && child.state.disposed && child.state.status === "settled"))
+          this.presence.set(child.state.id, "stopped");
+        this.closeDescendantPresence(child, completed);
       }
   }
   private dispose(entry: Entry): void {
     if (entry.state.disposed) return;
     this.queue.delete(entry);
     clearTimeout(entry.timer);
-    entry.finalizedMessages = structuredClone(entry.session?.messages ?? []);
+    if (entry.session) entry.finalizedMessages = structuredClone(entry.session.messages);
     entry.unsubscribe?.();
     entry.session?.dispose();
-    // Retain immutable evidence, not the disposed SDK session graph, while idle/parked.
+    // Retain the authoritative SessionManager and immutable evidence, not the SDK runtime graph.
     entry.unsubscribe = undefined;
     entry.session = undefined;
     entry.prompt = undefined;
@@ -1017,11 +1101,14 @@ export class DelegationCoordinator {
     entry.run = undefined;
     entry.pauseDrain = undefined;
     if (this.writer === entry.state.id) this.writer = undefined;
-    this.closeDescendantPresence(entry);
+    this.closeDescendantPresence(
+      entry,
+      entry.state.status === "settled" && !entry.cancelled && !this.closing,
+    );
     this.presence.set(entry.state.id, entry.cancelled || this.closing ? "stopped" : "idle");
     this.update(entry, {
       disposed: true,
-      retainedContext: false,
+      retainedContext: !!entry.sessionManager && entry.state.status === "settled",
       endedAt: Date.now(),
       writerLease: false,
       outcome: entry.state.outcome ? { ...entry.state.outcome, finalized: true } : undefined,

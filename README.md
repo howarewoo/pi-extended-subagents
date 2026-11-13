@@ -104,7 +104,7 @@ Pi discovers the native `subagent` tool at startup through its tool description 
 - `worker` maps to the configured `implementation` profile; `scout`, `review` and `general` are also available.
 - Calls are async by default and wake the parent after drain. Set `async:false` to wait; use `tasks:[{agent,task,cwd?}]` for a batch.
 - Control a task with its returned `id` and `action:"status"`, `"steer"`, `"stop"` or `"resume"`. Steer/resume also require `message`.
-- Resume keeps a paused conversation in the same generation. Completed idle/parked work gets a fresh generation, so include needed prior conclusions.
+- Resume continues a drained paused **or completed** conversation, preserving the same identity, generation, session count and full SDK conversation/tool history. Completed idle/parked agents restore their canonical session into a new SDK runtime using the same transcript, not a result summary. Missing restoration state, stopped/failed identities and retired descendants reject; there is no fresh-context fallback. Explicit `delegate_coordinate` followup/revive still start fresh work.
 
 The coordinator supplies an existing workspace and the complete handoff, including accessible skill/reference paths. The extension does not create or manage worktrees. This is the [supported orchestration interface](docs/delegation-contract.md#native-orchestration-compatibility), not compatibility with every competing workflow script or custom agent definition.
 
@@ -197,7 +197,7 @@ All bundled profiles may delegate to `scout` and `review` by default, within a t
 Default task limits are **30 minutes**, **100 model requests** and **100 tool calls**:
 
 - A deadline pauses the active subtree after tool/provider drain, releasing capacity and writer leases but retaining sessions and conversations.
-- Use `subagent` resume or root-only `delegate_coordinate` `{action:"resume",target:{id,generation},assignment:"Continue…"}` to continue the same identity and conversation. Only the deadline resets; request/tool/spawn counters remain cumulative.
+- Use `subagent` resume or root-only `delegate_coordinate` `{action:"resume",target:{id,generation},assignment:"Continue…"}` to continue the same identity and conversation. Only the deadline resets; request/tool/spawn counters remain cumulative (at most 64 windows per generation). Completed windows retain earlier result/artifact evidence in `completedWindows`; a resumed completed structured assignment requires a new `submit_result`.
 - Resume the parent first, then explicitly selected children. Descendants never resume automatically.
 - Stop, shutdown and hard request/tool limits cancel and dispose. Unresponsive code must drain before pause or cancellation can release resources.
 

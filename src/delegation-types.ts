@@ -42,6 +42,13 @@ export type ChildSnapshot = Readonly<
     pauseReason?: string;
     retainedContext?: boolean;
     window?: number;
+    /** Immutable completion evidence from earlier windows of this same conversation. */
+    completedWindows?: ReadonlyArray<
+      Pick<
+        ChildSnapshot,
+        "window" | "status" | "result" | "outcome" | "artifacts" | "error" | "endedAt"
+      >
+    >;
     status:
       | "queued"
       | "setup"

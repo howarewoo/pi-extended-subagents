@@ -27,10 +27,16 @@ const controlled =
   (child: FauxResponseFactory): FauxResponseFactory =>
   (context, ...rest) => {
     const text = userText(context);
-    if (text.startsWith("CALL "))
-      return fauxAssistantMessage(fauxToolCall("subagent", JSON.parse(text.slice(5))), {
-        stopReason: "toolUse",
-      });
+    if (text.startsWith("CALL ") || text.startsWith("COORD "))
+      return fauxAssistantMessage(
+        fauxToolCall(
+          text.startsWith("CALL ") ? "subagent" : "delegate_coordinate",
+          JSON.parse(text.slice(text.startsWith("CALL ") ? 5 : 6)),
+        ),
+        {
+          stopReason: "toolUse",
+        },
+      );
     const first = context.messages.find((message) => message.role === "user");
     const firstText =
       typeof first?.content === "string"
@@ -187,12 +193,14 @@ test("root refusal of an adapted write remains effective and failed cd never fal
   await assert.rejects(access(join(f.root, "unsafe.txt")), /ENOENT/);
 });
 
-test("async completion wakes the idle parent exactly once; resume preserves workspace and stale controls refuse", async (t) => {
+test("async completion wakes once; idle and parked resumes restore the same conversation", async (t) => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
   let wakes = 0;
+  let childRequests = 0;
+  const contexts: unknown[] = [];
   const f = await fixture(t, {
     tools: "default",
     extra: (pi) => {
@@ -203,13 +211,15 @@ test("async completion wakes the idle parent exactly once; resume preserves work
         if (event.messageType === "custom" && event.message.customType === "delegation") wakes++;
       });
     },
-    response: controlled((context) =>
-      userText(context).startsWith("READ")
+    response: controlled((context) => {
+      childRequests++;
+      contexts.push(structuredClone(context));
+      return userText(context).startsWith("READ")
         ? fauxAssistantMessage(fauxToolCall("read", { path: "input.txt" }), {
             stopReason: "toolUse",
           })
-        : fauxAssistantMessage("done"),
-    ),
+        : fauxAssistantMessage("done");
+    }),
   });
   const cwd = join(f.root, "lane");
   await mkdir(cwd);
@@ -234,28 +244,50 @@ test("async completion wakes the idle parent exactly once; resume preserves work
       cwd: f.root,
     });
     assert.equal(moved.isError, true);
-    const resumed = await call(f, {
-      action: "resume",
-      id: state.id,
-      message: "READ the same workspace again",
-    });
-    assert.equal(resumed.isError, false, JSON.stringify(resumed));
-    const next = resumed.details as ChildSnapshot;
-    assert.equal(next.id, `${state.taskId}@2`);
-    assert.equal(next.cwd, await realpath(cwd));
-    await eventually(
-      () =>
-        f.events.some(
-          (event) =>
-            event.child.id === state.taskId && event.child.generation === 2 && event.child.disposed,
-        ) && !f.session.isStreaming,
-    );
-    const stale = await call(f, { action: "stop", id: state.id });
-    assert.equal(stale.isError, true);
-    assert.match(JSON.stringify(stale), /stale/);
-    const status = await call(f, { action: "status", id: next.id });
-    assert.equal(status.isError, false);
-    assert.equal((status.details as { snapshot: ChildSnapshot }).snapshot.status, "settled");
+    const originalTranscript = f.events.at(-1)!.child.transcript;
+    const target = { id: state.taskId, generation: state.generation };
+    for (const presence of ["idle", "parked"]) {
+      if (presence === "parked") {
+        await f.session.prompt("COORD " + JSON.stringify({ action: "park", target }));
+        const parked = f.session.messages
+          .filter(
+            (message) =>
+              message.role === "toolResult" && message.toolName === "delegate_coordinate",
+          )
+          .at(-1);
+        assert.ok(parked?.role === "toolResult");
+        assert.equal(parked.isError, false, JSON.stringify(parked));
+        assert.match(JSON.stringify(parked.details), /"presence":"parked"/);
+      }
+      const requests = childRequests;
+      const resumed = await call(f, {
+        action: "resume",
+        id: state.id,
+        message: "READ the same workspace again",
+      });
+      assert.equal(resumed.isError, false, JSON.stringify(resumed));
+      const expectedWakes = presence === "idle" ? 2 : 3;
+      await eventually(() => wakes === expectedWakes && !f.session.isStreaming);
+      assert.ok(childRequests > requests);
+      const restored = JSON.stringify(contexts.at(-1));
+      assert.match(restored, /lane/, "original tool result survives runtime disposal");
+      assert.match(restored, /toolCall/);
+      assert.match(restored, /READ the same workspace again/);
+      assert.match(restored, /delegation identity/);
+      const status = await call(f, { action: "status", id: state.id });
+      assert.equal(status.isError, false);
+      const details = status.details as { snapshot: ChildSnapshot; generations: ChildSnapshot[] };
+      assert.equal(details.snapshot.status, "settled");
+      assert.equal(details.snapshot.cwd, await realpath(cwd));
+      assert.equal(details.generations.length, 1);
+      assert.equal(details.snapshot.generation, state.generation);
+      assert.equal(details.snapshot.transcript, originalTranscript);
+      assert.equal(details.snapshot.completedWindows?.length, expectedWakes - 1);
+      for (const previous of details.snapshot.completedWindows ?? []) {
+        assert.equal(previous.status, "settled");
+        assert.equal(await readFile(previous.artifacts!.text!, "utf8"), "done");
+      }
+    }
   } finally {
     release();
   }
@@ -533,6 +565,17 @@ test("compatibility paused resume retains its generation and SDK history with on
   assert.match(JSON.stringify(contexts.at(-1)), /original paused work/);
   assert.match(JSON.stringify(contexts.at(-1)), /continue retained work/);
   assert.match(JSON.stringify(contexts.at(-1)), /finish/);
+  assert.match(JSON.stringify(contexts.at(-1)), /"role":"toolResult"/);
+  const status = await call(f, { action: "status", id: first.id });
+  const details = status.details as { snapshot: ChildSnapshot; generations: ChildSnapshot[] };
+  assert.equal(details.generations.length, 1);
+  assert.equal(details.snapshot.generation, first.generation);
+  const transcripts = f.events
+    .filter((event) => event.child.id + "@" + event.child.generation === first.id)
+    .map((event) => event.child.transcript)
+    .filter(Boolean);
+  assert.ok(transcripts.length > 0);
+  assert.equal(new Set(transcripts).size, 1, "all resume windows retain the same SDK session");
 });
 
 for (const background of [false, true])

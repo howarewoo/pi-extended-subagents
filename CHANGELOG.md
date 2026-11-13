@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Correct resume to continue paused or successfully completed conversations with the same identity, generation, session count and full SDK/tool history. Completed runtimes restore from the canonical SessionManager into the same transcript, never a result summary or silent fresh generation. Preserve cumulative budgets and earlier window artifacts/outcomes; revalidate current authority/auth/capacity, reject stopped/failed/retired/unavailable identities, and bound continuations to 64 windows. Explicit followup/revive behavior is unchanged.
+
+- Preserve successfully completed descendants across ancestor completion for explicit parent-first same-context resume, without undoing explicit retirement. Validate retained post-handoff model availability on resume rather than requiring the obsolete admission model; keep lineage, grants and writer checks.
+
 - Count individual subagent sessions, including retained historical generations, in the widget total using the same roster source as the unfiltered Hub. Distinct tasks sharing a profile and nested sessions each count separately; active widget rows remain bounded and scheduling/lifecycle behavior is unchanged.
 
 ## [0.2.1]
