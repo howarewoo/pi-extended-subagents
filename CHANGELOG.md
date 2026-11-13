@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Load the package through a root `index.ts` entrypoint so Pi displays npm installations as `@howarewoo/pi-subagents` without the old `src/pi-extended-subagents.ts` suffix. Keep the existing source entrypoint available for direct loads; local installations still use path-derived labels. No runtime or configuration migration is required.
+
 ## [0.3.1]
 
 Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.3.0. Tested host
