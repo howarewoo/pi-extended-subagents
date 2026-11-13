@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.3.1]
+
+Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.3.0. Tested host
+remains Pi 1.5.2; newer stable hosts are allowed, not guaranteed compatible. No
+configuration migration is required. Runtime behavior, permissions and lifecycle are
+unchanged. Let active tasks finish before updating, then restart Pi; reload and shutdown
+abort and drain active children rather than migrating them.
+
 - Clarify the package description, add Pi/subagent discovery keywords, and lead the README with the supervised workflow, execution trade-offs, comparison links and a bounded read-only quick start.
 
 - Shorten README selection guidance while preserving the comparison sources, feature coverage and execution boundaries.
