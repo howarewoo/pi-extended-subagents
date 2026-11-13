@@ -15,7 +15,7 @@ import {
   taskTree,
 } from "./task-presentation.ts";
 
-/** Event-driven, bounded current-agent tree; history and full metrics remain in the Hub. */
+/** Full session totals with an event-driven, bounded active-agent tree; details remain in the Hub. */
 export function createChildWidget(
   snapshot: () => ChildSnapshot[],
   theme: Pick<Theme, "fg"> & Partial<Pick<Theme, "bold">>,

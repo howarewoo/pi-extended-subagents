@@ -253,6 +253,18 @@ test("real SDK selected generation retains full outcomes/transcript/artifacts ac
     render(); // pin original, not the warmup
     const next = await f.coordinator.renew(ref, { ...admission(), assignment: "successor" });
     await f.coordinator.wait(next);
+    assert.equal(f.coordinator.list().length, 2, "latest identities remain unchanged");
+    const sessions = f.coordinator.sessions();
+    assert.equal(sessions.length, 3, "renewal retains an individually counted session");
+    assert.deepEqual(
+      f.coordinator.generations(ref.id).map((child) => child.generation),
+      [ref.generation, next.generation],
+    );
+    Reflect.set(sessions[0], "assignment", "mutated observer snapshot");
+    assert.notEqual(f.coordinator.sessions()[0].assignment, sessions[0].assignment);
+    const widget = createChildWidget(() => f.coordinator.sessions(), palette);
+    assert.deepEqual(widget.render(180), ["● Subagents 3 · 3 settled"]);
+    assert.match(render(), /SUBAGENTS · 3 generations/);
     assert.match(render(), /> [├└] ● original/);
     assert.doesNotMatch(render(), /#1/, "generation badge is not shown in the roster");
     hub.handleInput!("\x1b[F");

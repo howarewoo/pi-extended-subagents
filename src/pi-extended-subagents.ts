@@ -107,7 +107,7 @@ export default function delegation(pi: ExtensionAPI) {
       (tui, theme) => {
         renderWidget = () => tui.requestRender();
         return createChildWidget(
-          () => coordinator.list(),
+          () => coordinator.sessions(),
           theme,
           () => tui.terminal.rows,
         );

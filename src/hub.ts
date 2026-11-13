@@ -85,8 +85,7 @@ export function createHub(
   const roster = () =>
     taskTree(
       coordinator
-        .list()
-        .flatMap((child) => coordinator.generations(child.id))
+        .sessions()
         .filter((child) =>
           lineText(
             [
@@ -208,7 +207,7 @@ export function createHub(
           paint(
             interactionTarget
               ? "Resize · Esc cancels"
-              : "Subagent Hub " + coordinator.list().length,
+              : "Subagent Hub " + coordinator.sessions().length,
           ),
         ];
       const inner = Math.max(0, width - 4);
