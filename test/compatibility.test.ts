@@ -8,6 +8,7 @@ import {
   fauxToolCall,
   type FauxResponseFactory,
 } from "@earendil-works/pi-ai";
+import { CustomMessageComponent, initTheme, convertToLlm } from "@earendil-works/pi-coding-agent";
 import { fixture, eventually } from "./fixtures.ts";
 import { workspaceArguments } from "../src/workspace.ts";
 import type { ChildSnapshot } from "../src/coordinator.ts";
@@ -502,6 +503,7 @@ test("compatibility paused resume retains its generation and SDK history with on
   let entered = 0;
   let wakes = 0;
   const contexts: unknown[] = [];
+  const providerInputs: Parameters<FauxResponseFactory>[0][] = [];
   const f = await fixture(t, {
     tools: "default",
     speed: 0,
@@ -516,14 +518,17 @@ test("compatibility paused resume retains its generation and SDK history with on
         if (event.messageType === "custom" && event.message.customType === "delegation") wakes++;
       });
     },
-    response: controlled((context) => {
-      contexts.push(structuredClone(context));
-      return userText(context) === "finish"
-        ? fauxAssistantMessage("done with retained context")
-        : fauxAssistantMessage(fauxToolCall("read", { path: "input.txt" }), {
-            stopReason: "toolUse",
-          });
-    }),
+    response: (context, ...rest) => {
+      providerInputs.push(structuredClone(context));
+      return controlled((context) => {
+        contexts.push(structuredClone(context));
+        return userText(context) === "finish"
+          ? fauxAssistantMessage("done with retained context")
+          : fauxAssistantMessage(fauxToolCall("read", { path: "input.txt" }), {
+              stopReason: "toolUse",
+            });
+      })(context, ...rest);
+    },
   });
   await writeFile(join(f.root, "input.txt"), "data");
   const launched = await call(f, {
@@ -546,6 +551,33 @@ test("compatibility paused resume retains its generation and SDK history with on
     release();
     await eventually(() => wakes === window && !f.session.isStreaming);
     assert.equal(notifications().length, window);
+    const notice = notifications().at(-1)!;
+    assert.ok(notice.role === "custom");
+    initTheme("dark", false);
+    const card = new CustomMessageComponent(
+      notice,
+      f.session.extensionRunner.getMessageRenderer("delegation"),
+    );
+    assert.match(card.render(180).join("\n"), /original paused work · scout #1 · paused/);
+    assert.match(card.render(180).join("\n"), /Pause:.*deadline/);
+    assert.doesNotMatch(card.render(180).join("\n"), /References:/);
+    card.setExpanded(true);
+    assert.match(card.render(180).join("\n"), /context retained/);
+    assert.deepEqual(
+      convertToLlm([notice]),
+      convertToLlm([{ ...notice, details: undefined }]),
+      "resume wake-up payload excludes rendering metadata",
+    );
+    const delivered = providerInputs
+      .flatMap((context) => context.messages)
+      .find(
+        (message) =>
+          message.role === "user" &&
+          Array.isArray(message.content) &&
+          message.content.some((block) => block.type === "text" && block.text === notice.content),
+      );
+    assert.ok(delivered, "the actual provider receives the unchanged wake-up preview");
+    assert.doesNotMatch(JSON.stringify(delivered), /taskNotice|collapsed|expanded/);
     gate = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -633,6 +665,15 @@ for (const background of [false, true])
       assert.ok(message.role === "custom");
       const content = String(message.content);
       states = JSON.parse(content.slice(content.indexOf("\n") + 1));
+      initTheme("dark", false);
+      const card = new CustomMessageComponent(
+        message,
+        f.session.extensionRunner.getMessageRenderer("delegation"),
+      );
+      const rendered = card.render(180).join("\n");
+      assert.match(rendered, /first · scout #1 · paused/);
+      assert.match(rendered, /second · scout #1 · paused/);
+      assert.equal((rendered.match(/Pause:/g) ?? []).length, 2);
     } else states = (result.details as { children: ChildSnapshot[] }).children;
     assert.deepEqual(
       states.map((state) => state.assignment),

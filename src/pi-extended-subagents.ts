@@ -44,8 +44,8 @@ export default function delegation(pi: ExtensionAPI) {
       throw new Error("Expected <task-id> <generation>");
     return { id, generation: Number(generation) };
   };
-  const preview = (value: unknown, transcript?: string) => {
-    const snapshots = (Array.isArray(value) ? value : [value]).filter(
+  const taskSnapshots = (value: unknown) =>
+    (Array.isArray(value) ? value : [value]).filter(
       (item): item is ChildSnapshot =>
         !!item &&
         typeof item === "object" &&
@@ -53,6 +53,8 @@ export default function delegation(pi: ExtensionAPI) {
         "generation" in item &&
         "status" in item,
     );
+  const preview = (value: unknown, transcript?: string) => {
+    const snapshots = taskSnapshots(value);
     const references = snapshots.map((state) => ({
       id: state.id,
       generation: state.generation,
@@ -87,11 +89,47 @@ export default function delegation(pi: ExtensionAPI) {
     taskId: state.id,
     id: `${state.id}@${state.generation}`,
   });
-  const show = (value: unknown, transcript?: string, wake = false) =>
+  pi.registerMessageRenderer("delegation", (message, options, theme) => {
+    const notice = (message.details as { taskNotice?: unknown } | undefined)?.taskNotice;
+    if (!notice || typeof notice !== "object") return undefined;
+    const { collapsed, expanded } = notice as { collapsed?: unknown; expanded?: unknown };
+    if (
+      !Array.isArray(collapsed) ||
+      !Array.isArray(expanded) ||
+      !collapsed.length ||
+      ![...collapsed, ...expanded].every((line) => typeof line === "string")
+    )
+      return undefined;
+    const lines = options.expanded
+      ? expanded
+      : [...collapsed, options.keyHint("app.tools.expand", "to expand")];
+    return new Text(
+      lines.map((line) => theme.fg("text", safe(line))).join("\n"),
+      options.outputPad,
+      0,
+    );
+  });
+  const show = (value: unknown, transcript?: string, wake = false) => {
+    const snapshots = taskSnapshots(value);
     pi.sendMessage(
-      { customType: "delegation", content: preview(value, transcript), display: true },
+      {
+        customType: "delegation",
+        content: preview(value, transcript),
+        display: true,
+        ...(snapshots.length
+          ? {
+              details: {
+                taskNotice: {
+                  collapsed: snapshots.flatMap((child) => taskCard(child)),
+                  expanded: snapshots.flatMap((child) => taskCard(child, true)),
+                },
+              },
+            }
+          : {}),
+      },
       wake ? { triggerTurn: true, deliverAs: "followUp" } : undefined,
     );
+  };
   pi.on("session_start", (_event, ctx) => {
     coordinator = new DelegationCoordinator(
       join(ctx.sessionManager.getSessionDir(), "delegation", ctx.sessionManager.getSessionId()),
