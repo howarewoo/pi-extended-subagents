@@ -53,7 +53,7 @@ try {
   assert.deepEqual(loaded.errors, []);
   assert.equal(loaded.extensions.length, 1);
   const [extension] = loaded.extensions;
-  assert.equal(extension.path, join(installed, "src", "pi-extended-subagents.ts"));
+  assert.equal(extension.path, join(installed, "index.ts"));
   for (const tool of ["delegate_task", "delegate_coordinate", "subagent"])
     assert.ok(extension.tools.has(tool), `Packed extension did not register ${tool}`);
   assert.ok(extension.commands.has("subagent-hub"));

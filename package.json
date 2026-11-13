@@ -21,6 +21,7 @@
     "url": "git+https://github.com/howarewoo/pi-subagents.git"
   },
   "files": [
+    "index.ts",
     "src",
     "docs",
     "README.md",
@@ -66,7 +67,7 @@
   },
   "pi": {
     "extensions": [
-      "./src/pi-extended-subagents.ts"
+      "./index.ts"
     ]
   }
 }

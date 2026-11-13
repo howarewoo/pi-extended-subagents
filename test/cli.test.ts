@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 
-test("local package manifest loads the recognizably named production extension", async () => {
+test("local package manifest loads the root production entrypoint", async () => {
   const root = await mkdtemp(join(tmpdir(), "extended-subagents-package-"));
   try {
     const repo = fileURLToPath(new URL("..", import.meta.url));
@@ -26,7 +26,7 @@ test("local package manifest loads the recognizably named production extension",
     assert.deepEqual(loaded.errors, []);
     assert.deepEqual(
       loaded.extensions.map((extension) => extension.path),
-      [join(repo, "src", "pi-extended-subagents.ts")],
+      [join(repo, "index.ts")],
     );
     assert.deepEqual([...loaded.extensions[0].commands.keys()].sort(), [
       "subagent-hub",
