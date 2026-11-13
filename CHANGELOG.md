@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.2.1]
+
+Requires Node 22.19+ and stable Pi 1.5.2 or newer. Tested host remains Pi 1.5.2;
+newer stable hosts are allowed, not guaranteed compatible. No configuration migration is
+required. Let active tasks finish before updating, then restart Pi; reload and shutdown
+abort and drain active children rather than migrating them. Permissions, scheduling limits
+and lifecycle behavior are unchanged.
+
 - Keep Hub tree lanes, unselected agent names and status text in the normal foreground color. Highlight the selected name and selection marker with the accent color, while profile words and status circles retain lifecycle coloring, including compact views.
 
 - Replace the widget activity preview with a summary below the visible child when its parent has additional hidden running children. Show “2 more nested subagents running” for the capacity illustration while keeping the total hidden-fleet overflow count unchanged.
