@@ -1,9 +1,15 @@
 {
   "name": "@howarewoo/pi-subagents",
   "version": "0.3.0",
-  "description": "Pi-native single-assignment delegation with explicit profiles and parent-owned SDK children",
+  "description": "Pi subagent extension for supervised coding tasks with live monitoring, steering, and explicit tool permissions.",
   "keywords": [
-    "pi-package"
+    "agent-delegation",
+    "multi-agent",
+    "pi-coding-agent",
+    "pi-extension",
+    "pi-package",
+    "subagent",
+    "subagents"
   ],
   "homepage": "https://github.com/howarewoo/pi-subagents#readme",
   "bugs": {

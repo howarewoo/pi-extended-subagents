@@ -1,9 +1,13 @@
-# @howarewoo/pi-subagents
+# @howarewoo/pi-subagents — Pi subagent extension
 
 [![npm version](https://img.shields.io/npm/v/@howarewoo/pi-subagents)](https://www.npmjs.com/package/@howarewoo/pi-subagents)
 [![npm downloads](https://img.shields.io/npm/dm/@howarewoo/pi-subagents)](https://www.npmjs.com/package/@howarewoo/pi-subagents)
 
-Delegate work to subagents in Pi, follow their progress, and steer or stop them from Subagent Hub. Subagents use your selected model by default, with their own assignments and explicit tool grants.
+Delegate code exploration, reviews and implementation tasks in the [Pi coding agent](https://pi.dev). Follow each subagent's conversation and tool use, then steer or stop tasks from [Subagent Hub](#subagent-hub). Subagents use your selected model by default, with their own assignments and explicit tool grants.
+
+Use this extension to supervise delegated work inside a running Pi session. Keep the parent running until tasks finish; writers serialize, and you manage any worktrees. See [why choose this repo](#why-choose-this-repo) and the [feature comparison](#feature-comparison) for the full trade-offs.
+
+[Install](#installation) · [Quick start](#quick-start) · [Subagent Hub](#subagent-hub) · [Compare extensions](#feature-comparison) · [Documentation](#documentation)
 
 ![Terminal illustration of the pinned Subagents widget showing 48 tasks: 16 running and 32 queued, with a hidden nested-agent summary and an overflow link to Subagent Hub.](docs/images/subagent-widget.svg)
 
@@ -40,25 +44,29 @@ Restart Pi and run `/subagent-profiles` to check the installation.
 If you installed the former unscoped package, follow the
 [0.1.1 migration instructions](CHANGELOG.md#011) before installing the current package.
 
-## Use delegation
+## Quick start
 
-Choose a model through Pi's `/login` and `/model` setup. Delegation uses that provider and may incur charges; it does not automatically switch to a cheaper model.
+Start Pi in a project containing a `README.md` file. Choose a model through Pi's `/login` and `/model` setup. Delegation uses that provider and may incur charges; it does not automatically switch to a cheaper model.
 
 Ask Pi:
 
-> Use delegate_task with profile scout to locate the startup lifecycle code and report source locations. Run it in the foreground.
+> Use delegate_task with profile scout to read README.md and summarize this project's purpose in three bullets. Run it in the foreground.
 
 The corresponding tool call is:
 
 ```json
 {
-  "assignment": "Locate startup lifecycle code and report source locations",
+  "assignment": "Read README.md and summarize this project's purpose in three bullets",
   "profile": "scout",
   "background": false
 }
 ```
 
-Or submit a batch:
+The foreground call returns the scout's summary to the parent. Open `/subagent-hub` to inspect its conversation and tool calls. This example needs only the `read` tool; it does not require enabling `grep`, `find`, `ls` or `bash`.
+
+## Use delegation
+
+Submit a batch for parallel read-only work:
 
 ```json
 {
