@@ -1818,3 +1818,53 @@ test("paused widget stays summary-only while Hub exposes retained context and st
     hub.dispose();
   }
 });
+
+test("widget and unfiltered Hub count sessions, not profiles or latest identities, with bounded active rows", (t) => {
+  const children = [
+    snapshot("same", {
+      generation: 1,
+      assignment: "historical task",
+      status: "settled",
+      disposed: true,
+    }),
+    snapshot("same", { generation: 2, assignment: "current task" }),
+    snapshot("other", { assignment: "separate same-profile task" }),
+    ...Array.from({ length: 6 }, (_, index) =>
+      snapshot(`nested-${index}`, {
+        parentId: "same",
+        parentGeneration: 2,
+        depth: 2,
+      }),
+    ),
+  ];
+  const coordinator = new DelegationCoordinator("unused-render-only", "root");
+  t.mock.method(coordinator, "sessions", () => children);
+  t.mock.method(coordinator, "list", () => children.slice(1));
+  t.mock.method(coordinator, "messages", () => []);
+  const widget = createChildWidget(() => coordinator.sessions(), theme);
+  const hub = createHub(
+    coordinator,
+    theme,
+    effectiveKeys,
+    () => {},
+    () => {},
+    dependencies,
+  );
+  try {
+    assert.match(stripAnsi(hub.render(180).join("\n")), /SUBAGENTS · 9 generations/);
+    const rows = widget.render(180);
+    assert.match(rows[0], /Subagents 9 · 8 running · 1 settled/);
+    assert.equal(rows.length, 5);
+    assert.doesNotMatch(rows.slice(1).join("\n"), /historical task/);
+    assert.match(rows.at(-1)!, /more · \/subagent-hub/);
+    assert.match(widget.render(55)[0], /Subagents 9 · 8 active/);
+    children.splice(
+      0,
+      children.length,
+      ...children.map((child) => ({ ...child, status: "settled" as const, disposed: true })),
+    );
+    assert.deepEqual(widget.render(180), ["● Subagents 9 · 9 settled"]);
+  } finally {
+    hub.dispose();
+  }
+});

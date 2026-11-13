@@ -110,12 +110,14 @@ export class DelegationCoordinator {
       presence: this.presence.get(state.id),
     }));
   }
-  generations(id: string): ChildSnapshot[] {
+  /** Full parent-lifetime session roster, including retained historical generations. */
+  sessions(): ChildSnapshot[] {
     return [...this.history.values()]
-      .map((record) => record.state)
-      .concat(this.list())
-      .filter((state) => state.id === id)
-      .map((state) => structuredClone(state));
+      .map((record) => structuredClone(record.state))
+      .concat(this.list());
+  }
+  generations(id: string): ChildSnapshot[] {
+    return this.sessions().filter((state) => state.id === id);
   }
   private listeners = new Set<(event: RegistryEvent) => void>();
   private parentMutations = new Set<string>();

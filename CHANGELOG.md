@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Count individual subagent sessions, including retained historical generations, in the widget total using the same roster source as the unfiltered Hub. Distinct tasks sharing a profile and nested sessions each count separately; active widget rows remain bounded and scheduling/lifecycle behavior is unchanged.
+
 ## [0.2.1]
 
 Requires Node 22.19+ and stable Pi 1.5.2 or newer. Tested host remains Pi 1.5.2;
