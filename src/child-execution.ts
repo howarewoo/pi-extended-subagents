@@ -34,6 +34,9 @@ export type ExecutionRecord = {
   timer?: ReturnType<typeof setTimeout>;
   run?: Promise<void>;
   session?: AgentSession;
+  /** Canonical entry tree survives runtime disposal; never substitute a result summary. */
+  sessionManager?: SessionManager;
+  resourcePrompt?: string;
   unsubscribe?: () => void;
   paused?: boolean;
   prompt?: (text: string) => Promise<void>;
@@ -89,11 +92,15 @@ export async function createChildExecution(
         ? entry.state.id
         : `${entry.state.id}-g${entry.state.generation}`,
     );
-    await mkdir(taskDir, { mode: 0o700 }); // exclusive ownership: never reuse an existing task record
+    const restoring = !!entry.sessionManager;
+    if (!restoring) await mkdir(taskDir, { mode: 0o700 }); // exclusive initial ownership
     const agentDir = join(taskDir, "agent");
-    await mkdir(agentDir, { mode: 0o700 });
+    if (!restoring) await mkdir(agentDir, { mode: 0o700 });
     const transcriptDir = join(taskDir, "transcripts");
-    await mkdir(transcriptDir, { mode: 0o700 });
+    if (!restoring) await mkdir(transcriptDir, { mode: 0o700 });
+    // Each completed window publishes exclusively, leaving all earlier artifacts intact.
+    const outcomeDir = restoring ? join(taskDir, `window-${entry.state.window}`) : taskDir;
+    if (restoring) await mkdir(outcomeDir, { mode: 0o700 });
     const target =
       entry.state.prewalk?.status === "armed"
         ? validateModelSelection(input.context, entry.state.prewalk.target)
@@ -116,14 +123,15 @@ export async function createChildExecution(
       target ? [target] : [],
     );
     const resources = childResources(
-      input.profile.prompt +
+      (entry.resourcePrompt ??=
+        input.profile.prompt +
         (target
           ? "\nPrewalk: investigate and plan using only granted context/tools. After the first completed edit or write the same conversation switches once to the explicitly granted implementation target; all normal budgets still apply."
           : "") +
         `\nYour delegation identity is ${entry.state.id} generation ${entry.state.generation}; parent ${entry.state.parentId}. Coordination, if granted, is limited to family identities explicitly supplied to you.` +
         (entry.validator
           ? "\nThis assignment requires a structured result. Call submit_result with the actual value; final prose is not a submission."
-          : ""),
+          : "")),
       input.skills,
     );
     const loader = new DefaultResourceLoader({
@@ -316,9 +324,10 @@ export async function createChildExecution(
         compaction: { enabled: false },
         retry: { enabled: false },
       }),
-      sessionManager: SessionManager.create(selection.cwd, transcriptDir),
+      sessionManager: entry.sessionManager ?? SessionManager.create(selection.cwd, transcriptDir),
     });
     entry.session = session;
+    entry.sessionManager = session.sessionManager;
     if (session.thinkingLevel !== selection.thinkingLevel)
       throw new Error("SDK did not preserve selected effort");
     if (
@@ -389,7 +398,7 @@ export async function createChildExecution(
           const artifacts: NonNullable<ChildSnapshot["artifacts"]> = {};
           try {
             artifacts.text = await saveOutcomeArtifact(
-              taskDir,
+              outcomeDir,
               "result.txt",
               last?.content
                 .filter((block) => block.type === "text")
@@ -398,7 +407,7 @@ export async function createChildExecution(
             );
             if (entry.state.outcome?.validation === "submitted")
               artifacts.structured = await saveOutcomeArtifact(
-                taskDir,
+                outcomeDir,
                 "structured.json",
                 JSON.stringify(entry.state.outcome.value),
               );
