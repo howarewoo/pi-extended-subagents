@@ -1,3 +1,60 @@
+# Concurrent shared-writer verification
+
+Current local implementation: `feat/concurrent-writers`, based on
+`feat/hub-collapsible-tools` at `59cf7f9534c1091ac58e76e72dd57339c005282c`.
+This section supersedes historical writer-lease/parent-blocking claims below; those
+records describe prior implementations, not the current contract.
+
+Observed checks (controlled Pi 1.5.2 SDK providers, no paid/live inference):
+
+- `npm ci --ignore-scripts`: 130 worktree-local packages installed, audit 0 vulnerabilities;
+  no dependency or lockfile changes.
+- Targeted Node suites for concurrent writers, compatibility, scheduling/lifecycle,
+  completion wakes, pause/completed resume, reviewed leaves, model policy, observability,
+  profile viewer and Hub: **147 passed**, no failures/skips/cancellations.
+- `npm run check`: lint, formatting and strict typecheck pass; **276 tests passed**;
+  controlled SDK exercise prints PASS.
+- `npm run test:package`: actual temporary tarball installation and production Pi loader
+  registration pass for `@howarewoo/pi-subagents@0.4.0`. The inspected script packs locally,
+  installs only in a temporary directory with scripts disabled, then removes that directory;
+  it does not publish or install globally.
+- `node scripts/render-hub-hero.ts --profiles`: regenerate the existing synthetic profile
+  illustration through production components to remove its obsolete lease claim.
+
+Real SDK permission gates hold one writer while two siblings enter hooks, complete
+independent mutations and retain separate transcripts/artifacts. Batch and separate
+native calls, supplied workspaces, compatibility worker batches/separate calls and
+parent write/edit/bash/registered tools are covered. A held real parent shell permits
+child admission. Operator denials remain actual failed tool results with no file effects.
+The once-per-batch completion test now finishes writers out of order while asserting
+submission-ordered outcomes, no early notice, and the existing busy-parent follow-up wake.
+
+Lifecycle evidence is retained, not replaced by running snapshots: concurrency-one
+held-hook stop/deadline tests prevent early permit reuse; separate concurrent-sibling
+stop/pause tests prove spare-capacity progress and explicit retained-context resume.
+Reviewed-leaf hooks and prewalk cancellation still drain before disposal. Explicit
+writer-under-writer grants succeed at capacity two; denied grants/models/depth/spawn and
+no-lending/FIFO/atomic queue limits remain covered by existing SDK suites. Historical
+snapshot lease values no longer produce runtime exclusivity text.
+
+Scoped simplification removed the singleton state, parent reservation hooks and dead
+writer classifier rather than moving serialization to tools. Queue preflight uses only
+pending count and ordinary free slots; authorization/provenance/cwd, actual drain and
+0.4.0 wake/Hub ownership paths remain unchanged. The full task diff was inspected.
+Early local probes exposed obsolete lease-based fixture assumptions and a parent hook
+preflight gate that prevented its own sibling execution; those fixtures were corrected,
+and final targeted/full checks pass. No commit, push, PR, other-worktree edits, new
+configuration, lock, worktree manager or provider experiment was performed.
+
+Limits: these controlled providers prove SDK dispatch and filesystem effects, not live
+provider reliability, OS-level simultaneity or a conflict guarantee. Shared writes are
+intentionally unisolated; callers own lost-update/Git-index/generated-file coordination.
+Reads during writes are not stable snapshots. Cancellation is not rollback; inspect the
+checkout after actual drain before retry/resume. No new interactive screenshot or hot
+runtime migration is claimed; drain active work before reloading changed source.
+
+---
+
 # Delegation verification
 
 ## Release 0.4.0: Hub global tool expansion (local candidate)

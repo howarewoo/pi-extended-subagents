@@ -173,7 +173,7 @@ test("completed continuation cancellation drains its writer without losing earli
     await f.coordinator.resume(ref, "continue");
     await eventually(() => entered);
     const stop = f.coordinator.stop(ref);
-    assert.equal(f.coordinator.snapshot(ref)!.writerLease, true);
+    assert.equal(f.coordinator.snapshot(ref)!.writerLease, false);
     release();
     await stop;
     const cancelled = await f.coordinator.wait(ref);

@@ -13,7 +13,7 @@ import { safe } from "./thread.ts";
 import { bundledProfiles, resolveProfile, type Profile } from "./profiles.ts";
 
 export const profileToolPolicy =
-  "Profile tools are maximum allowlists, not requirements. Admission intersects callable parent builtins without activating tools. Command context has no callable-tool dispatcher: effective tools are unknown here. Active declarations are not proof of callability. General inherits available parent skills and callable builtins within its ceiling, not parent instructions/history; only operator-reviewed leaf tools may be forwarded and all require a writer lease. Leaf grants assert trusted code, not a sandbox. Inspect task snapshot tools, leafTools, skills and capabilityDenials for admitted grants.";
+  "Profile tools are maximum allowlists, not requirements. Admission intersects callable parent builtins without activating tools. Command context has no callable-tool dispatcher: effective tools are unknown here. Active declarations are not proof of callability. General inherits available parent skills and callable builtins within its ceiling, not parent instructions/history; only operator-reviewed leaf tools may be forwarded and callers coordinate concurrent writes. Leaf grants assert trusted code, not a sandbox. Inspect task snapshot tools, leafTools, skills and capabilityDenials for admitted grants.";
 
 /** Resolve through the same trust/config/skill validation boundary used by admission. */
 export async function resolvedProfiles(
@@ -83,7 +83,7 @@ function details(profile: Profile): DetailLine[] {
         ]
       : []),
     value(
-      `Reviewed leaf ceiling: ${list(profile.leafTools)} (writer lease; trusted code, not sandboxed)`,
+      `Reviewed leaf ceiling: ${list(profile.leafTools)} (shared writes; trusted code, not sandboxed)`,
     ),
     value(`Spawn ceiling: ${list(profile.spawn)}`),
     value(`Coordination: ${list(profile.coordination)}`),
@@ -100,7 +100,7 @@ function details(profile: Profile): DetailLine[] {
       .map(([key, item]) => value(`${key}: ${JSON.stringify(item)}`)),
     value(""),
     value(
-      "Admission also applies parent/ancestry, model availability, capacity and writer checks. This viewer grants nothing.",
+      "Admission also applies parent/ancestry, model availability and capacity checks. This viewer grants nothing.",
     ),
   ];
 }

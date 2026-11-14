@@ -339,7 +339,7 @@ test("denying the compatibility tool prevents child admission", async (t) => {
   assert.equal(f.events.length, 0);
 });
 
-test("compatibility writers queue across workspaces and cannot admit a conflicting parent write", async (t) => {
+test("compatibility writers overlap across workspaces alongside parent writes", async (t) => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -365,7 +365,7 @@ test("compatibility writers queue across workspaces and cannot admit a conflicti
     response: (context, ...rest) =>
       userText(context) === "ROOT_WRITE"
         ? fauxAssistantMessage(
-            fauxToolCall("write", { path: "parent.txt", content: "must reject" }),
+            fauxToolCall("write", { path: "parent.txt", content: "parent allowed" }),
             { stopReason: "toolUse" },
           )
         : child(context, ...rest),
@@ -380,23 +380,29 @@ test("compatibility writers queue across workspaces and cannot admit a conflicti
     await eventually(() => entered);
     const second = await call(f, { agent: "worker", task: "WRITE second", cwd: b });
     assert.equal(second.isError, false, JSON.stringify(second));
-    assert.equal((second.details as ChildSnapshot).status, "queued");
+    assert.notEqual((second.details as ChildSnapshot).status, "queued");
     await f.session.prompt("ROOT_WRITE");
-    const denied = f.session.messages
+    const allowed = f.session.messages
       .filter((message) => message.role === "toolResult" && message.toolName === "write")
       .at(-1);
-    assert.ok(denied?.role === "toolResult" && denied.isError);
-    assert.match(JSON.stringify(denied), /writer is held/);
-    release();
+    assert.ok(allowed?.role === "toolResult" && !allowed.isError);
     const task = second.details as ChildSnapshot & { taskId: string };
     await eventually(
       () =>
         f.events.some((event) => event.child.id === task.taskId && event.child.disposed) &&
         !f.session.isStreaming,
     );
-    assert.equal(await readFile(join(a, "output.txt"), "utf8"), "written");
     assert.equal(await readFile(join(b, "output.txt"), "utf8"), "written");
-    await assert.rejects(access(join(f.root, "parent.txt")), /ENOENT/);
+    await assert.rejects(access(join(a, "output.txt")), /ENOENT/);
+    release();
+    await eventually(() =>
+      f.events.some(
+        (event) =>
+          event.child.id === (first.details as { taskId: string }).taskId && event.child.disposed,
+      ),
+    );
+    assert.equal(await readFile(join(a, "output.txt"), "utf8"), "written");
+    assert.equal(await readFile(join(f.root, "parent.txt"), "utf8"), "parent allowed");
   } finally {
     release();
   }
@@ -685,3 +691,63 @@ for (const background of [false, true])
     );
     assert.ok(states.every((state) => !state.disposed && state.retainedContext));
   });
+
+test("compatibility batch writers overlap in the same cwd and report one ordered drained outcome", async (t) => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = false;
+  const f = await fixture(t, {
+    tools: "default",
+    speed: 0,
+    extra: (pi) => {
+      pi.on("tool_call", async (event) => {
+        if (event.toolName === "write" && String(event.input.path).endsWith("first.txt")) {
+          entered = true;
+          await gate;
+        }
+      });
+    },
+    response: controlled((context) =>
+      context.messages.at(-1)?.role === "toolResult"
+        ? fauxAssistantMessage("done")
+        : fauxAssistantMessage(
+            fauxToolCall("write", { path: userText(context) + ".txt", content: userText(context) }),
+            { stopReason: "toolUse" },
+          ),
+    ),
+  });
+  try {
+    const accepted = await call(f, {
+      tasks: ["first", "second"].map((task) => ({ agent: "worker", task })),
+      async: true,
+    });
+    assert.equal(accepted.isError, false);
+    await eventually(
+      () =>
+        entered &&
+        f.events.some((event) => event.child.assignment === "second" && event.child.disposed),
+    );
+    assert.equal(await readFile(join(f.root, "second.txt"), "utf8"), "second");
+    await assert.rejects(access(join(f.root, "first.txt")), /ENOENT/);
+    const notices = () =>
+      f.session.messages.filter(
+        (message) => message.role === "custom" && message.customType === "delegation",
+      );
+    assert.equal(notices().length, 0);
+    release();
+    await eventually(() => notices().length === 1 && !f.session.isStreaming);
+    assert.equal(await readFile(join(f.root, "first.txt"), "utf8"), "first");
+    const content = JSON.stringify(notices()[0]);
+    assert.ok(content.indexOf("first") < content.indexOf("second"));
+    assert.equal(
+      new Set(
+        f.events.filter((event) => event.child.disposed).map((event) => event.child.transcript),
+      ).size,
+      2,
+    );
+  } finally {
+    release();
+  }
+});

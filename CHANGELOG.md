@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+- Writers and parent tools now run concurrently by default within existing FIFO/capacity
+  limits, in shared or supplied workspaces. Explicitly authorized nested writers and
+  continuation windows use ordinary capacity rules; no writer lease or parent mutation
+  reservation remains. Callers coordinate collisions; no isolation, rollback, automatic
+  merge, file ownership, worktree management or new configuration is provided.
+- Preserve permission/provenance/leaf trust, retained-permit drain, grant revalidation
+  and 0.4.0 ordered completion wakes. `ChildSnapshot.writerLease` remains a required,
+  deprecated boolean, always false for new snapshots; lease-specific UI/help is removed.
+- SDK regression coverage proves three overlapping writers, concurrent parent effects,
+  cross-workspace compatibility calls, nested authorization, FIFO limits, cancellation,
+  pause/resume and ordered once-per-batch wakes after actual drain.
+
 ## [0.4.0]
 
 Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.3.3. Tested host
