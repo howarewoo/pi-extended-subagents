@@ -22,7 +22,7 @@ import {
   type ChildSnapshot,
   type StartTask,
 } from "./coordinator.ts";
-import { READ_TOOLS, resolveProfile, bundledProfiles, intersectProfileGrants } from "./profiles.ts";
+import { resolveProfile, bundledProfiles, intersectProfileGrants } from "./profiles.ts";
 import { createHub } from "./hub.ts";
 import { createChildWidget } from "./subagent-widget.ts";
 import { taskCard } from "./task-presentation.ts";
@@ -160,32 +160,6 @@ export default function delegation(pi: ExtensionAPI) {
     await coordinator?.shutdown();
     unsubscribeWidget?.();
   });
-  pi.on("tool_call", (event) => {
-    try {
-      const builtinRead =
-        READ_TOOLS.includes(event.toolName as (typeof READ_TOOLS)[number]) &&
-        pi
-          .getAllTools()
-          .some(
-            (tool) =>
-              tool.name === event.toolName && tool.sourceInfo.path === `builtin:${event.toolName}`,
-          );
-      const tools = pi.getAllTools();
-      const ownSource = tools.find((tool) => tool.name === "delegate_task")?.sourceInfo.path;
-      const ownCompatibilityCall =
-        event.toolName === "subagent" &&
-        ownSource !== undefined &&
-        tools.some((tool) => tool.name === "subagent" && tool.sourceInfo.path === ownSource);
-      coordinator.parentToolStart(
-        event.toolCallId,
-        event.toolName,
-        builtinRead || ownCompatibilityCall,
-      );
-    } catch (error) {
-      return { block: true, reason: String(error) };
-    }
-  });
-  pi.on("tool_execution_end", (event) => coordinator.parentToolEnd(event.toolCallId));
   const assertTools = (names: readonly string[]) => {
     for (const name of names) {
       const tool = pi.getAllTools().find((tool) => tool.name === name);
@@ -214,7 +188,7 @@ export default function delegation(pi: ExtensionAPI) {
       "Use delegate_task for authorized native delegation with explicit profiles. When subagent is available, prefer subagent for orchestration task owners. Native background and subagent async calls both wake this session after drain; continue independent work or yield, never poll. Supply the existing task workspace cwd; do not substitute inline implementation when a workflow requires a worker.",
     ],
     description:
-      "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model by default. Optional exact model {provider,id,effort} requires an operator profile models grant and stays exact, suppressing inherited role prewalk; models may only narrow that grant list. No aliases/fallback/coercion. Configured role-default prewalk switches once after first edit/write, not a repository scan. Coding workers are supported through implementation; advisor/probes/speculation/history/executable resource inheritance remain unavailable. Optional cwd selects an existing workspace: root hooks see explicitly resolved builtin paths and a cwd-prefixed shell command; this is not sandboxing or transparent hook-cwd rebinding. Role tools are ceilings intersected with callable parent builtins; inactive tools stay inactive. Snapshots report effective tools. Bounded FIFO capacity; effective implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits without an extra completion notice; background delivers one ordered batch outcome after actual drain and wakes the parent (or queues a follow-up if busy), potentially adding model turns/costs. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
+      "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model by default. Optional exact model {provider,id,effort} requires an operator profile models grant and stays exact, suppressing inherited role prewalk; models may only narrow that grant list. No aliases/fallback/coercion. Configured role-default prewalk switches once after first edit/write, not a repository scan. Coding workers are supported through implementation; advisor/probes/speculation/history/executable resource inheritance remain unavailable. Optional cwd selects an existing workspace: root hooks see explicitly resolved builtin paths and a cwd-prefixed shell command; this is not sandboxing or transparent hook-cwd rebinding. Role tools are ceilings intersected with callable parent builtins; inactive tools stay inactive. Snapshots report effective tools. Bounded FIFO capacity; writers and parent tools may run together. Caller coordinates shared writes, including manual !/!! and external edits; no isolation or conflict prevention. Foreground waits without an extra completion notice; background delivers one ordered batch outcome after actual drain and wakes the parent (or queues a follow-up if busy), potentially adding model turns/costs. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
     parameters,
     renderCall(args, theme) {
       return {
@@ -537,7 +511,7 @@ export default function delegation(pi: ExtensionAPI) {
       "subagent launches are async by default and wake this session after actual drain. Continue independent work or yield; do not poll or sleep. Use the exact returned id (UUID@generation) for status, steer, stop or resume. Resume continues a drained paused or completed conversation with its same identity/generation, full SDK context and cumulative budgets; unavailable context and stopped/failed identities reject. Use explicit delegate_coordinate followup/revive for fresh completed work.",
     ],
     description:
-      "Native delegation for orchestration and coding task owners. Launch {agent,task,cwd?,model?,async?} or an ordered {tasks:[...],async?,cwd?} batch. worker maps explicitly to the implementation profile; unknown/custom agent names reject. Model strings require exact provider/id[:effort] and operator grants. Actions: agents, list, status/stop with exact returned id, steer/resume with id and message. Resume requires a drained paused or completed session and restores its full conversation with the same identity/generation and session count; unavailable context and stopped/failed identities reject. Uses the same registry, parent permissions, limits and global writer lease as delegate_task. Existing workspaces only: file paths and shell cwd are explicitly adapted through root builtin hooks. No automatic worktree creation/commits/apply/deletion, detached survival, script workflows or blanket competing API parity. Do not load another provider of the subagent tool alongside this extension.",
+      "Native delegation for orchestration and coding task owners. Launch {agent,task,cwd?,model?,async?} or an ordered {tasks:[...],async?,cwd?} batch. worker maps explicitly to the implementation profile; unknown/custom agent names reject. Model strings require exact provider/id[:effort] and operator grants. Actions: agents, list, status/stop with exact returned id, steer/resume with id and message. Resume requires a drained paused or completed session and restores its full conversation with the same identity/generation and session count; unavailable context and stopped/failed identities reject. Uses the same registry, parent permissions, limits and FIFO capacity as delegate_task. Writers and parent tools may run together; caller coordinates shared writes, with no isolation or collision prevention. Existing workspaces only: file paths and shell cwd are explicitly adapted through root builtin hooks. No automatic worktree creation/commits/apply/deletion, detached survival, script workflows or blanket competing API parity. Do not load another provider of the subagent tool alongside this extension.",
     parameters: compatibleParameters,
     async execute(callerId, args, signal, onUpdate, ctx) {
       if (!("action" in args) || args.action === "resume" || args.action === "steer")

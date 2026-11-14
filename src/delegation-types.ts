@@ -34,6 +34,7 @@ export type ChildSnapshot = Readonly<
     parentId: string;
     parentGeneration?: number;
     depth: number;
+    /** @deprecated No exclusive writer lease is held; new snapshots always report false. */
     writerLease: boolean;
     limits: ExecutionLimits;
     limitReason?: string;

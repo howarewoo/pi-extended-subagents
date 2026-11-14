@@ -98,22 +98,6 @@ export async function fixture(
         )
           throw new Error(`Delegation requires an unmodified built-in parent tool: ${name}`);
     };
-    pi.on("tool_call", (event) => {
-      const builtinRead =
-        ["read", "grep", "find", "ls"].includes(event.toolName) &&
-        pi
-          .getAllTools()
-          .some(
-            (tool) =>
-              tool.name === event.toolName && tool.sourceInfo.path === `builtin:${event.toolName}`,
-          );
-      try {
-        coordinator.parentToolStart(event.toolCallId, event.toolName, builtinRead);
-      } catch (error) {
-        return { block: true, reason: String(error) };
-      }
-    });
-    pi.on("tool_execution_end", (event) => coordinator.parentToolEnd(event.toolCallId));
     pi.events.on("delegation:registry", (data) => events.push(data as RegistryEvent));
     pi.registerTool({
       name: "capture_context",

@@ -180,7 +180,7 @@ test("viewer selects arbitrary roles, scrolls complete sanitized details, stacks
   assert.match(generalDetails, /Tools ceiling:.*write, edit, bash/);
   assert.match(generalDetails, /Inheritance: available parent skills and callable builtins/);
   assert.match(generalDetails, /no parent[\s│]*instructions\/history/);
-  assert.match(generalDetails, /Reviewed leaf ceiling: none.*writer lease/);
+  assert.match(generalDetails, /Reviewed leaf ceiling: none.*shared writes/);
   assert.match(generalDetails, /trusted code, not sandboxed/);
   assert.match(generalDetails, /Spawn ceiling: scout, review/);
   for (let i = 0; i < 4; i++) viewer.handleInput!("down");

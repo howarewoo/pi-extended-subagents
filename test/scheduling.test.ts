@@ -172,7 +172,7 @@ test("SDK batch queues FIFO at bounded concurrency, cancels before setup, preser
     );
 });
 
-test("multiple batch writers serialize, retain real parent permission hooks and produce separate transcripts", async (t) => {
+test("multiple batch writers overlap, retain real parent permission hooks and produce separate transcripts", async (t) => {
   let writes = 0;
   const f = await fixture(t, {
     extra: (pi) => {
@@ -218,7 +218,7 @@ test("multiple batch writers serialize, retain real parent permission hooks and 
   const firstDisposed = f.events.findIndex(
     (event) => event.child.id === result[0].id && event.child.disposed,
   );
-  assert.ok(secondSetup > firstDisposed);
+  assert.ok(secondSetup < firstDisposed);
 });
 
 test("default SDK child-local model-only tool spawns a scout grandchild, uses root permission hooks and direct usage once", async (t) => {
@@ -266,22 +266,18 @@ test("default SDK child-local model-only tool spawns a scout grandchild, uses ro
   );
 });
 
-test("nested capacity, depth, role, ancestor grants, spawn count and writer deadlocks reject visibly before descendant setup", async (t) => {
+test("nested capacity, depth, role, ancestor grants, spawn count reject visibly before descendant setup", async (t) => {
   for (const scenario of [
     "capacity",
     "depth",
     "role",
     "grants",
     "spawn",
-    "writer",
     "request-depth",
     "request-spawn",
   ]) {
     await t.test(scenario, async (t) => {
-      const target =
-        scenario === "role" || scenario === "grants" || scenario === "writer"
-          ? "implementation"
-          : "general";
+      const target = scenario === "role" || scenario === "grants" ? "implementation" : "general";
       const f = await fixture(t, {
         response: (context) => {
           const text = userText(context);
@@ -297,7 +293,7 @@ test("nested capacity, depth, role, ancestor grants, spawn count and writer dead
           );
         },
       });
-      const profile = scenario === "writer" ? "implementation" : "general";
+      const profile = "general";
       await configure(f, {
         [profile]: { spawn: scenario === "role" ? ["general"] : [target] },
         scheduling: {
@@ -322,7 +318,7 @@ test("nested capacity, depth, role, ancestor grants, spawn count and writer dead
       const disk = await readFile(finals[0].child.transcript!, "utf8");
       assert.match(
         disk,
-        /Nested capacity unavailable|depth limit|spawn role denied|broaden ancestor grants|spawn limit|writer ancestor/,
+        /Nested capacity unavailable|depth limit|spawn role denied|broaden ancestor grants|spawn limit/,
       );
       assert.equal(
         f.events.some((event) => event.child.depth > 1),
@@ -436,4 +432,42 @@ test("bundled nested targets obey default depth and request revocation without r
             : /broaden ancestor grants/,
       );
     });
+});
+
+test("explicitly authorized writer-under-writer nesting uses immediate capacity and preserves separate effects", async (t) => {
+  const f = await fixture(t, {
+    speed: 0,
+    response: (context) => {
+      const text = userText(context);
+      if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
+      if (text.startsWith("LAUNCH "))
+        return fauxAssistantMessage(fauxToolCall("delegate_task", JSON.parse(text.slice(7))), {
+          stopReason: "toolUse",
+        });
+      return fauxAssistantMessage(
+        fauxToolCall(
+          text === "parent writer" ? "delegate_task" : "write",
+          text === "parent writer"
+            ? { assignment: "nested writer", profile: "implementation", spawn: [] }
+            : { path: "nested.txt", content: "nested effect" },
+        ),
+        { stopReason: "toolUse" },
+      );
+    },
+  });
+  await configure(f, {
+    implementation: { spawn: ["implementation"] },
+    scheduling: { concurrency: 2 },
+  });
+  const parent = await f.launch("parent writer", "implementation", false);
+  const finals = f.events.filter((event) => event.child.disposed).map((event) => event.child);
+  assert.equal(finals.length, 2);
+  assert.deepEqual(
+    finals.map((state) => state.depth),
+    [2, 1],
+  );
+  assert.equal(finals[0].parentId, parent.id);
+  assert.ok(finals.every((state) => state.status === "settled" && !state.writerLease));
+  assert.equal(await readFile(join(f.root, "nested.txt"), "utf8"), "nested effect");
+  assert.notEqual(finals[0].transcript, finals[1].transcript);
 });

@@ -6,6 +6,7 @@ import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { fixture, eventually } from "./fixtures.ts";
 import { taskCard, createChildWidget } from "../src/hub.ts";
+import { DEFAULT_POLICY } from "../src/scheduling.ts";
 import type { ChildSnapshot } from "../src/coordinator.ts";
 
 const text = (context: Parameters<import("@earendil-works/pi-ai").FauxResponseFactory>[0]) => {
@@ -20,7 +21,7 @@ const text = (context: Parameters<import("@earendil-works/pi-ai").FauxResponseFa
 
 for (const cancellation of ["stop", "deadline"] as const)
   test(
-    `aborted active parent-dispatched tool drains before writer lease or scheduler permit release (${cancellation})`,
+    `aborted active parent-dispatched tool drains before scheduler permit release (${cancellation})`,
     { timeout: 10000 },
     async (t) => {
       let release!: () => void;
@@ -133,7 +134,7 @@ for (const cancellation of ["stop", "deadline"] as const)
         const first = latest.get("first")!;
         assert.equal(first.id, refs[0].id);
         assert.equal(first.disposed, false);
-        assert.equal(first.writerLease, true);
+        assert.equal(first.writerLease, false);
         assert.equal(first.limitReason, undefined);
         assert.equal(first.pauseReason, cancellation === "deadline" ? "deadline" : undefined);
         assert.equal(
@@ -173,7 +174,7 @@ for (const cancellation of ["stop", "deadline"] as const)
   );
 
 test(
-  "root writer admission queues while the current writer's forwarded write is in flight",
+  "root writer admission progresses while a sibling forwarded write is in flight",
   { timeout: 10000 },
   async (t) => {
     let release!: () => void;
@@ -214,11 +215,12 @@ test(
       const second = await f.launch("second", "implementation");
       const latest = (id: string) =>
         f.events.filter((event) => event.child.id === id).at(-1)!.child;
-      assert.equal(latest(first.id).writerLease, true);
-      assert.equal(latest(second.id).status, "queued");
-      assert.equal(latest(second.id).transcript, undefined);
-      release();
+      assert.equal(latest(first.id).writerLease, false);
       await eventually(() => latest(second.id).disposed);
+      assert.equal(latest(first.id).disposed, false);
+      assert.equal(await readFile(join(f.root, "second.txt"), "utf8"), "written");
+      release();
+      await eventually(() => latest(first.id).disposed);
       assert.equal(latest(first.id).status, "settled");
       assert.equal(latest(second.id).status, "settled");
       assert.equal(await readFile(join(f.root, "second.txt"), "utf8"), "written");
@@ -479,8 +481,9 @@ test("shutdown at queued admission creates no SDK work and disposes each entry e
   );
 });
 
-test("cancelling a queue set cannot dequeue its later read-only member past a blocked writer", async (t) => {
+test("cancelling a queue set cannot dequeue its later member at capacity", async (t) => {
   const f = await fixture(t, { speed: 100 });
+  f.coordinator.configure({ ...DEFAULT_POLICY, concurrency: 1 });
   const active = await f.direct("long writer ".repeat(100), "implementation");
   const blocked = await f.direct("blocked writer", "implementation");
   const reader = await f.direct("blocked reader");
@@ -489,6 +492,6 @@ test("cancelling a queue set cannot dequeue its later read-only member past a bl
   await f.coordinator.stopMany([blocked, reader]);
   assert.equal(f.coordinator.snapshot(reader)!.transcript, undefined);
   assert.equal(f.coordinator.snapshot(reader)!.status, "cancelled");
-  assert.equal(f.coordinator.snapshot(active)!.writerLease, true);
+  assert.equal(f.coordinator.snapshot(active)!.writerLease, false);
   await f.coordinator.stop(active);
 });

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   fauxAssistantMessage,
@@ -125,7 +125,7 @@ for (const batch of [false, true]) {
       speed: 0,
       extra: (pi) => {
         pi.on("tool_call", async (event) => {
-          if (event.toolName !== "read") return;
+          if (event.toolName !== "read" && event.toolName !== "write") return;
           const path = String(event.input.path);
           if (path.endsWith("busy.txt")) {
             busyEntered.resolve();
@@ -151,14 +151,20 @@ for (const batch of [false, true]) {
         }
         return context.messages.at(-1)?.role === "toolResult"
           ? fauxAssistantMessage("outcome " + first)
-          : fauxAssistantMessage(fauxToolCall("read", { path: first + ".txt" }), {
-              stopReason: "toolUse",
-            });
+          : fauxAssistantMessage(
+              fauxToolCall("write", { path: first + ".txt", content: "written " + first }),
+              {
+                stopReason: "toolUse",
+              },
+            );
       },
     });
     for (const name of ["first", "second", "busy"])
       await writeFile(join(f.root, name + ".txt"), name);
-    const items = ["first", "second"].map((assignment) => ({ assignment, profile: "scout" }));
+    const items = ["first", "second"].map((assignment) => ({
+      assignment,
+      profile: "implementation",
+    }));
     await f.session.prompt(
       "ROOT " +
         JSON.stringify(
@@ -174,15 +180,17 @@ for (const batch of [false, true]) {
       await busyEntered.promise;
     }
     const before = parentRequests.length;
-    drains[0].resolve();
+    drains[batch ? 1 : 0].resolve();
     if (batch) {
       await eventually(() =>
-        f.events.some((e) => e.child.assignment === "first" && e.child.disposed),
+        f.events.some((e) => e.child.assignment === "second" && e.child.disposed),
       );
       assert.equal(notices().length, 0, "batch waits for last member");
-      drains[1].resolve();
+      assert.equal(await readFile(join(f.root, "second.txt"), "utf8"), "written second");
+      assert.ok(!f.events.some((e) => e.child.assignment === "first" && e.child.disposed));
+      drains[0].resolve();
       await eventually(() =>
-        f.events.some((e) => e.child.assignment === "second" && e.child.disposed),
+        f.events.some((e) => e.child.assignment === "first" && e.child.disposed),
       );
       assert.equal(parentRequests.length, before, "completion does not interrupt busy tool");
       busy.resolve();

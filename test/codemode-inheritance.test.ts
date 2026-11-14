@@ -189,7 +189,7 @@ test("sandbox tool calls consume the shared tool budget, not just the outer scri
 });
 
 test(
-  "cancellation of a real sandbox drains root hooks before releasing the writer lease",
+  "cancellation of a real sandbox drains root hooks before releasing capacity",
   { timeout: 10000 },
   async (t) => {
     let release!: () => void;
@@ -220,7 +220,7 @@ test(
       await eventually(() => entered);
       const stopping = f.coordinator.stop(ref);
       await eventually(() => final(f, ref.id).status === "draining");
-      assert.equal(final(f, ref.id).writerLease, true);
+      assert.equal(final(f, ref.id).writerLease, false);
       assert.equal(final(f, ref.id).disposed, false);
       release();
       await stopping;

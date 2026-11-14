@@ -86,7 +86,7 @@ test(
     t.mock.timers.tick(100);
     t.mock.timers.reset();
     await eventually(() => f.events.some((event) => event.child.status === "pausing"));
-    assert.equal(f.events.at(-1)!.child.writerLease, true);
+    assert.equal(f.events.at(-1)!.child.writerLease, false);
     assert.equal(f.events.at(-1)!.child.disposed, false);
     release();
     await eventually(() => f.events.at(-1)!.child.status === "paused");
@@ -408,6 +408,11 @@ test(
     assert.equal(result.transcript, undefined);
     assert.equal(result.pauseReason, "deadline");
     assert.equal(result.telemetry.requests, null);
+    await mkdir(join(f.root, "operator"), { recursive: true });
+    await writeFile(
+      join(f.root, "operator", "delegation.json"),
+      JSON.stringify({ scheduling: { concurrency: 1, deadlineMs: 60 } }),
+    );
     await f.coordinator.resume(queued, "continuation instructions");
     assert.equal(f.coordinator.snapshot(queued)!.status, "queued");
     // The continuation can itself expire before first dispatch; accepted text must survive.
@@ -540,7 +545,7 @@ test(
   },
 );
 
-test("paused continuation respects a blocked FIFO writer and rejects queue overflow atomically", async (t) => {
+test("paused continuation respects capacity-bound FIFO and rejects queue overflow atomically", async (t) => {
   let release!: () => void;
   let entered = false;
   const gate = new Promise<void>((resolve) => {
@@ -573,9 +578,9 @@ test("paused continuation respects a blocked FIFO writer and rejects queue overf
   await mkdir(join(f.root, "operator"), { recursive: true });
   await writeFile(
     join(f.root, "operator", "delegation.json"),
-    JSON.stringify({ scheduling: { concurrency: 3, queue: 1 } }),
+    JSON.stringify({ scheduling: { concurrency: 1, queue: 1 } }),
   );
-  f.coordinator.configure({ ...DEFAULT_POLICY, concurrency: 3, queue: 1 });
+  f.coordinator.configure({ ...DEFAULT_POLICY, concurrency: 1, queue: 1 });
   const older = await f.direct("older writer", "implementation");
   const before = f.coordinator.snapshot(paused);
   await assert.rejects(f.coordinator.resume(paused, "must not jump"), /queue capacity/);
@@ -817,7 +822,7 @@ test(
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal(parentReturned, false, "parent wait must remain pending until the child drains");
       assert.equal(latest(parent).status, "pausing");
-      assert.equal(latest(parent).writerLease, true);
+      assert.equal(latest(parent).writerLease, false);
       assert.equal(latest(parent).disposed, false);
       assert.equal(latest(child).pauseReason, "deadline");
       assert.equal(latest(child).window, 2);

@@ -104,7 +104,7 @@ for (const loadout of [
   "default",
   ["read", "capture_context", "delegate_task", "delegate_coordinate"],
 ] as const) {
-  test(`implementation uses effective ${typeof loadout === "string" ? "default mutating" : "read-only"} subset and truthful writer ownership`, async (t) => {
+  test(`implementation uses effective ${typeof loadout === "string" ? "default mutating" : "read-only"} subset and deprecated lease compatibility`, async (t) => {
     const f = await fixture(t, {
       tools: typeof loadout === "string" ? loadout : [...loadout],
       speed: 0,
@@ -117,7 +117,7 @@ for (const loadout of [
     );
     assert.equal(
       f.events.some((event) => event.child.id === ref.id && event.child.writerLease),
-      typeof loadout === "string",
+      false,
     );
     assert.equal(final.writerLease, false);
   });

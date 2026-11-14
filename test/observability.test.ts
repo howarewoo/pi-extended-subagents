@@ -1,3 +1,4 @@
+import { DEFAULT_POLICY } from "../src/scheduling.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
@@ -29,10 +30,8 @@ test(
     assert.equal(children.filter((child) => child.status === "failed").length, 1);
     assert.ok(children.every((child) => child.createdAt <= child.endedAt!));
     assert.ok(children.every((child) => !child.writerLease && child.disposed));
-    // The general failure child is also writer-capable; either writer may acquire first.
-    assert.ok(
-      f.events.some((event) => event.child.profile === "implementation" && event.child.writerLease),
-    );
+    // Write capability never becomes exclusive ownership.
+    assert.ok(f.events.every((event) => !event.child.writerLease));
     assert.ok(
       f.events.some((event) => event.child.profile === "scout" && event.child.status === "running"),
     );
@@ -125,7 +124,7 @@ async function captureAdmission(
 }
 
 test(
-  "real SDK Hub stop keeps leased writer draining and queue transcript empty until hook release",
+  "real SDK Hub stop keeps capacity occupied while draining and queue transcript empty until hook release",
   { timeout: 10000 },
   async (t) => {
     let release!: () => void;
@@ -151,6 +150,7 @@ test(
               { stopReason: "toolUse" },
             ),
     });
+    f.coordinator.configure({ ...DEFAULT_POLICY, concurrency: 1 });
     const admission = await captureAdmission(t, f);
     let hub: ReturnType<typeof createHub> | undefined;
     try {
@@ -175,7 +175,7 @@ test(
       hub.handleInput!(first.id);
       hub.handleInput!("\r");
       assert.match(render(), /> [├└] ● writer/);
-      assert.equal(f.coordinator.snapshot(first)!.writerLease, true);
+      assert.equal(f.coordinator.snapshot(first)!.writerLease, false);
       assert.equal(f.coordinator.snapshot(second)!.status, "queued");
       assert.deepEqual(f.coordinator.messages(second), []);
       assert.equal(f.coordinator.snapshot(second)!.transcript, undefined);
@@ -186,7 +186,7 @@ test(
       await eventually(() => f.coordinator.snapshot(first)!.status === "draining");
       assert.equal(f.coordinator.snapshot(first)!.disposed, false);
       assert.equal(f.coordinator.snapshot(first)!.endedAt, null);
-      assert.equal(f.coordinator.snapshot(first)!.writerLease, true);
+      assert.equal(f.coordinator.snapshot(first)!.writerLease, false);
       assert.equal(f.coordinator.snapshot(second)!.status, "queued");
       assert.match(render(), /draining/);
       assert.doesNotMatch(render(), /Stopped and drained/);

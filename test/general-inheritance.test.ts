@@ -135,7 +135,7 @@ test("general inherits actual builtin and reviewed leaf effects, but not parent 
   await assert.rejects(access(join(f.root, "escape.txt")), /ENOENT/);
   assert.equal(leafCalls, 1);
   assert.equal(orchestrations, 0);
-  assert.ok(f.events.some((event) => event.child.id === ref.id && event.child.writerLease));
+  assert.ok(f.events.every((event) => !event.child.writerLease));
   const transcript = await readFile(state.transcript!, "utf8");
   assert.match(transcript, /parent-skill/);
   assert.match(transcript, /Complete the assigned analysis/);
@@ -231,7 +231,7 @@ for (const revoke of ["config", "callable", "reaches", "provenance"] as const)
   });
 
 test(
-  "general leaf writer stays serialized and cancellation drains a held actual SDK hook",
+  "general leaf permits sibling progress and cancellation drains a held actual SDK hook",
   { timeout: 10000 },
   async (t) => {
     let release!: () => void;
@@ -268,13 +268,13 @@ test(
     try {
       const first = await f.direct(JSON.stringify([{ name: "leaf", args: {} }]), "general");
       await eventually(() => entered);
-      assert.equal(final(f, first.id).writerLease, true);
+      assert.equal(final(f, first.id).writerLease, false);
       const second = await f.direct("[]", "general");
-      assert.equal(final(f, second.id).status, "queued");
+      await eventually(() => final(f, second.id).disposed);
       const stopping = f.coordinator.stop(first);
       await eventually(() => final(f, first.id).status === "draining");
       assert.equal(final(f, first.id).disposed, false);
-      assert.equal(final(f, first.id).writerLease, true);
+      assert.equal(final(f, first.id).writerLease, false);
       release();
       await stopping;
       await eventually(() => final(f, second.id).disposed);

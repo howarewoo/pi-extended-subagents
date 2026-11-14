@@ -14,7 +14,7 @@ export const WRITE_TOOLS = [...READ_TOOLS, "write", "edit", "bash"] as const;
 export type BuiltinTool = (typeof WRITE_TOOLS)[number];
 export const COORDINATION_ACTIONS = ["message", "inbox", "wait"] as const;
 export type CoordinationAction = (typeof COORDINATION_ACTIONS)[number];
-/** Tool arrays are ceilings; admission intersects callable parent builtins before writer/ancestry checks. */
+/** Tool arrays are ceilings; admission intersects callable parent builtins before ancestry checks. */
 export type Profile = Readonly<
   ModelPolicy & {
     name: string;
@@ -58,9 +58,9 @@ const bundled: Record<string, Profile> = {
   implementation: {
     name: "implementation",
     description:
-      "Implement changes in the supplied workspace (exclusive model-tool writer; manual shells are uncoordinated)",
+      "Implement changes in the supplied workspace (shared writes; caller coordinates collisions)",
     prompt:
-      "Implement the assigned bounded change, verify it and report changed files and remaining risks. Work in your supplied cwd; root permissions and global model-tool writer coordination still apply.",
+      "Implement the assigned bounded change, verify it and report changed files and remaining risks. Work in your supplied cwd; root permissions still apply. Other children and parent tools may write concurrently; coordinate shared operations.",
     tools: WRITE_TOOLS,
     skills: [],
     spawn: ["scout", "review"],
@@ -193,13 +193,6 @@ export async function resolveProfile(
     );
   return { profile, skills: loaded.skills };
 }
-export function isWriter(profile: Profile): boolean {
-  return (
-    !!profile.leafTools?.length ||
-    profile.tools.some((tool) => !READ_TOOLS.includes(tool as (typeof READ_TOOLS)[number]))
-  );
-}
-
 export function bundledProfiles(): Profile[] {
   return structuredClone(Object.values(bundled));
 }

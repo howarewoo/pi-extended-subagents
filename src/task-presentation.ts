@@ -19,7 +19,7 @@ export const activity = (child: ChildSnapshot) =>
   (active(child) ? child.activity || child.progress : child.result) ||
   child.progress ||
   "Waiting for SDK activity";
-export const writerWarning = "Model-tool writer only: no conflicting manual !/!! or external edits";
+
 /** Presentation-only preorder, keyed by exact parent generation. */
 export function taskTree(children: ChildSnapshot[], { laneWidth = 4, rootContinues = false } = {}) {
   const byIdentity = new Map(children.map((child) => [`${child.id}/${child.generation}`, child]));
@@ -94,7 +94,7 @@ export function taskCard(child: ChildSnapshot | undefined, expanded = false): st
     `${child.model.provider}/${child.model.id} · effort ${child.effort ?? "unavailable"}`,
     truncateToWidth(lineText(activity(child)), 240, "… [preview truncated]"),
     `Prewalk ${child.prewalk ? JSON.stringify(child.prewalk) : "off"} · advisor unavailable`,
-    `Parent ${child.parentId}${child.parentGeneration ? ` #${child.parentGeneration}` : ""} · depth ${child.depth} · writer lease ${child.writerLease}`,
+    `Parent ${child.parentId}${child.parentGeneration ? ` #${child.parentGeneration}` : ""} · depth ${child.depth}`,
     ...(child.outcome
       ? [
           `Structured ${child.outcome.validation} · ${child.outcome.finalized ? "finalized" : "provisional"} · attempts ${child.outcome.attempts}`,
@@ -191,6 +191,5 @@ export function taskDetails(
     "Activity: " + safe(activity(child)),
     "Full transcript: " + safe(child.transcript ?? "unavailable (queued/setup)"),
     "Followup/revive: native delegate_coordinate only (Hub has no tool dispatcher)",
-    ...(child.writerLease ? [writerWarning] : []),
   ];
 }

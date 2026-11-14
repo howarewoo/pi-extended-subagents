@@ -387,7 +387,7 @@ test("prewalk target survives fresh-generation renewal without rearming; missing
   assert.equal(f.events.at(-1)!.child.generation, 2);
 });
 
-test("prewalk cancellation holds writer ownership through real permission drain and never dispatches target", async (t) => {
+test("prewalk cancellation retains capacity through real permission drain and never dispatches target", async (t) => {
   let entered!: () => void, release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -447,7 +447,7 @@ test("prewalk cancellation holds writer ownership through real permission drain 
     const { eventually } = await import("./fixtures.ts");
     await eventually(() => f.events.at(-1)!.child.status === "draining");
     const held = f.events.at(-1)!.child;
-    assert.equal(held.writerLease, true);
+    assert.equal(held.writerLease, false);
     assert.equal(held.disposed, false);
     assert.equal(held.prewalk?.status, "armed");
     release();

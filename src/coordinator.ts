@@ -26,8 +26,6 @@ import {
 import {
   resolveProfile,
   intersectProfileGrants,
-  isWriter,
-  READ_TOOLS,
   type Profile,
   type BuiltinTool,
   type CoordinationAction,
@@ -121,8 +119,6 @@ export class DelegationCoordinator {
     return this.sessions().filter((state) => state.id === id);
   }
   private listeners = new Set<(event: RegistryEvent) => void>();
-  private parentMutations = new Set<string>();
-  private writer?: string;
   private closing = false;
   private shutdownPromise?: Promise<void>;
   readonly root: string;
@@ -171,24 +167,6 @@ export class DelegationCoordinator {
       }
     }
   }
-  /** Reserve at preflight, release on every finalized call (including blocked calls). */
-  parentToolStart(
-    id: string,
-    name: string,
-    readOnly = READ_TOOLS.includes(name as (typeof READ_TOOLS)[number]),
-  ): void {
-    if (readOnly || name === "delegate_task" || name === "delegate_coordinate") return;
-    const child = this.writer ? this.entries.get(this.writer) : undefined;
-    if (this.writer && (!child || !id.startsWith(child.callerId + "/")))
-      throw new Error(
-        `Shared checkout writer is held by ${this.writer}; stop or wait for that task`,
-      );
-    this.parentMutations.add(id);
-  }
-  parentToolEnd(id: string): void {
-    this.parentMutations.delete(id);
-    this.pump();
-  }
   private active(): Entry[] {
     return [...this.entries.values()].filter(
       (entry) =>
@@ -230,18 +208,12 @@ export class DelegationCoordinator {
     this.validateAdmission(input, effective, input.model);
     return selection;
   }
-  /** Shared writer/lineage checks; resume supplies its retained selection, not admission defaults. */
+  /** Shared lineage checks; resume supplies its retained selection, not admission defaults. */
   private validateAdmission(
     input: StartTask,
     effective: ModelSelection,
     explicit?: ModelSelection,
   ): void {
-    const writer = this.writer ? this.entries.get(this.writer) : undefined;
-    if (
-      isWriter(input.profile) &&
-      [...this.parentMutations].some((id) => !writer || !id.startsWith(writer.callerId + "/"))
-    )
-      throw new Error("Shared checkout writer conflict: in-flight parent mutation");
     if (input.parent) {
       const parent = this.entry(input.parent);
       if (parent.cancelled || parent.paused || parent.state.disposed)
@@ -253,12 +225,6 @@ export class DelegationCoordinator {
         throw new Error("Delegation depth limit");
       if (broadenedGrant(input.profile, parent.input.profile))
         throw new Error("Descendant cannot broaden ancestor grants");
-      let ancestor: Entry | undefined = parent;
-      while (ancestor) {
-        if (isWriter(input.profile) && isWriter(ancestor.input.profile))
-          throw new Error("Nested writer under writer ancestor is unsupported");
-        ancestor = this.entries.get(ancestor.state.parentId);
-      }
     }
   }
   private assertDescendantModels(
@@ -490,12 +456,7 @@ export class DelegationCoordinator {
         throw new Error("Delegation spawn limit");
       // Waiting sessions retain their permits: no lending or hidden overcommit. Refuse
       // nested waits that cannot start immediately instead of queuing a deadlock.
-      if (
-        queued ||
-        this.active().length + inputs.length > this.policy.concurrency ||
-        (inputs.some((input) => isWriter(input.profile)) &&
-          (this.writer || inputs.filter((input) => isWriter(input.profile)).length > 1))
-      )
+      if (queued || this.active().length + inputs.length > this.policy.concurrency)
         throw new Error("Nested capacity unavailable; no permit lending");
     }
     const entries = inputs.map((input, index) => {
@@ -538,7 +499,7 @@ export class DelegationCoordinator {
             ? { validation: "awaiting", attempts: 0, errors: [], finalized: false }
             : undefined,
           assignment: input.assignment,
-          activity: "Queued for capacity / writer admission",
+          activity: "Queued for capacity",
           progress: "",
           result: "",
           disposed: false,
@@ -631,17 +592,8 @@ export class DelegationCoordinator {
     return next;
   }
   private assertQueueCapacity(inputs: StartTask[]): void {
-    const pending = [...this.queue].map((entry) => entry.input).concat(inputs);
-    let slots = Math.max(0, this.policy.concurrency - this.active().length);
-    let writerBusy = !!this.writer || !!this.parentMutations.size;
-    let dispatchable = 0;
-    for (const input of pending) {
-      if (!slots || (isWriter(input.profile) && writerBusy)) break;
-      slots--;
-      dispatchable++;
-      if (isWriter(input.profile)) writerBusy = true;
-    }
-    if (pending.length - dispatchable > this.policy.queue)
+    const slots = Math.max(0, this.policy.concurrency - this.active().length);
+    if (Math.max(0, this.queue.size + inputs.length - slots) > this.policy.queue)
       throw new Error("Delegation queue capacity limit");
   }
   private pump(): void {
@@ -649,14 +601,10 @@ export class DelegationCoordinator {
     for (const entry of this.queue) {
       if (entry.cancelled || entry.state.disposed || entry.state.status !== "queued") continue;
       if (this.active().length >= this.policy.concurrency) break;
-      const writer = isWriter(entry.input.profile);
-      if (writer && (this.writer || this.parentMutations.size)) break; // strict FIFO
       this.queue.delete(entry);
-      if (writer) this.writer = entry.state.id;
       entry.state = {
         ...entry.state,
         status: "setup",
-        writerLease: writer,
         activity: "Preparing SDK child",
       };
       entry.setup = entry.session
@@ -710,7 +658,6 @@ export class DelegationCoordinator {
         ),
       ]).then(() => {
         if (entry.cancelled || this.closing || entry.state.disposed) return;
-        if (this.writer === entry.state.id) this.writer = undefined;
         this.presence.set(entry.state.id, "paused");
         this.update(entry, {
           status: "paused",
@@ -860,7 +807,7 @@ export class DelegationCoordinator {
         throw new Error("Resume denied: cumulative execution budget exhausted");
       if (entry.state.depth > limits.depth)
         throw new Error("Resume denied: delegation depth limit");
-      // Reuse the original admission's writer and nested no-lending checks, without
+      // Reuse the original admission's lineage and nested no-lending checks, without
       // admitting another task or charging another spawn.
       this.validateAdmission(
         input,
@@ -868,9 +815,7 @@ export class DelegationCoordinator {
         entry.state.prewalk?.status === "armed" ? undefined : selected,
       );
       this.renewalParent(ref);
-      const available =
-        this.active().length < policy.concurrency &&
-        (!isWriter(input.profile) || (!this.writer && !this.parentMutations.size));
+      const available = this.active().length < policy.concurrency;
       if (parent && (this.queue.size || !available))
         throw new Error("Nested capacity unavailable; no permit lending");
       const previousPolicy = this.policy;
@@ -1100,7 +1045,6 @@ export class DelegationCoordinator {
     entry.setup = undefined;
     entry.run = undefined;
     entry.pauseDrain = undefined;
-    if (this.writer === entry.state.id) this.writer = undefined;
     this.closeDescendantPresence(
       entry,
       entry.state.status === "settled" && !entry.cancelled && !this.closing,

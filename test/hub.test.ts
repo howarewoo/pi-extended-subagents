@@ -266,7 +266,7 @@ const effectiveKeys = {
   getKeys: () => ["escape" as const, "enter" as const],
 };
 
-test("hub active writers add no footer warning while Details retains the coordination caveat", (t) => {
+test("historical lease values add no runtime exclusivity claims", (t) => {
   let child = snapshot("active", { profile: "implementation", writerLease: true });
   const coordinator = new DelegationCoordinator("unused-render-only", "root");
   t.mock.method(coordinator, "list", () => [child]);
@@ -292,9 +292,9 @@ test("hub active writers add no footer warning while Details retains the coordin
     hub.handleInput!("\t");
     hub.render(180);
     hub.handleInput!("\x1b[F");
-    assert.match(
+    assert.doesNotMatch(
       stripAnsi(hub.render(180).join("\n")),
-      /Model-tool writer only: no conflicting manual !\/!! or external edits/,
+      /writer lease|Model-tool writer only/,
     );
   } finally {
     hub.dispose();

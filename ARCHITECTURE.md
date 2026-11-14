@@ -15,7 +15,7 @@ flowchart TD
     Caller[Parent model or operator]
     Entry[Extension entrypoint\nTools, commands, lifecycle hooks]
     Policy[Profiles, scheduling policy,\nmodel policy and checked task input]
-    Registry[DelegationCoordinator\nRegistry, FIFO queue, writer lease,\ncoordination and generation history]
+    Registry[DelegationCoordinator\nRegistry, FIFO queue,\ncoordination and generation history]
     Child[Pi SDK child session\nExplicit prompt, skills and custom tools]
     Dispatch[Original parent executeTool\nValidation and permission hooks]
     Models[Parent model registry\nProvider routing and authentication]
@@ -42,7 +42,7 @@ The original parent dispatcher remains the authority for child builtin and revie
 | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [pi-extended-subagents.ts](src/pi-extended-subagents.ts) | Registers `delegate_task`, `delegate_coordinate`, and `subagent`; resolves requests and configuration; adapts compatibility calls; owns lifecycle hooks, completion messages, commands, and UI wiring. |
 | [tool-schemas.ts](src/tool-schemas.ts)                   | TypeBox input schemas for the three model-facing tools.                                                                                                                                                |
-| [coordinator.ts](src/coordinator.ts)                     | Authoritative live registry, admission and execution authorization, FIFO dispatch, writer ownership, budgets, cancellation/drain, messages, waits, immutable generation history, and disposal.         |
+| [coordinator.ts](src/coordinator.ts)                     | Authoritative live registry, admission and execution authorization, FIFO dispatch, budgets, cancellation/drain, messages, waits, immutable generation history, and disposal.                           |
 | [child-execution.ts](src/child-execution.ts)             | Scoped resources, SDK session setup, parent-dispatched tool wrappers, event observation, prompting, and outcome publication through coordinator-owned execution operations.                            |
 | [delegation-types.ts](src/delegation-types.ts)           | Shared task inputs, identity, snapshot, event, message, and wait contracts; also re-exported by the coordinator.                                                                                       |
 | [profiles.ts](src/profiles.ts)                           | Bundled roles, operator/trusted-project configuration, explicit skill loading, and grant intersection for renewed assignments.                                                                         |
@@ -78,9 +78,9 @@ On `session_shutdown`, the extension closes admission, removes the widget, abort
 2. **Narrow permissions.** Requested spawn, coordination, and model grants must already exist in the effective profile. Task-file instructions are read through the parent dispatcher after path and metadata checks.
 3. **Preflight the whole batch.** `DelegationCoordinator.admit()` intersects each profile's tool ceiling with callable parent tools, verifies builtin provenance, validates model selection and result schemas, checks ancestry and budgets, and computes queue capacity. No child is registered, set up on disk, or dispatched until all items pass. Preflight may already have read configuration, skills, and task files.
 4. **Register and queue.** Admission assigns UUID/generation identities, creates snapshots and completion promises, starts deadlines, and appends entries to the FIFO queue.
-5. **Dispatch when eligible.** The coordinator reserves concurrency and, for effective writing profiles, the writer lease before SDK setup. It invokes `createChildExecution()` to create a fresh task directory, scoped resources, parent-routed model runtime, custom tool wrappers, and SDK session.
+5. **Dispatch when eligible.** The coordinator reserves concurrency before SDK setup. It invokes `createChildExecution()` to create a fresh task directory, scoped resources, parent-routed model runtime, custom tool wrappers, and SDK session.
 6. **Run and observe.** The SDK prompts the child with its assignment. Events update progress, activity, model usage, transcript references, and observers. Builtin calls go through the original parent dispatcher.
-7. **Drain and finalize.** On prompt completion or failure, the executor asks the coordinator to stop and drain active descendants. On the normal prompt-resolution path the executor publishes outcome artifacts and updates the terminal outcome through its owner interface. Coordinator disposal captures messages, releases the SDK session and writer lease, resolves waiters, and pumps the queue.
+7. **Drain and finalize.** On prompt completion or failure, the executor asks the coordinator to stop and drain active descendants. On the normal prompt-resolution path the executor publishes outcome artifacts and updates the terminal outcome through its owner interface. Coordinator disposal captures messages, releases the SDK session, resolves waiters, and pumps the queue.
 
 `child-execution.ts` operates on the same live execution record as the coordinator, not a copy or a second state machine. Its typed owner interface is bound to the exact admitted entry and reads shutdown state through a live getter. The coordinator retains authorization, budget charging, descendant drain, and disposal; the executor owns SDK mechanics and artifact publication. Existing coordinator type and `childResources` imports remain available through re-exports.
 
@@ -93,12 +93,12 @@ The execution state is separate from agent presence:
 ```mermaid
 stateDiagram-v2
     [*] --> queued: Batch admitted; deadline starts
-    queued --> setup: FIFO capacity and writer admission
+    queued --> setup: FIFO capacity
     queued --> cancelled: Stop before setup
     queued --> pausing: Deadline before setup
     setup --> pausing: Deadline
     running --> pausing: Deadline
-    pausing --> paused: Actual subtree drain; release capacity/lease
+    pausing --> paused: Actual subtree drain; release capacity
     paused --> queued: Explicit continuation; same SDK context/identity
     paused --> cancelled: Stop or shutdown
     setup --> running: SDK agent_start
@@ -120,13 +120,13 @@ Scheduling defaults are 16 concurrent tasks, a 32-item queue, and 16 tasks per b
 
 Important scheduling consequences:
 
-- The queue is strict FIFO. A writer blocked at its head can hold up later read-only tasks even if a concurrency slot is free.
-- Setup, running work, pausing and draining retain capacity until real drain. Paused entries retain idle SDK sessions but no scheduler permits or writer lease. Each deadline window begins at admission (or explicit resume), so queue/setup time counts and paused time does not.
+- The queue is strict FIFO. Writers and readers dispatch in admission order when capacity is free.
+- Setup, running work, pausing and draining retain capacity until real drain. Paused entries retain idle SDK sessions but no scheduler permits. Each deadline window begins at admission (or explicit resume), so queue/setup time counts and paused time does not.
 - Nested calls are foreground-only. A waiting parent retains its permit; admission rejects nested work that cannot start immediately rather than lending permits or queuing a deadlock.
-- Effective writing tasks serialize through one writer lease across the coordinator, even when their workspaces differ. A writer cannot spawn another writer beneath itself.
+- Writing tasks and parent tools may run together, including across supplied workspaces. Nested writers obey the same explicit grants, immediate capacity and no-lending checks as readers.
 - Deadlines mark the whole active subtree before abort/drain and preserve conversations; hard request/tool limits, stop and shutdown cancel. None forcibly terminate unresponsive provider or tool code. Each explicit resume revalidates current policy/auth/callability against original grants, keeps cumulative counters, and owns a fresh completion promise/timer. Revoked grants reject without replacing or disposing paused context. Parent completion or stop retires children, including retained paused sessions.
 
-Parent `tool_call` and `tool_execution_end` hooks reserve and release in-flight mutations. The coordinator rejects conflicting parent model-tool calls while a child owns the writer lease, and rejects writer admission when a conflicting parent mutation is already in flight. This is coordination inside this extension's parent runtime, not a process-wide or cross-session lock. Manual `!`/`!!` commands, external editors, other terminals, and arbitrary extension JavaScript remain uncoordinated.
+There are no parent mutation reservations or exclusive writer state. Caller-coordinated shared writes are the default; no replacement lock or ownership protocol exists. Parent and delegated calls still traverse their original permission/provenance hooks. Manual `!`/`!!`, external editors and other sessions are also uncoordinated. Capacity remains occupied through actual setup/provider/tool/subtree drain, not inferred terminal status.
 
 ## Permission and resource boundaries
 
@@ -138,7 +138,7 @@ All bundled profiles default to `scout`/`review` spawn targets, bounded at absol
 
 Child resources are constructed explicitly. They include the role prompt, assignment, and granted skills, but no parent instructions/history, project context files, prompt templates, themes, or reloaded extension/MCP runtimes. General receives available parent skill paths via the public `before_agent_start.systemPromptOptions.skills` metadata and only reviewed leaf tools via the root dispatcher. The child loader disables ambient discovery and uses an internal extension factory for model-policy hooks. Configured and inherited skills are exact validated files, not discovery directories.
 
-`capabilities.ts` denies owned controls and declared tool-reaching paths independently of operator grants. `leafTools` is an explicit operator review assertion about trusted code, not enforcement against hostile or undeclared orchestration. Public SDK dispatch has no child-specific nested-tool scope. Thus unknown non-builtin tools are denied; installed code must be reviewed to be a true leaf. Admission records leaf provenance and denials separately from the existing builtin snapshot set. Calls recheck live inventory, classification/provenance and current ancestor configuration; root hooks remain in the execution path. Leaf tools cannot be rebound to another cwd and always reserve the global writer lease.
+`capabilities.ts` denies owned controls and declared tool-reaching paths independently of operator grants. `leafTools` is an explicit operator review assertion about trusted code, not enforcement against hostile or undeclared orchestration. Public SDK dispatch has no child-specific nested-tool scope. Thus unknown non-builtin tools are denied; installed code must be reviewed to be a true leaf. Admission records leaf provenance and denials separately from the existing builtin snapshot set. Calls recheck live inventory, classification/provenance and current ancestor configuration; root hooks remain in the execution path. Leaf tools cannot be rebound to another cwd and may run concurrently.
 
 ### Tool execution and workspaces
 
@@ -196,13 +196,13 @@ The coordinator publishes cloned snapshots and SDK events through subscriptions.
 
 The repository uses Node's test runner with controlled providers and real SDK session paths. These checks establish local behavior, not live-provider reliability or OS isolation.
 
-| Concern                                             | Relevant evidence                                                                                                                                                                                                                                                   |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Admission, effective tools, and grants              | [coordinator.test.ts](test/coordinator.test.ts), [effective-tools.test.ts](test/effective-tools.test.ts), [profiles.test.ts](test/profiles.test.ts)                                                                                                                 |
-| FIFO capacity, nesting, writer ownership, and drain | [scheduling.test.ts](test/scheduling.test.ts), [scheduling-lifecycle.test.ts](test/scheduling-lifecycle.test.ts), [writer-lease.test.ts](test/writer-lease.test.ts), [startup-abort.test.ts](test/startup-abort.test.ts), [failures.test.ts](test/failures.test.ts) |
-| Routing, exact selection, and prewalk               | [model-adapter.test.ts](test/model-adapter.test.ts), [model-policy.test.ts](test/model-policy.test.ts)                                                                                                                                                              |
-| Structured results, messaging, and compatibility    | [outcomes.test.ts](test/outcomes.test.ts), [coordination.test.ts](test/coordination.test.ts), [compatibility.test.ts](test/compatibility.test.ts)                                                                                                                   |
-| Observation and UI                                  | [observability.test.ts](test/observability.test.ts), [hub.test.ts](test/hub.test.ts), [thread.test.ts](test/thread.test.ts), [widget-lifecycle.test.ts](test/widget-lifecycle.test.ts)                                                                              |
+| Concern                                          | Relevant evidence                                                                                                                                                                                                                                                               |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Admission, effective tools, and grants           | [coordinator.test.ts](test/coordinator.test.ts), [effective-tools.test.ts](test/effective-tools.test.ts), [profiles.test.ts](test/profiles.test.ts)                                                                                                                             |
+| FIFO capacity, nesting, shared writes, and drain | [scheduling.test.ts](test/scheduling.test.ts), [scheduling-lifecycle.test.ts](test/scheduling-lifecycle.test.ts), [concurrent-writers.test.ts](test/concurrent-writers.test.ts), [startup-abort.test.ts](test/startup-abort.test.ts), [failures.test.ts](test/failures.test.ts) |
+| Routing, exact selection, and prewalk            | [model-adapter.test.ts](test/model-adapter.test.ts), [model-policy.test.ts](test/model-policy.test.ts)                                                                                                                                                                          |
+| Structured results, messaging, and compatibility | [outcomes.test.ts](test/outcomes.test.ts), [coordination.test.ts](test/coordination.test.ts), [compatibility.test.ts](test/compatibility.test.ts)                                                                                                                               |
+| Observation and UI                               | [observability.test.ts](test/observability.test.ts), [hub.test.ts](test/hub.test.ts), [thread.test.ts](test/thread.test.ts), [widget-lifecycle.test.ts](test/widget-lifecycle.test.ts)                                                                                          |
 
 `npm run check` combines lint, formatting, typechecking, tests, and the controlled SDK exercise. `npm run test:package` separately checks tarball installation and production entrypoint registration. See [verification](docs/verification.md) for evidence and limits, and [releases](docs/releases.md) for publication gates.
 

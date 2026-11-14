@@ -21,13 +21,7 @@ import {
 } from "./thread.ts";
 export { safe } from "./thread.ts";
 export { createChildWidget } from "./subagent-widget.ts";
-export {
-  agentLabel,
-  fleetSummary,
-  taskCard,
-  transcriptLines,
-  writerWarning,
-} from "./task-presentation.ts";
+export { agentLabel, fleetSummary, taskCard, transcriptLines } from "./task-presentation.ts";
 import {
   agentLabel,
   assignmentHeadline,
