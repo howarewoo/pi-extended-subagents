@@ -2153,7 +2153,7 @@ test("Hub repeated renders and reading moves do no unchanged transcript or roste
     effectiveKeys,
     () => {},
     () => {},
-    dependencies,
+    { ...dependencies, toolRenderers: { delegate_task: {} } },
   );
   const output = (width = 90) => stripAnsi(hub.render(width).join("\n"));
   try {

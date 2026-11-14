@@ -85,12 +85,22 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
   );
   for (const [name, renderersForTool] of Object.entries(toolRenderers ?? {}))
     renderers.set(name, renderersForTool);
-  type Entry = { signature: string; component: Component; width?: number; lines?: string[] };
+  type Entry = {
+    signature: string;
+    component: Component;
+    width?: number;
+    lines?: string[];
+    customRenderer?: boolean;
+  };
   const cache = new Map<string, Entry>();
   let generation: string | undefined;
   let expanded = false;
+  let customRenderers = false;
   let spans: { key: string; start: number; length: number }[] = [];
   return {
+    hasCustomRenderers() {
+      return customRenderers;
+    },
     setExpanded(value: boolean) {
       if (expanded === value) return;
       expanded = value;
@@ -125,6 +135,7 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
         generation = ref;
       }
       const used = new Set<string>();
+      customRenderers = false;
       const components: { key: string; entry: Entry }[] = [];
       const append = (
         key: string,
@@ -146,6 +157,7 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
         }
         used.add(key);
         components.push({ key, entry });
+        return entry;
       };
       const all = partial ? [...messages, partial] : messages;
       const results = new Map(
@@ -177,7 +189,7 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
         const rawContent: LiveTool["content"] = result?.content ?? active?.content;
         // Payloads and opaque details never become cache keys or native renderer inputs.
         const content = rawContent && displayContent(rawContent);
-        append(
+        const entry = append(
           "tool:" + id,
           [name, active?.args ?? args, content, diff, result?.isError, failure, !!active],
           () => {
@@ -211,6 +223,8 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
             return component;
           },
         );
+        entry.customRenderer = !!toolRenderers?.[name];
+        customRenderers ||= entry.customRenderer;
       };
       all.forEach((message, index) => {
         if (message.role === "system") return;
@@ -312,8 +326,7 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
       const lines: string[] = [];
       for (const { key, entry } of components) {
         // Extension renderers may update their own components asynchronously via requestRender.
-        const customTool = key.startsWith("tool:") && toolRenderers;
-        if (!entry.lines || entry.width !== width || customTool) {
+        if (!entry.lines || entry.width !== width || entry.customRenderer) {
           entry.lines = entry.component
             .render(Math.max(12, width))
             .flatMap((line) => wrapTextWithAnsi(nativeText(line), Math.max(1, width)));
@@ -334,6 +347,7 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
     clear() {
       cache.clear();
       generation = undefined;
+      customRenderers = false;
       spans = [];
     },
   };
