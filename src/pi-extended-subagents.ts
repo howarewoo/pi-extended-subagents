@@ -28,6 +28,8 @@ import { createChildWidget } from "./subagent-widget.ts";
 import { taskCard } from "./task-presentation.ts";
 import { safe } from "./thread.ts";
 
+const FOREGROUND_UPDATE_MS = 50;
+
 export default function delegation(pi: ExtensionAPI) {
   let coordinator: DelegationCoordinator;
   let closing = false;
@@ -365,13 +367,43 @@ export default function delegation(pi: ExtensionAPI) {
         });
         return result(states());
       }
-      const unsubscribe = owner.subscribe((event) => {
-        if (children.some((child) => child.id === event.child.id)) onUpdate?.(result(states()));
-      });
+      // Only presentation deltas are coalesced; registry events and waits remain untouched.
+      const statuses = new Map(onUpdate ? states().map((child) => [child.id, child.status]) : []);
+      let updateTimer: ReturnType<typeof setTimeout> | undefined;
+      const clearUpdate = () => {
+        clearTimeout(updateTimer);
+        updateTimer = undefined;
+      };
+      const flushUpdate = () => {
+        clearUpdate();
+        onUpdate?.(result(states()));
+      };
+      signal?.addEventListener("abort", clearUpdate, { once: true });
+      const unsubscribe = onUpdate
+        ? owner.subscribe((event) => {
+            if (!statuses.has(event.child.id)) return;
+            const transitioned = statuses.get(event.child.id) !== event.child.status;
+            statuses.set(event.child.id, event.child.status);
+            const delta =
+              event.event?.type === "message_update" ||
+              event.event?.type === "tool_execution_update";
+            if (!delta || transitioned) flushUpdate();
+            else if (updateTimer === undefined && !signal?.aborted)
+              updateTimer = setTimeout(() => {
+                try {
+                  flushUpdate();
+                } catch {
+                  /* presentation observers remain isolated, including deferred updates */
+                }
+              }, FOREGROUND_UPDATE_MS);
+          })
+        : undefined;
       try {
         return result(await completed);
       } finally {
-        unsubscribe();
+        unsubscribe?.();
+        clearUpdate();
+        signal?.removeEventListener("abort", clearUpdate);
         signal?.removeEventListener("abort", abort);
       }
     },

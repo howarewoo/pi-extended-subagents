@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Coalesce foreground delegation streaming previews to one update per 50ms, showing the
+  latest progress at each flush. Lifecycle transitions and final outcomes remain immediate;
+  raw registry/SDK events, full snapshots, ordered batch results and completion wakeups are
+  unchanged. Calls without a progress observer skip partial-preview construction.
+
 ## [0.4.0]
 
 Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.3.3. Tested host
