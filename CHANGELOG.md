@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Raise default per-task budgets from 100 direct model requests and 100 tool calls to 200 requests and 500 tool calls. Explicit operator budgets and narrower project/task limits remain effective; the thirty-minute deadline, 1,000/1,000 operator ceilings, and cumulative resume counters are unchanged. Higher defaults permit more work and potentially higher cost before cancellation.
+
 - Show compact task cards for delegation completion, resume and status notices in Pi's TUI, with assignment headline, profile, generation and status. Error and pause reasons stay visible; expand output using Pi's existing control for task details and transcript references. Model-facing previews and completion wake-ups are unchanged. Older messages and non-task output retain Pi's readable fallback; no migration is required.
 
 ## [0.3.2]

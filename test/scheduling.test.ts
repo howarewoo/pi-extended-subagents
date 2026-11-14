@@ -34,12 +34,65 @@ const userText = (context: Parameters<import("@earendil-works/pi-ai").FauxRespon
         .join("") ?? "");
 };
 
+test("unconfigured tasks receive shipped budgets; explicit boundary and lower budgets are admitted", async (t) => {
+  assert.equal(DEFAULT_POLICY.requests, 200);
+  assert.equal(DEFAULT_POLICY.tools, 500);
+  const f = await fixture(t);
+  const results = await batch(f, [
+    task("defaults"),
+    { ...task("boundary"), limits: { requests: 200, tools: 500 } },
+    { ...task("lower"), limits: { requests: 100, tools: 100 } },
+  ]);
+  assert.deepEqual(
+    results.map(({ status, limits }) => ({
+      status,
+      requests: limits.requests,
+      tools: limits.tools,
+    })),
+    [
+      { status: "settled", requests: 200, tools: 500 },
+      { status: "settled", requests: 200, tools: 500 },
+      { status: "settled", requests: 100, tools: 100 },
+    ],
+  );
+});
+
+test("explicit operator budgets override defaults within unchanged ceilings; trusted projects only narrow", async (t) => {
+  const f = await fixture(t);
+  const operatorDir = join(f.root, "operator");
+  await mkdir(join(f.root, ".pi"), { recursive: true });
+  for (const budgets of [
+    { requests: 100, tools: 100 },
+    { requests: 1000, tools: 1000 },
+  ]) {
+    await configure(f, { scheduling: budgets });
+    const operator = await resolveScheduling(f.root, false, operatorDir);
+    assert.equal(operator.requests, budgets.requests);
+    assert.equal(operator.tools, budgets.tools);
+    await writeFile(
+      join(f.root, ".pi", "delegation.json"),
+      JSON.stringify({ scheduling: { requests: 50, tools: 50 } }),
+    );
+    const project = await resolveScheduling(f.root, true, operatorDir);
+    assert.equal(project.requests, 50);
+    assert.equal(project.tools, 50);
+    for (const key of ["requests", "tools"] as const) {
+      await writeFile(
+        join(f.root, ".pi", "delegation.json"),
+        JSON.stringify({ scheduling: { [key]: budgets[key] + 1 } }),
+      );
+      await assert.rejects(resolveScheduling(f.root, true, operatorDir), /broadened/);
+    }
+  }
+});
+
 test("whole batch preflight launches nothing for an invalid later assignment, grant or limit", async (t) => {
   const f = await fixture(t);
   for (const invalid of [
     task("  "),
     task("invalid", "unknown"),
-    { ...task("limit"), limits: { requests: 101 } },
+    { ...task("request limit"), limits: { requests: DEFAULT_POLICY.requests + 1 } },
+    { ...task("tool limit"), limits: { tools: DEFAULT_POLICY.tools + 1 } },
     { ...task("spawn"), spawn: ["general"] },
   ]) {
     await f.session.prompt(
@@ -321,6 +374,8 @@ test("operator policy is finite and project can only narrow; queue and batch bou
     { concurrency: 17 },
     { depth: -1 },
     { requests: 0 },
+    { requests: 1001 },
+    { tools: 1001 },
     { deadlineMs: Infinity },
     { tools: 1.2 },
     { unknown: 1 },
