@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Coalesce foreground delegation streaming previews to one update per 50ms, showing the
+  latest progress at each flush. Lifecycle transitions and final outcomes remain immediate;
+  raw registry/SDK events, full snapshots, ordered batch results and completion wakeups are
+  unchanged. Calls without a progress observer skip partial-preview construction.
+
 - Completed conversation resumes read their original transcript asynchronously, allowing unrelated
   activity to progress during disk verification. Exact retained-context and complete transcript
   verification remain required; missing, empty, malformed or modified evidence still rejects
