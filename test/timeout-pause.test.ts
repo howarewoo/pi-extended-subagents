@@ -43,6 +43,14 @@ test(
       },
       response: (context) => {
         const text = userText(context);
+        // Root completion previews are data, not another child assignment.
+        const first = context.messages.find((message) => message.role === "user");
+        if (
+          JSON.stringify(first).includes("LAUNCH ") &&
+          !text.startsWith("LAUNCH ") &&
+          !text.startsWith("CONTROL ")
+        )
+          return fauxAssistantMessage("completion acknowledged");
         if (text.startsWith("LAUNCH "))
           return context.messages.at(-1)?.role === "toolResult"
             ? fauxAssistantMessage("launched")
@@ -88,6 +96,7 @@ test(
     assert.equal(paused.telemetry.requests, 1);
     assert.equal(paused.toolCalls, 1);
     // Use the model-only control, exercising the registry owned by the extension.
+    await eventually(() => !f.session.isStreaming);
     f.model.setResponses([
       fauxAssistantMessage(
         fauxToolCall("delegate_coordinate", {
@@ -244,6 +253,14 @@ test(
       },
       response: (context) => {
         const text = userText(context);
+        // Root completion previews are data, not another child assignment.
+        const first = context.messages.find((message) => message.role === "user");
+        if (
+          JSON.stringify(first).includes("LAUNCH ") &&
+          !text.startsWith("LAUNCH ") &&
+          !text.startsWith("CONTROL ")
+        )
+          return fauxAssistantMessage("completion acknowledged");
         if (text.startsWith("LAUNCH ") || text.startsWith("CONTROL "))
           return context.messages.at(-1)?.role === "toolResult"
             ? fauxAssistantMessage("ack")
@@ -303,6 +320,7 @@ test(
     const parent = f.events.filter((event) => event.child.depth === 1).at(-1)!.child;
     const child = f.events.filter((event) => event.child.depth === 2).at(-1)!.child;
     const control = async (target: typeof parent, assignment: string) => {
+      await eventually(() => !f.session.isStreaming);
       await f.session.prompt(
         "CONTROL " +
           JSON.stringify({
@@ -441,6 +459,14 @@ test(
       },
       response: (context) => {
         const text = userText(context);
+        // Root completion previews are data, not another child assignment.
+        const first = context.messages.find((message) => message.role === "user");
+        if (
+          JSON.stringify(first).includes("LAUNCH ") &&
+          !text.startsWith("LAUNCH ") &&
+          !text.startsWith("CONTROL ")
+        )
+          return fauxAssistantMessage("completion acknowledged");
         if (text.startsWith("LAUNCH ") || text.startsWith("CONTROL "))
           return context.messages.at(-1)?.role === "toolResult"
             ? fauxAssistantMessage("ack")
@@ -497,6 +523,7 @@ test(
       finalized: false,
     });
     assert.equal(paused.artifacts, undefined);
+    await eventually(() => !f.session.isStreaming);
     await f.session.prompt(
       "CONTROL " +
         JSON.stringify({

@@ -86,7 +86,21 @@ The default is 16 concurrent tasks, a 32-item queue and up to 16 tasks per batch
 
 **Extension/MCP tools require operator review.** Set `general.leafTools` to exact names only for trusted tools that never call other Pi tools or change the tool/model/session loadout. Descriptions and annotations do not grant trust. Orchestrating/reaching tools, codemode, tool search, owned controls, hidden/model-only tools and builtin replacements cannot be forwarded. Leaf tools require the global writer lease and the root workspace; only builtins support cwd adaptation. See [restricted inheritance](docs/delegation-contract.md#restricted-general-inheritance).
 
-Foreground calls return the final results. Set `background:true` to return immediately and receive one ordered completion message after the batch drains. Use the returned task ID and generation for controls:
+Foreground calls return the final results. Set `background:true` to return immediately and receive one ordered completion message after the batch actually drains, automatically waking the owning parent (or queuing a follow-up if busy).
+Direct `delegate_coordinate resume/followup/revive` and `subagent resume` likewise send one
+wake-enabled outcome per new execution window; followup/revive identify the new generation.
+Foreground calls add no extra notice; rejected calls add none. Paused, failed and cancelled
+outcomes notify too, but do not authorize automatic resume. A wake requests a model turn,
+not guaranteed task continuation. All notices remain parent-bound and are suppressed on
+shutdown/reload; no polling or forced continuation loop is added.
+
+**0.4.0 migration (breaking behavior):** native background/direct resume now wake the parent,
+and followup/revive now notify and wake. This can add parent model turns and provider costs.
+Drain active tasks, install `npm:@howarewoo/pi-subagents@0.4.0`, then restart Pi. Grants,
+configuration and the stable Pi 1.5.2 minimum/tested host are unchanged. Updating a checkout
+does not repair an already loaded runtime. See the [delegation contract](docs/delegation-contract.md).
+
+Use the returned task ID and generation for controls:
 
 ```text
 /subagent-profiles

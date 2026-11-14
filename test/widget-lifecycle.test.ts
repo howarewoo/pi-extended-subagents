@@ -29,6 +29,7 @@ import {
   visibleWidth,
   type Component,
 } from "@earendil-works/pi-tui";
+import { eventually } from "./fixtures.ts";
 import extension from "../src/pi-extended-subagents.ts";
 import { createHub } from "../src/hub.ts";
 import { DelegationCoordinator, type RegistryEvent } from "../src/coordinator.ts";
@@ -116,7 +117,10 @@ test(
               .map((block) => block.text)
               .join("") ?? "");
       if (text === "launch")
-        return context.messages.at(-1)?.role === "toolResult"
+        return !(
+          context.messages.at(-1)?.role === "user" &&
+          JSON.stringify(context.messages.at(-1)?.content).includes('"launch"')
+        )
           ? fauxAssistantMessage("parent done")
           : fauxAssistantMessage(
               fauxToolCall("delegate_task", {
@@ -229,10 +233,12 @@ test(
     assert.equal(model.state.callCount, callsBeforeStop, "stop control makes no inference request");
     assert.match(widget!.render(80).join("\n"), /cancelled/);
     const oldWidget = widget!;
+    await eventually(() => !session.isStreaming);
+    const callsBeforeReload = model.state.callCount;
     await session.reload();
     assert.deepEqual(calls, [true, false, true]);
     assert.notEqual(widget, oldWidget);
-    assert.equal(model.state.callCount, callsBeforeStop, "reload makes no inference request");
+    assert.equal(model.state.callCount, callsBeforeReload, "reload makes no inference request");
     assert.deepEqual(widget!.render(80), [], "fresh runtime hides the unused subagent widget");
     running = new Promise<void>((resolve) => {
       markRunning = resolve;

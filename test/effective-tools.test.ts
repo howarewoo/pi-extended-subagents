@@ -42,6 +42,10 @@ test("ordinary SDK default loadout delegates a two-scout background batch throug
     },
     response: (context) => {
       const text = userText(context);
+      // Root completion previews are data, not another child assignment.
+      const first = context.messages.find((message) => message.role === "user");
+      if (JSON.stringify(first).includes("LAUNCH ") && !text.startsWith("LAUNCH "))
+        return fauxAssistantMessage("completion acknowledged");
       if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
       if (text.startsWith("LAUNCH "))
         return fauxAssistantMessage(fauxToolCall("delegate_task", JSON.parse(text.slice(7))), {
@@ -312,6 +316,10 @@ for (const change of ["deactivate", "replace"] as const)
         },
         response: (context) => {
           const text = userText(context);
+          // Root completion previews are data, not another child assignment.
+          const first = context.messages.find((message) => message.role === "user");
+          if (JSON.stringify(first).includes("LAUNCH ") && !text.startsWith("LAUNCH "))
+            return fauxAssistantMessage("completion acknowledged");
           if (text.startsWith("LAUNCH "))
             return context.messages.at(-1)?.role === "toolResult"
               ? fauxAssistantMessage("background accepted")
@@ -381,6 +389,7 @@ test("native root followup/revive retain default admitted ceiling after parent a
   const first = await f.launch("original", "scout", false);
   f.session.setActiveToolsByName([...f.session.getActiveToolNames(), "grep", "find", "ls"]);
   const coordinate = async (action: string, target: { id: string; generation: number }) => {
+    await eventually(() => !f.session.isStreaming);
     await f.session.prompt(
       "COORD " +
         JSON.stringify({
@@ -407,6 +416,7 @@ test("native root followup/revive retain default admitted ceiling after parent a
   const third = await coordinate("revive", { id: second.id, generation: 2 });
   assert.equal(third.generation, 3);
   assert.deepEqual(third.tools, ["read"]);
+  await eventually(() => !f.session.isStreaming);
   const fresh = await f.launch("fresh", "scout", false);
   assert.deepEqual((taskResult(f).details as ChildSnapshot).tools, ["read", "grep", "find", "ls"]);
   assert.notEqual(fresh.id, first.id);

@@ -72,6 +72,10 @@ for (const cancellation of ["stop", "deadline"] as const)
         },
         response: (context) => {
           const assignment = text(context);
+          // Completion now requests a parent turn; never interpret its preview as a new task.
+          const first = context.messages.find((message) => message.role === "user");
+          if (JSON.stringify(first).includes("LAUNCH ") && !assignment.startsWith("LAUNCH "))
+            return fauxAssistantMessage("completion acknowledged");
           if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
           return fauxAssistantMessage(
             fauxToolCall(
@@ -188,6 +192,10 @@ test(
       },
       response: (context) => {
         const assignment = text(context);
+        // Completion now requests a parent turn; never interpret its preview as a new task.
+        const first = context.messages.find((message) => message.role === "user");
+        if (JSON.stringify(first).includes("LAUNCH ") && !assignment.startsWith("LAUNCH "))
+          return fauxAssistantMessage("completion acknowledged");
         if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
         return fauxAssistantMessage(
           fauxToolCall(
@@ -294,6 +302,10 @@ test(
       speed: 500,
       response: (context) => {
         const assignment = text(context);
+        // Completion now requests a parent turn; never interpret its preview as a new task.
+        const first = context.messages.find((message) => message.role === "user");
+        if (JSON.stringify(first).includes("LAUNCH ") && !assignment.startsWith("LAUNCH "))
+          return fauxAssistantMessage("completion acknowledged");
         if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
         if (assignment === "grandchild")
           return fauxAssistantMessage("long nested response ".repeat(100));
@@ -352,6 +364,10 @@ test(
       },
       response: (context) => {
         const assignment = text(context);
+        // Completion now requests a parent turn; never interpret its preview as a new task.
+        const first = context.messages.find((message) => message.role === "user");
+        if (JSON.stringify(first).includes("LAUNCH ") && !assignment.startsWith("LAUNCH "))
+          return fauxAssistantMessage("completion acknowledged");
         if (context.messages.at(-1)?.role === "toolResult") return fauxAssistantMessage("done");
         if (assignment.startsWith("LAUNCH "))
           return fauxAssistantMessage(

@@ -36,7 +36,7 @@ function response(child: FauxResponseFactory): FauxResponseFactory {
   return (context, options, state, selected) => {
     const text = textOf(context);
     if (text.startsWith("LAUNCH "))
-      return context.messages.at(-1)?.role === "toolResult"
+      return context.messages.at(-1) !== context.messages.find((message) => message.role === "user")
         ? fauxAssistantMessage("parent done")
         : fauxAssistantMessage(fauxToolCall("delegate_task", JSON.parse(text.slice(7))), {
             stopReason: "toolUse",
@@ -536,6 +536,7 @@ test("submitted parent waits for nested descendant drain and subtree shutdown ca
   );
   assert.equal(finals[0].depth, 2);
   assert.equal(finals[1].id, ref.id);
+  await eventually(() => !f.session.isStreaming);
   const before = f.events.length;
   f.model.setResponses([
     fauxAssistantMessage(fauxToolCall("submit_result", { value: { answer: 99 } }), {
