@@ -2,7 +2,12 @@
 
 ## [Unreleased]
 
-- Writers and parent tools now run concurrently by default within existing FIFO/capacity
+## [0.4.0]
+
+Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.3.3. Tested host
+remains Pi 1.5.2; newer stable hosts are allowed, not guaranteed compatible.
+
+- **Breaking behavior:** writers and parent tools now run concurrently by default within existing FIFO/capacity
   limits, in shared or supplied workspaces. Explicitly authorized nested writers and
   continuation windows use ordinary capacity rules; no writer lease or parent mutation
   reservation remains. Callers coordinate collisions; no isolation, rollback, automatic
@@ -13,11 +18,6 @@
 - SDK regression coverage proves three overlapping writers, concurrent parent effects,
   cross-workspace compatibility calls, nested authorization, FIFO limits, cancellation,
   pause/resume and ordered once-per-batch wakes after actual drain.
-
-## [0.4.0]
-
-Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.3.3. Tested host
-remains Pi 1.5.2; newer stable hosts are allowed, not guaranteed compatible.
 
 - **Breaking behavior:** root `delegate_task(background:true)` single/batch and direct
   `delegate_coordinate resume` completion notices now automatically request a parent model
@@ -38,7 +38,8 @@ remains Pi 1.5.2; newer stable hosts are allowed, not guaranteed compatible.
   display-only; Tools still exposes full sanitized inspection text.
 - **Migration:** let active tasks drain, install `@howarewoo/pi-subagents@0.4.0` and restart
   Pi. No configuration migration is needed. Grants, model routing, host requirements,
-  identity/artifact formats and writer/capacity controls are unchanged. Updating a checkout
+  identity/artifact formats and capacity limits are unchanged. Writer exclusivity is removed;
+  callers must coordinate shared writes. Updating a checkout
   does not change an already loaded runtime; reload/shutdown abort and drain rather than
   migrate active children.
 
