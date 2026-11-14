@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.4.0]
+
+Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.3.3. Tested host
+remains Pi 1.5.2; newer stable hosts are allowed, not guaranteed compatible.
+
+- **Breaking behavior:** root `delegate_task(background:true)` single/batch and direct
+  `delegate_coordinate resume` completion notices now automatically request a parent model
+  turn. Root `delegate_coordinate followup/revive` now send one drained outcome notice for
+  the returned new generation and request a turn too. Compatibility `subagent` async/resume
+  retains the same wake behavior. Idle owners wake without a user prompt; busy owners queue
+  the notice as a follow-up. This may add parent model turns and provider charges.
+- Each successful async launch call sends one ordered batch outcome after all members drain;
+  each resume/renewal sends one outcome per new execution window. Foreground and rejected
+  operations send no extra notice. Paused, failed and cancelled outcomes notify while the
+  owner remains live; a wake is not success, acknowledgment, guaranteed task continuation or
+  authority to auto-resume. Closing/stale-owner suppression and parent-bound shutdown/drain
+  are unchanged; no polling, forced continuation loop or new lifecycle service is added.
+- **Migration:** let active tasks drain, install `@howarewoo/pi-subagents@0.4.0` and restart
+  Pi. No configuration migration is needed. Grants, model routing, host requirements,
+  identity/artifact formats and writer/capacity controls are unchanged. Updating a checkout
+  does not change an already loaded runtime; reload/shutdown abort and drain rather than
+  migrate active children.
+
 ## [0.3.3]
 
 Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.3.2. Tested host

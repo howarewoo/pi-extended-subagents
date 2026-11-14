@@ -324,6 +324,12 @@ test("prewalk target survives fresh-generation renewal without rearming; missing
           fauxToolCall("delegate_coordinate", JSON.parse(text.slice(6))),
           { stopReason: "toolUse" },
         );
+      if (
+        JSON.stringify(context.messages.find((message) => message.role === "user")).includes(
+          "LAUNCH ",
+        )
+      )
+        return fauxAssistantMessage("completion acknowledged");
       return fauxAssistantMessage(
         fauxToolCall("write", { path: "renewal.txt", content: "first generation" }),
         { stopReason: "toolUse" },
@@ -364,6 +370,7 @@ test("prewalk target survives fresh-generation renewal without rearming; missing
   assert.equal(second.result, "renewed target");
   assert.equal(first.prewalk?.status, "handed-off");
   assert.equal(first.generation, 1);
+  await eventually(() => !f.session.isStreaming);
   await configure(f.root, { implementation: { models: [source] } });
   await f.session.prompt(
     "COORD " +

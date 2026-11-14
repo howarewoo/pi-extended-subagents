@@ -211,10 +211,10 @@ export default function delegation(pi: ExtensionAPI) {
     exposure: "model-only",
     promptSnippet: "Delegate coding, review or research to native subagents in supplied workspaces",
     promptGuidelines: [
-      "Use delegate_task for authorized native delegation with explicit profiles. When subagent is available, prefer subagent for orchestration task owners and its async completion wake-ups. Supply the existing task workspace cwd; do not substitute inline implementation when a workflow requires a worker.",
+      "Use delegate_task for authorized native delegation with explicit profiles. When subagent is available, prefer subagent for orchestration task owners. Native background and subagent async calls both wake this session after drain; continue independent work or yield, never poll. Supply the existing task workspace cwd; do not substitute inline implementation when a workflow requires a worker.",
     ],
     description:
-      "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model by default. Optional exact model {provider,id,effort} requires an operator profile models grant and stays exact, suppressing inherited role prewalk; models may only narrow that grant list. No aliases/fallback/coercion. Configured role-default prewalk switches once after first edit/write, not a repository scan. Coding workers are supported through implementation; advisor/probes/speculation/history/executable resource inheritance remain unavailable. Optional cwd selects an existing workspace: root hooks see explicitly resolved builtin paths and a cwd-prefixed shell command; this is not sandboxing or transparent hook-cwd rebinding. Role tools are ceilings intersected with callable parent builtins; inactive tools stay inactive. Snapshots report effective tools. Bounded FIFO capacity; effective implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits; background delivers one final batch message. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
+      "Delegate one assignment or a fully preflighted ordered tasks batch on the selected parent model by default. Optional exact model {provider,id,effort} requires an operator profile models grant and stays exact, suppressing inherited role prewalk; models may only narrow that grant list. No aliases/fallback/coercion. Configured role-default prewalk switches once after first edit/write, not a repository scan. Coding workers are supported through implementation; advisor/probes/speculation/history/executable resource inheritance remain unavailable. Optional cwd selects an existing workspace: root hooks see explicitly resolved builtin paths and a cwd-prefixed shell command; this is not sandboxing or transparent hook-cwd rebinding. Role tools are ceilings intersected with callable parent builtins; inactive tools stay inactive. Snapshots report effective tools. Bounded FIFO capacity; effective implementation writers serialize. Manual !/!! and external edits are uncoordinated: never conflict with child writes. Foreground waits without an extra completion notice; background delivers one ordered batch outcome after actual drain and wakes the parent (or queues a follow-up if busy), potentially adding model turns/costs. Nested foreground only, explicit spawn grants and available capacity required. Limits may only narrow operator policy. Supply exactly one inline assignment or taskFile (explicit non-hidden workspace-relative UTF-8 file, at most 50000 bytes, checked through parent read hooks). Optional resultSchema requires child submit_result; prose is never validated output. Previews are bounded; full result artifacts and transcripts retained after drain.",
     parameters,
     renderCall(args, theme) {
       return {
@@ -386,7 +386,7 @@ export default function delegation(pi: ExtensionAPI) {
             show(
               "tasks" in args ? snapshots : snapshots[0],
               snapshots.length === 1 ? snapshots[0].transcript : undefined,
-              compatibility,
+              true,
             );
         });
         return result(states());
@@ -405,13 +405,13 @@ export default function delegation(pi: ExtensionAPI) {
   const coordinationTool = (
     owner?: DelegationCoordinator,
     actor?: ChildRef,
-    wake = false,
+    compatibility = false,
   ): ToolDefinition<typeof coordinationParameters> => ({
     name: "delegate_coordinate",
     label: "Coordinate delegation",
     exposure: "model-only",
     description:
-      "Live-parent identity-pinned coordination. message targets a running family agent (omit target for root inbox, direct children only); inbox reads own bounded mailbox; wait targets an outcome or own inbox with required 1–60000ms timeout, retaining capacity. No transcript access. Child actions require explicit operator grants. Root additionally has status/stop/park, paused/completed resume (assignment is the appended continuation), and idle followup/parked revive. Resume retains identity and full context, resets only the deadline window, and requires explicit child resumes after parent resume. Followup/revive create a fresh generation/session with current model/auth and narrowed current grants, no old tool replay or historical recovery. Message accepted/queued is NOT model acknowledgment; delivered means transcript/inbox visibility only. 4096-byte messages, 64 mailbox/waiters, 512 messages and 64 generations per live parent.",
+      "Live-parent identity-pinned coordination. message targets a running family agent (omit target for root inbox, direct children only); inbox reads own bounded mailbox; wait targets an outcome or own inbox with required 1–60000ms timeout, retaining capacity. No transcript access. Child actions require explicit operator grants. Root additionally has status/stop/park, paused/completed resume (assignment is the appended continuation), and idle followup/parked revive. Resume retains identity and full context, resets only the deadline window, and requires explicit child resumes after parent resume. Followup/revive create a fresh generation/session with current model/auth and narrowed current grants, no old tool replay or historical recovery. Successful root resume/followup/revive each send one outcome after actual drain and wake the parent (or queue a follow-up if busy), potentially adding model turns/costs. Rejections send none; no automatic resume or guaranteed task continuation. Message accepted/queued is NOT model acknowledgment; delivered means transcript/inbox visibility only. 4096-byte messages, 64 mailbox/waiters, 512 messages and 64 generations per live parent.",
     parameters: coordinationParameters,
     async execute(callerId, args, signal, _update, ctx) {
       if (["resume", "followup", "revive"].includes(args.action)) requireSupportedHost();
@@ -449,7 +449,7 @@ export default function delegation(pi: ExtensionAPI) {
           // Each continuation owns exactly one notification for its new window.
           void registry.wait(next).then((state) => {
             if (!closing && coordinator === registry)
-              show(wake ? compatible(state) : state, state.transcript, wake);
+              show(compatibility ? compatible(state) : state, state.transcript, true);
           });
         } else if (args.action === "followup" || args.action === "revive") {
           const presence = registry
@@ -513,6 +513,9 @@ export default function delegation(pi: ExtensionAPI) {
             signal,
           );
           value = registry.snapshot(next);
+          void registry.wait(next).then((state) => {
+            if (!closing && coordinator === registry) show(state, state.transcript, true);
+          });
         }
       }
       return { content: [{ type: "text", text: preview(value) }], details: value };
