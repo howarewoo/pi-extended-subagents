@@ -51,6 +51,7 @@ export type ThreadDependencies = Readonly<{
   cwd: string;
   toolRenderers?: Readonly<Record<string, ToolRenderers>>;
 }>;
+export type ThreadAnchor = { ref: string; key: string; line: number };
 export type LiveTool = {
   toolCallId: string;
   toolName: string;
@@ -86,7 +87,27 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
     renderers.set(name, renderersForTool);
   const cache = new Map<string, { signature: string; component: Component }>();
   let generation: string | undefined;
+  let expanded = false;
+  let spans: { key: string; start: number; length: number }[] = [];
   return {
+    setExpanded(value: boolean) {
+      expanded = value;
+      for (const { component } of cache.values())
+        if (component instanceof ToolExecutionComponent) component.setExpanded(expanded);
+    },
+    anchorAt(offset: number): ThreadAnchor | undefined {
+      const span = spans.find(({ start, length }) => offset >= start && offset < start + length);
+      return span && generation
+        ? { ref: generation, key: span.key, line: offset - span.start }
+        : undefined;
+    },
+    offsetFor(anchor: ThreadAnchor): number | undefined {
+      if (anchor.ref !== generation) return undefined;
+      const span = spans.find(({ key }) => key === anchor.key);
+      if (!span) return undefined;
+      // A hidden tool body returns to its surviving header, not an unrelated later message.
+      return span.start + (anchor.line < span.length ? anchor.line : 0);
+    },
     render(
       ref: string,
       messages: Messages,
@@ -99,7 +120,7 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
         generation = ref;
       }
       const used = new Set<string>();
-      const components: Component[] = [];
+      const components: { key: string; component: Component }[] = [];
       const append = (
         key: string,
         value: unknown,
@@ -118,7 +139,7 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
           }
         }
         used.add(key);
-        components.push(entry.component);
+        components.push({ key, component: entry.component });
       };
       const all = partial ? [...messages, partial] : messages;
       const results = new Map(
@@ -168,7 +189,7 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
             tui,
             cwd,
           );
-          component.setExpanded(true);
+          component.setExpanded(expanded);
           // Native edit's completed-args preview reads cwd files. Recorded result.diff is sufficient.
           if (name !== "edit") component.setArgsComplete();
           // Do not mark execution started: this observer must not invent elapsed clocks/timers.
@@ -251,11 +272,16 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
       });
       if (live && !toolIds.has(live.toolCallId)) tool(live.toolName, live.toolCallId, live.args);
       for (const key of cache.keys()) if (!used.has(key)) cache.delete(key);
-      return components.flatMap((component) =>
-        component
+      spans = [];
+      const lines: string[] = [];
+      for (const { key, component } of components) {
+        const rendered = component
           .render(Math.max(12, width))
-          .flatMap((line) => wrapTextWithAnsi(nativeText(line), Math.max(1, width))),
-      );
+          .flatMap((line) => wrapTextWithAnsi(nativeText(line), Math.max(1, width)));
+        spans.push({ key, start: lines.length, length: rendered.length });
+        lines.push(...rendered);
+      }
+      return lines;
     },
     invalidate() {
       for (const entry of cache.values()) entry.component.invalidate();
@@ -263,6 +289,7 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
     clear() {
       cache.clear();
       generation = undefined;
+      spans = [];
     },
   };
 }

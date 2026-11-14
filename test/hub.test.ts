@@ -89,7 +89,7 @@ test("hub frames, pads and paints every cell, adapts to tiny geometry and invali
           );
           if (separators.length) {
             const separatorIndex = rendered.indexOf(separators[0]);
-            assert.equal(separatorIndex, rendered.length - 4);
+            assert.equal(separatorIndex, rendered.length - (rows >= 10 ? 5 : 4));
             assert.equal(stripAnsi(separators[0]), "├" + "─".repeat(width - 2) + "┤");
           }
         }
@@ -1422,7 +1422,7 @@ test("Hub normalized wheel is contained to its reading viewport, never the roste
     assert.match(output(), /> [├└] ● inspect one/);
     const rendered = before.split("\n");
     const separatorY = rendered.findIndex((line) => line.startsWith("├"));
-    assert.equal(separatorY, 23);
+    assert.equal(separatorY, 22);
     for (const y of [separatorY - 1, separatorY, separatorY + 1, 26]) {
       hub.handleMouse?.({ ...event, y });
       assert.equal(output(), before, "position row, separator and footer must not scroll");
@@ -1430,7 +1430,7 @@ test("Hub normalized wheel is contained to its reading viewport, never the roste
     hub.handleMouse?.({ ...event, y: separatorY - 2 });
     assert.notEqual(output(), before, "last reading row remains wheel-scrollable");
     const position = output().match(/(\d+)–(\d+)\/\d+ lines/)!;
-    assert.equal(Number(position[2]) - Number(position[1]) + 1, 19);
+    assert.equal(Number(position[2]) - Number(position[1]) + 1, 18);
     hub.handleInput!("\x1b[6~");
     const nextPosition = output().match(/(\d+)–(\d+)\/\d+ lines/)!;
     assert.equal(Number(nextPosition[1]) - Number(position[1]), 6, "page clamps at the live tail");
@@ -1864,6 +1864,240 @@ test("widget and unfiltered Hub count sessions, not profiles or latest identitie
       ...children.map((child) => ({ ...child, status: "settled" as const, disposed: true })),
     );
     assert.deepEqual(widget.render(180), ["● Subagents 9 · 9 settled"]);
+  } finally {
+    hub.dispose();
+  }
+});
+
+for (const binding of ["ctrl+o", "ctrl+g", "disabled"] as const) {
+  test(`Hub global tool expansion respects ${binding}, input isolation and per-opening lifetime`, (t) => {
+    const coordinator = new DelegationCoordinator("unused", "root");
+    const children = [snapshot("one"), snapshot("two", { generation: 2 })];
+    t.mock.method(coordinator, "list", () => children);
+    const messages: ReturnType<DelegationCoordinator["messages"]> = [
+      fauxAssistantMessage(fauxToolCall("read", { path: "visible.ts" }, { id: "call" }), {
+        stopReason: "toolUse",
+      }),
+      {
+        role: "toolResult",
+        toolName: "read",
+        toolCallId: "call",
+        timestamp: 2,
+        isError: false,
+        content: [
+          {
+            type: "text",
+            text: Array.from({ length: 50 }, (_, i) => `GLOBAL_BODY_${i}`).join("\n"),
+          },
+        ],
+      },
+    ];
+    t.mock.method(coordinator, "messages", () => messages);
+    const original = structuredClone(messages);
+    const manager = new KeybindingsManager(
+      {
+        "app.tools.expand": { defaultKeys: "ctrl+o" },
+        "tui.select.cancel": { defaultKeys: "escape" },
+        "tui.select.confirm": { defaultKeys: "enter" },
+        "tui.select.down": { defaultKeys: "down" },
+      },
+      { "app.tools.expand": binding === "disabled" ? [] : binding },
+    );
+    const key = binding === "ctrl+g" ? "\x07" : "\x0f";
+    const open = () =>
+      createHub(
+        coordinator,
+        theme,
+        manager,
+        () => {},
+        () => {},
+        dependencies,
+        () => 30,
+      );
+    const hub = open();
+    const output = () => stripAnsi(hub.render(100).join("\n"));
+    try {
+      assert.match(output(), /Tools collapsed/);
+      assert.ok(output().includes(binding === "disabled" ? "unbound" : binding));
+      assert.doesNotMatch(output(), /GLOBAL_BODY_49/);
+      for (const mode of ["/", "s", "m", "x"]) {
+        hub.handleInput!(mode);
+        hub.handleInput!(key);
+        hub.handleInput!("\x1b");
+        assert.match(output(), /Tools collapsed/, `${mode} cannot toggle thread display`);
+      }
+      if (binding === "ctrl+g") {
+        hub.handleInput!("\x0f");
+        assert.match(output(), /Tools collapsed/, "default key must not survive remapping");
+      }
+      hub.handleInput!(key);
+      if (binding === "disabled") {
+        assert.match(output(), /Tools collapsed/);
+        return;
+      }
+      assert.match(output(), /Tools expanded/);
+      assert.match(output(), /GLOBAL_BODY_49/);
+      assert.match(output(), /LIVE/);
+      hub.handleInput!("\x1b[B");
+      assert.match(output(), /inspect two/);
+      assert.match(
+        output(),
+        /GLOBAL_BODY_49/,
+        "roster generation switch inherits global preference",
+      );
+      hub.handleInput!("\t");
+      const details = output();
+      hub.handleInput!(key);
+      assert.equal(output(), details, "Details action unavailable");
+      hub.handleInput!("\t");
+      const tools = output();
+      hub.handleInput!(key);
+      assert.equal(output(), tools, "Tools inspection does not toggle");
+      hub.handleInput!("\t");
+      assert.match(output(), /Tools expanded/);
+      hub.handleInput!(key);
+      assert.match(output(), /Tools collapsed/);
+      assert.doesNotMatch(output(), /GLOBAL_BODY_49/);
+      assert.deepEqual(messages, original);
+      hub.handleInput!(key);
+      assert.match(output(), /Tools expanded/);
+      const reopened = open();
+      try {
+        assert.match(stripAnsi(reopened.render(100).join("\n")), /Tools collapsed/);
+      } finally {
+        reopened.dispose();
+      }
+    } finally {
+      hub.dispose();
+    }
+  });
+}
+
+test("Hub toggles preserve surviving message/tool reading anchors, safe bounds on resize, and LIVE tail through streaming/final results", (t) => {
+  const coordinator = new DelegationCoordinator("unused", "root");
+  const child = snapshot("anchor");
+  let listener!: Parameters<DelegationCoordinator["subscribe"]>[0];
+  t.mock.method(coordinator, "subscribe", (callback: typeof listener) => {
+    listener = callback;
+    return () => {};
+  });
+  t.mock.method(coordinator, "list", () => [child]);
+  const args = { path: "anchor.ts" };
+  const call = fauxAssistantMessage(fauxToolCall("read", args, { id: "call" }), {
+    stopReason: "toolUse",
+  });
+  const content = [
+    {
+      type: "text" as const,
+      text: Array.from({ length: 70 }, (_, i) => `TOOL_ANCHOR_${i}`).join("\n"),
+    },
+  ];
+  let messages: ReturnType<DelegationCoordinator["messages"]> = [
+    call,
+    {
+      role: "toolResult",
+      toolName: "read",
+      toolCallId: "call",
+      timestamp: 2,
+      isError: false,
+      content,
+    },
+    fauxAssistantMessage(Array.from({ length: 100 }, (_, i) => `AFTER_TOOL_${i}`).join("\n")),
+  ];
+  t.mock.method(coordinator, "messages", () => messages);
+  const manager = {
+    ...effectiveKeys,
+    matches: (data: string, action: string) =>
+      action === "app.tools.expand" ? data === "\x0f" : effectiveKeys.matches(data, action),
+    getKeys: (action: string) =>
+      action === "app.tools.expand" ? ["ctrl+o" as const] : effectiveKeys.getKeys(),
+  };
+  let rows = 30;
+  const hub = createHub(
+    coordinator,
+    theme,
+    manager,
+    () => {},
+    () => {},
+    dependencies,
+    () => rows,
+  );
+  const output = (width = 100) => stripAnsi(hub.render(width).join("\n"));
+  const after = () =>
+    output()
+      .split("\n")
+      .filter((line) => line.includes("AFTER_TOOL_"));
+  try {
+    assert.match(output(), /AFTER_TOOL_99/);
+    hub.handleInput!("\x1b[5~");
+    const before = after();
+    assert.ok(before.length);
+    hub.handleInput!("\x0f");
+    assert.deepEqual(
+      after(),
+      before,
+      "expanding earlier tool retains first visible assistant location",
+    );
+    assert.match(output(), /READING/);
+    hub.handleInput!("\x0f");
+    assert.deepEqual(after(), before, "collapsing earlier tool retains assistant location");
+    hub.handleInput!("\x0f");
+    output();
+    hub.handleInput!("\x1b[H");
+    for (let i = 0; i < 35; i++) hub.handleInput!("j");
+    assert.match(output(), /TOOL_ANCHOR_3/);
+    hub.handleInput!("\x0f");
+    assert.match(output(), /anchor.ts/, "hidden body returns to surviving tool header");
+    assert.match(output(), /READING/);
+    rows = 24;
+    assert.match(output(60), /READING/);
+    hub.handleInput!("\x1b[F");
+    assert.match(output(60), /LIVE/);
+    messages = [call];
+    listener({
+      type: "sdk",
+      child,
+      event: {
+        type: "tool_execution_update",
+        toolCallId: "call",
+        toolName: "read",
+        args,
+        partialResult: { content },
+      },
+    });
+    hub.handleInput!("\x0f");
+    assert.match(output(60), /TOOL_ANCHOR_69/);
+    assert.match(output(60), /LIVE/);
+    messages = [
+      call,
+      {
+        role: "toolResult",
+        toolName: "read",
+        toolCallId: "call",
+        timestamp: 2,
+        isError: true,
+        content,
+      },
+    ];
+    listener({
+      type: "sdk",
+      child,
+      event: {
+        type: "tool_execution_end",
+        toolCallId: "call",
+        toolName: "read",
+        result: { content },
+        isError: true,
+      },
+    });
+    assert.match(output(60), /TOOL_ANCHOR_69/);
+    hub.handleInput!("\x0f");
+    assert.match(output(60), /LIVE/);
+    assert.doesNotMatch(output(60), /TOOL_ANCHOR_69/);
+    for (const width of [12, 36, 60, 100]) {
+      const lines = hub.render(width);
+      assert.ok(lines.length <= rows && lines.every((line) => visibleWidth(line) === width));
+    }
   } finally {
     hub.dispose();
   }
