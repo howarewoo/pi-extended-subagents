@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile, unlink } from "node:fs/promises";
+import fs, { mkdir, readFile, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import {
   fauxAssistantMessage,
@@ -117,6 +117,115 @@ test("completed resume rejects revoked policy and unavailable state atomically, 
   );
   await assert.rejects(f.coordinator.resume(ref, "retired"), /stopped/);
 });
+
+test("completed transcript verification rejects empty, malformed and modified disk evidence without mutation", async (t) => {
+  const f = await fixture(t, { speed: 0 });
+  const ref = await f.direct("original");
+  const original = await f.coordinator.wait(ref);
+  const messages = f.coordinator.messages(ref);
+  const transcript = await readFile(original.transcript!, "utf8");
+  const entries = transcript
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const modifiedHeader = structuredClone(entries);
+  modifiedHeader[0].cwd += "/tampered";
+  const modifiedMessage = structuredClone(entries);
+  modifiedMessage.find((entry) => entry.message?.role === "user").message.content = "tampered";
+  const count = f.events.length;
+  for (const invalid of [
+    "",
+    "  \n",
+    transcript + "{malformed\n",
+    modifiedHeader.map((entry) => JSON.stringify(entry)).join("\n"),
+    modifiedMessage.map((entry) => JSON.stringify(entry)).join("\n"),
+    entries
+      .slice(0, -1)
+      .map((entry) => JSON.stringify(entry))
+      .join("\n"),
+  ]) {
+    await writeFile(original.transcript!, invalid);
+    await assert.rejects(f.coordinator.resume(ref, "continue"), /original transcript/);
+    assert.deepEqual(f.coordinator.snapshot(ref), original);
+    assert.deepEqual(f.coordinator.messages(ref), messages);
+    assert.equal(f.events.length, count);
+  }
+  await writeFile(original.transcript!, transcript);
+  await f.coordinator.resume(ref, "restored");
+  assert.equal(
+    (await f.coordinator.wait(ref)).status,
+    "settled",
+    "failed checks release reservation",
+  );
+});
+
+for (const action of ["stop", "shutdown", "replace"] as const) {
+  test(`delayed completed transcript read allows unrelated work; ${action} wins and duplicate resume refuses`, async (t) => {
+    const f = await fixture(t, { speed: 0 });
+    const ref = await f.direct("original");
+    const original = await f.coordinator.wait(ref);
+    const oldEntry = (
+      f.coordinator as unknown as {
+        entries: Map<
+          string,
+          { input: import("../src/coordinator.ts").StartTask; resuming?: boolean }
+        >;
+      }
+    ).entries.get(ref.id)!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    t.after(release);
+    let reading = false;
+    const originalRead = fs.readFile;
+    const delayed = t.mock.method(
+      fs,
+      "readFile",
+      async (...args: Parameters<typeof fs.readFile>) => {
+        if (args[0] === original.transcript) {
+          reading = true;
+          await gate;
+        }
+        return originalRead(...args);
+      },
+    );
+    const pending = f.coordinator.resume(ref, "must not run");
+    const rejected = assert.rejects(pending, /cancel|identity|stale|stopped/i);
+    await eventually(() => reading);
+    await assert.rejects(f.coordinator.resume(ref, "duplicate"), /duplicate/);
+    assert.deepEqual(
+      f.coordinator.snapshot(ref),
+      original,
+      "verification does not mutate snapshots",
+    );
+    const unrelated = await f.direct("unrelated activity during read");
+    assert.equal((await f.coordinator.wait(unrelated)).status, "settled");
+    let replacement;
+    if (action === "stop") await f.coordinator.stop(ref);
+    else if (action === "shutdown") await f.coordinator.shutdown();
+    else {
+      replacement = await f.coordinator.renew(ref, {
+        ...oldEntry.input,
+        assignment: "replacement",
+      });
+      assert.equal((await f.coordinator.wait(replacement)).status, "settled");
+    }
+    release();
+    await rejected;
+    delayed.mock.restore();
+    assert.equal(oldEntry.resuming, false, "cancelled verification releases reservation");
+    assert.deepEqual(
+      f.coordinator.snapshot(ref),
+      original,
+      "old completed evidence stays detached",
+    );
+    if (replacement) {
+      assert.equal(f.coordinator.snapshot(replacement)!.window, 1);
+      assert.equal(f.coordinator.snapshot(replacement)!.generation, ref.generation + 1);
+    } else await assert.rejects(f.coordinator.resume(ref, "retired"), /stopped/);
+  });
+}
 
 test("a completed structured window needs a new submission; prior validated result and artifact remain evidence", async (t) => {
   const f = await fixture(t, {
