@@ -118,22 +118,76 @@ and [npm's trusted publishing documentation](https://docs.npmjs.com/trusted-publ
 Preparing or merging this PR does not establish the external rename, account setup or a
 successful publish.
 
+## Contributor titles and release notes
+
+Ordinary PRs do **not** edit `CHANGELOG.md`. Use `type(optional-scope)!: description`
+for PR titles, with one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`,
+`ci`, `chore`, `revert` or `style`. For example, `feat(hub): add collapsible output`
+or `fix: correct startup label`. Describe user-visible changes and migration in the PR
+body; use `!` for breaking changes and retain `BREAKING CHANGE:` footers in the final
+commit body. These details are inputs to release review, not proof of migration completeness.
+
+The read-only **PR title** workflow checks opened and edited titles (also reopened,
+synchronized and ready-for-review PRs). It passes the title as environment data, never as
+shell source, uses no secrets or elevated `pull_request_target` execution, and installs no
+dependencies. Locally, run `PR_TITLE='fix: correct startup label' npm run pr-title:check`.
+
+Inspected repository merge policy allows merge commits, squash merges and rebase merges;
+squash titles use `COMMIT_OR_PR_TITLE` and bodies use `COMMIT_MESSAGES`. Therefore a PR title
+is **not guaranteed** to become the final commit title or preserve the PR description.
+Maintainers should squash ordinary PRs and explicitly confirm the final conventional title
+and meaningful body, including breaking/migration guidance. No repository settings or branch
+protection are changed by this check. Generation uses first-parent history: a merge commit
+is listed instead of its branch commits, and rebase merges may produce multiple entries.
+
 ## Prepare each release
 
 1. Start from current `main`, with no unrelated local changes. Review the changes being released.
+   Fetch complete history and tags first (for a shallow clone, `git fetch --unshallow --tags`;
+   otherwise `git fetch --tags`). Identify the actual previous release tag; generation never
+   guesses one from dates or version sorting and needs no GitHub API access.
 2. On a release-preparation branch, update the manifest and lockfile without creating a tag:
 
    ```sh
-   npm version 0.2.0 --no-git-tag-version
+   npm version 0.5.0 --no-git-tag-version
    ```
 
-   Choose the actual next version; `0.2.0` includes the breaking minimum-host restriction.
+   Choose the actual next stable version according to the compatibility policy above.
    Preserve existing release tags and historical changelog entries.
 
-3. Add a nonempty `## [0.2.0]` entry to the root changelog, using the selected version. Include
-   changes, migrations, Pi compatibility, and relevant permission/lifecycle changes. Do not
-   promise verification that has not run. Keep the README's installation and migration examples
-   current.
+3. Generate the new version section from the explicit prior release tag through current `HEAD`:
+
+   ```sh
+   npm run changelog:generate -- --from v0.4.0 --dry-run
+   npm run changelog:generate -- --from v0.4.0
+   ```
+
+   Replace both example versions as appropriate. The target version comes from `package.json`.
+   The preview prints the new section without writing; normal generation inserts it before the
+   first historical release, after `Unreleased` if present. It leaves existing text unchanged.
+   Existing nonempty `Unreleased` notes are **copied**, not silently moved or discarded, into
+   **Previously curated notes** in the new section. Review these alongside generated entries
+   to remove duplicates in the new section. Clear or move `Unreleased` notes only deliberately
+   in the reviewed release PR after confirming their inclusion; otherwise they will be copied
+   again next time. Generation itself never clears them.
+
+   Entries retain subjects, PR-number suffixes and commit references, oldest first within
+   each group: `feat` → **Features**, `fix`/`perf` → **Fixes and performance**, all other types
+   → **Other changes**. Nonconventional legacy subjects are retained with warnings. Breaking
+   `!` markers and `BREAKING CHANGE:` (also `BREAKING-CHANGE:`) body footers are surfaced in
+   **Breaking changes**, independently of type. A marker without details asks for manual guidance.
+
+   **Review and enrich the generated section** with migration, Pi compatibility and relevant
+   permission/lifecycle changes. Commit metadata is only a starting point. Do not promise
+   verification that has not run. Keep README installation/migration examples current.
+
+   Missing or nonancestor tags, shallow/incomplete history, an empty range, unstable versions
+   and duplicate version headings fail before writing. Fix the input or fetch full history;
+   never bypass these errors by moving a release tag. A duplicate heading protects reviewed
+   notes from regeneration: use `--dry-run` before the first generation, or review a fresh
+   preview in a disposable checkout with the target section absent. Do not delete reviewed
+   notes merely to rerun the generator.
+
 4. Run the local gates:
 
    ```sh

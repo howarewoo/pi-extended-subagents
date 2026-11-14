@@ -43,7 +43,9 @@
     "exercise": "node examples/sdk-exercise.ts",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run exercise",
     "test:package": "node scripts/test-package.mjs",
-    "release:check": "node scripts/release-notes.mjs"
+    "release:check": "node scripts/release-notes.mjs",
+    "changelog:generate": "node scripts/generate-changelog.mjs",
+    "pr-title:check": "node scripts/check-pr-title.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-schema": "1.5.2"
