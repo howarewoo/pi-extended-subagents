@@ -12,7 +12,13 @@ import {
 } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ChildRef, ChildSnapshot, DelegationCoordinator } from "./coordinator.ts";
-import { createNativeThread, safe, type LiveTool, type ThreadDependencies } from "./thread.ts";
+import {
+  createNativeThread,
+  safe,
+  type LiveTool,
+  type ThreadDependencies,
+  type ThreadAnchor,
+} from "./thread.ts";
 export { safe } from "./thread.ts";
 export { createChildWidget } from "./subagent-widget.ts";
 export {
@@ -50,6 +56,8 @@ export function createHub(
   let tab: "thread" | "details" | "tools" = "thread";
   let offset = 0;
   let following = true;
+  let toolsExpanded = false;
+  let expansionAnchor: ThreadAnchor | undefined;
   let maxOffset = 0;
   let threadBounds: { x: number; y: number; width: number; height: number } | undefined;
   let viewport = 1;
@@ -108,12 +116,14 @@ export function createHub(
     const children = roster();
     if (!children.some((child) => identity(child) === selected)) {
       selected = children[0] && identity(children[0]);
+      expansionAnchor = undefined;
       offset = 0;
       following = tab === "thread";
     }
     return children.find((child) => identity(child) === selected);
   };
   const scrollBy = (delta: number) => {
+    expansionAnchor = undefined;
     offset = Math.max(0, Math.min(maxOffset, offset + delta));
     if (tab === "thread") following = delta > 0 && offset === maxOffset;
     refresh();
@@ -299,6 +309,10 @@ export function createHub(
                 `End live · s/m/x · ${(keybindings.getKeys("tui.select.cancel")[0] ?? "Esc").replaceAll("escape", "Esc")}: close`,
               ]),
         );
+      if (mode === "browse" && tab === "thread")
+        footer.push(
+          `Tools ${toolsExpanded ? "expanded" : "collapsed"} · ${keybindings.getKeys("app.tools.expand").join("/") || "unbound"}: toggle all`,
+        );
       // A pinned target and its controls are indivisible; optional hints must yield first.
       const requiredFooter = interactionTarget ? targetLines.length + 2 : 0;
       const shownFooter =
@@ -373,6 +387,10 @@ export function createHub(
             .split("\n")
             .flatMap((line) => wrapTextWithAnsi(line, Math.max(1, threadWidth))),
         );
+      if (tab === "thread" && expansionAnchor) {
+        offset = nativeThread.offsetFor(expansionAnchor) ?? offset;
+        expansionAnchor = undefined;
+      }
       maxOffset = Math.max(0, wrapped.length - viewport);
       offset = tab === "thread" && following ? maxOffset : Math.max(0, Math.min(offset, maxOffset));
       threadBounds = {
@@ -513,6 +531,13 @@ export function createHub(
         refresh();
         return;
       }
+      if (tab === "thread" && keybindings.matches(data, "app.tools.expand")) {
+        if (!following) expansionAnchor = nativeThread.anchorAt(offset);
+        toolsExpanded = !toolsExpanded;
+        nativeThread.setExpanded(toolsExpanded);
+        refresh();
+        return;
+      }
       if (keybindings.matches(data, "tui.select.confirm")) {
         done();
         return;
@@ -534,6 +559,7 @@ export function createHub(
             )
           ];
         selected = next && identity(next);
+        expansionAnchor = undefined;
         offset = 0;
         following = tab === "thread";
         notice = "";
@@ -544,12 +570,15 @@ export function createHub(
       else if (data === "k") scrollBy(-1);
       else if (data === "j") scrollBy(1);
       else if (matchesKey(data, "home")) {
+        expansionAnchor = undefined;
         offset = 0;
         following = false;
       } else if (matchesKey(data, "end")) {
+        expansionAnchor = undefined;
         offset = maxOffset;
         following = tab === "thread";
       } else if (matchesKey(data, "tab")) {
+        expansionAnchor = undefined;
         tab = tab === "thread" ? "details" : tab === "details" ? "tools" : "thread";
         offset = 0;
         following = tab === "thread";

@@ -19,6 +19,11 @@ remains Pi 1.5.2; newer stable hosts are allowed, not guaranteed compatible.
   owner remains live; a wake is not success, acknowledgment, guaranteed task continuation or
   authority to auto-resume. Closing/stale-owner suppression and parent-bound shutdown/drain
   are unchanged; no polling, forced continuation loop or new lifecycle service is added.
+- Hub thread tool output now opens collapsed, using Pi’s native tool components. The configured
+  `app.tools.expand` action (default Ctrl+O) toggles all tool blocks for the current Hub opening,
+  across agents/generations and tabs. Remapped/disabled keys are respected. LIVE keeps following;
+  READING retains the surviving message/tool location when expanding or collapsing. This is
+  display-only; Tools still exposes full sanitized inspection text.
 - **Migration:** let active tasks drain, install `@howarewoo/pi-subagents@0.4.0` and restart
   Pi. No configuration migration is needed. Grants, model routing, host requirements,
   identity/artifact formats and writer/capacity controls are unchanged. Updating a checkout

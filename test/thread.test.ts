@@ -100,6 +100,7 @@ test("native builtin read rendering is identical to the actual public tool compo
     details: { private: "OPAQUE_DETAILS" },
   };
   const thread = createNativeThread({ tui, cwd });
+  thread.setExpanded(true);
   const output = thread.render("id/1", [message, result], undefined, undefined, 55);
   const { renderShell, renderCall, renderResult } = createReadToolDefinition(cwd);
   const component = new ToolExecutionComponent(
@@ -120,6 +121,28 @@ test("native builtin read rendering is identical to the actual public tool compo
   component.updateResult({ content: result.content, isError: false });
   const expected = component.render(55).flatMap((line) => wrapTextWithAnsi(nativeText(line), 55));
   assert.deepEqual(output, expected);
+  for (const appearance of ["dark", "light"] as const) {
+    initTheme(appearance, false);
+    thread.invalidate();
+    component.invalidate();
+    for (const width of [61, 56]) {
+      for (const expanded of [false, true, false]) {
+        thread.setExpanded(expanded);
+        component.setExpanded(expanded);
+        const actual = thread.render("id/1", [message, result], undefined, undefined, width);
+        const reference = component
+          .render(width)
+          .flatMap((line) => wrapTextWithAnsi(nativeText(line), width));
+        assert.deepEqual(actual, reference);
+        t.diagnostic(
+          `${appearance} ${width} columns ${expanded ? "expanded" : "collapsed"}: ${actual.length} native-matched rows`,
+        );
+      }
+    }
+  }
+  initTheme("dark", false);
+  thread.invalidate();
+  thread.setExpanded(true);
   assert.match(strip(output.join("\n")), /export const value = 42/);
   assert.match(output.join("\n"), /\x1b\[/, "native syntax colors retained");
   assert.doesNotMatch(output.join("\n"), /OPAQUE_DETAILS/);
@@ -213,5 +236,72 @@ test("native edit renders only recorded safe diff without completed-args filesys
   assert.match(strip(generic.join("\n")), /payload\s+omitted/);
   assert.doesNotMatch(generic.join("\n"), /PRIVATE_SIGNATURE|IMAGE_PAYLOAD|\x1b\[2J|\u202e/);
   assert.ok(generic.every((line) => visibleWidth(line) <= 32));
+  thread.clear();
+});
+
+test("native expansion survives cache reuse, live reconstruction, final/error/abort and generation switches without transcript mutation", (t) => {
+  initTheme("dark", false);
+  const tui = new TuiMainScreen(new ProcessTerminal());
+  t.mock.method(tui, "requestRender", () => {});
+  const thread = createNativeThread({ tui, cwd: process.cwd() });
+  const args = { path: "sample.ts" };
+  const message = fauxAssistantMessage(fauxToolCall("read", args, { id: "call" }), {
+    stopReason: "toolUse",
+  });
+  const result = {
+    role: "toolResult" as const,
+    toolName: "read",
+    toolCallId: "call",
+    timestamp: 2,
+    isError: false,
+    content: [
+      { type: "text" as const, text: Array.from({ length: 50 }, (_, i) => `BODY_${i}`).join("\n") },
+    ],
+  };
+  const messages = [message, result];
+  const original = structuredClone(messages);
+  const live = { toolName: "read", toolCallId: "call", args, content: result.content };
+  const render = (ref = "id/1", completed = true) =>
+    strip(
+      thread
+        .render(ref, completed ? messages : [message], undefined, completed ? undefined : live, 56)
+        .join("\n"),
+    );
+  assert.doesNotMatch(render(), /BODY_49/, "new threads default collapsed");
+  const built = t.mock.method(ToolExecutionComponent.prototype, "setArgsComplete");
+  thread.setExpanded(true);
+  assert.match(render(), /BODY_49/);
+  assert.equal(built.mock.callCount(), 0, "display changes reuse cached tool components");
+  assert.match(render("id/1", false), /BODY_49/, "live reconstruction retains preference");
+  assert.match(render(), /BODY_49/, "final reconstruction retains preference");
+  const expandedLines = thread.render("id/1", messages, undefined, undefined, 56);
+  const anchor = thread.anchorAt(
+    expandedLines.findIndex((line) => strip(line).includes("BODY_40")),
+  )!;
+  thread.setExpanded(false);
+  render();
+  const summary = thread.offsetFor(anchor)!;
+  assert.ok(summary >= 0 && summary < 4, "hidden anchor falls back to tool header");
+  assert.doesNotMatch(
+    render("id/2", false),
+    /BODY_49/,
+    "new generation inherits collapsed preference",
+  );
+  for (const expanded of [true, false]) {
+    thread.setExpanded(expanded);
+    for (const stopReason of ["error", "aborted"] as const) {
+      const failure = { ...message, stopReason, errorMessage: "ACTUAL_FAILURE" };
+      assert.match(
+        strip(thread.render("id/2", [failure], undefined, undefined, 56).join("\n")),
+        /ACTUAL_FAILURE/,
+      );
+    }
+    result.isError = true;
+    const failed = render("id/3");
+    assert.equal(failed.includes("BODY_49"), expanded);
+  }
+  result.isError = false;
+  assert.deepEqual(messages, original);
+  assert.deepEqual(thread.render("empty/1", [], undefined, undefined, 12), []);
   thread.clear();
 });
