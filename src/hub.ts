@@ -62,10 +62,30 @@ export function createHub(
   const refresh = () => {
     if (!disposed) requestRender();
   };
-  // In-flight projections only; finalized messages remain in the authoritative registry.
+  // Live projections are separate from the selected generation's detached transcript read.
   const streaming = new Map<string, ReturnType<DelegationCoordinator["messages"]>[number]>();
   const liveTools = new Map<string, LiveTool>();
+  let rosterCache:
+    | {
+        query: string;
+        tree: ReturnType<typeof taskTree>;
+        children: ChildSnapshot[];
+        current: Set<string>;
+        total: number;
+      }
+    | undefined;
+  let transcript:
+    | {
+        ref: string;
+        messages: ReturnType<DelegationCoordinator["messages"]>;
+        width?: number;
+        lines?: string[];
+      }
+    | undefined;
   const unsubscribe = coordinator.subscribe((event) => {
+    rosterCache = undefined;
+    // Streaming objects are mutable SDK state, not stable finalized transcript identities.
+    if (transcript?.ref === identity(event.child)) transcript = undefined;
     if (event.event?.type === "message_update")
       streaming.set(identity(event.child), event.event.message);
     if (event.event?.type === "message_end" || event.child.disposed)
@@ -84,30 +104,42 @@ export function createHub(
     refresh();
   });
   const identity = (ref: ChildRef) => `${ref.id}/${ref.generation}`;
-  const roster = () =>
-    taskTree(
-      coordinator
-        .sessions()
-        .filter((child) =>
-          lineText(
-            [
-              child.id,
-              child.parentId,
-              child.profile,
-              child.status,
-              child.assignment,
-              child.progress,
-              child.result,
-              child.error,
-              child.model.id,
-            ].join(" "),
+  const roster = () => {
+    if (!rosterCache || rosterCache.query !== query) {
+      const sessions = coordinator.sessions();
+      const normalizedQuery = query.toLowerCase();
+      const filtered = normalizedQuery
+        ? sessions.filter((child) =>
+            lineText(
+              [
+                child.id,
+                child.parentId,
+                child.profile,
+                child.status,
+                child.assignment,
+                child.progress,
+                child.result,
+                child.error,
+                child.model.id,
+              ].join(" "),
+            )
+              .toLowerCase()
+              .includes(normalizedQuery),
           )
-            .toLowerCase()
-            .includes(query.toLowerCase()),
-        ),
-    ).map(({ child }) => child);
+        : sessions;
+      const tree = taskTree(filtered);
+      rosterCache = {
+        query,
+        tree,
+        children: tree.map(({ child }) => child),
+        current: new Set(coordinator.list().map(identity)),
+        total: sessions.length,
+      };
+    }
+    return rosterCache;
+  };
   const selection = () => {
-    const children = roster();
+    const children = roster().children;
     if (!children.some((child) => identity(child) === selected)) {
       selected = children[0] && identity(children[0]);
       expansionAnchor = undefined;
@@ -208,11 +240,7 @@ export function createHub(
       };
       if (width < 4 || height < 3)
         return [
-          paint(
-            interactionTarget
-              ? "Resize · Esc cancels"
-              : "Subagent Hub " + coordinator.sessions().length,
-          ),
+          paint(interactionTarget ? "Resize · Esc cancels" : "Subagent Hub " + roster().total),
         ];
       const inner = Math.max(0, width - 4);
       const row = (text: string) => {
@@ -233,10 +261,8 @@ export function createHub(
             theme.fg("border", "─".repeat(Math.max(0, width - 2 - visibleWidth(text))) + right),
         );
       };
-      const children = roster();
-      const current = coordinator.list();
-      const historical = (item: ChildRef) =>
-        !current.some((live) => identity(live) === identity(item));
+      const children = roster().children;
+      const historical = (item: ChildRef) => !roster().current.has(identity(item));
       const index = children.findIndex((item) => identity(item) === selected);
       const wide = width >= 76;
       const leftWidth = wide ? Math.min(32, Math.max(24, Math.floor(inner / 3))) : 0;
@@ -328,19 +354,29 @@ export function createHub(
           );
         } else {
           try {
-            const messages = coordinator.messages(child);
+            const ref = identity(child);
+            if (transcript?.ref !== ref)
+              transcript = { ref, messages: coordinator.messages(child) };
+            const messages = transcript.messages;
             const partial = streaming.get(identity(child));
             if (
               tab === "thread" &&
               (messages.length || partial || liveTools.has(identity(child)))
             ) {
-              nativeLines = nativeThread.render(
-                identity(child),
-                messages,
-                partial,
-                liveTools.get(identity(child)),
-                threadWidth,
-              );
+              const live = liveTools.get(ref);
+              // These messages are our detached read, never SDK objects or caller-owned inputs.
+              // Live/custom components can change independently and must still be visited.
+              if (
+                !transcript.lines ||
+                transcript.width !== threadWidth ||
+                partial ||
+                live ||
+                dependencies.toolRenderers
+              ) {
+                transcript.lines = nativeThread.render(ref, messages, partial, live, threadWidth);
+                transcript.width = threadWidth;
+              }
+              nativeLines = transcript.lines;
             } else
               detail =
                 messages.length || partial
@@ -415,8 +451,8 @@ export function createHub(
         const start = Math.max(0, index - slots + 1);
         const left = [
           theme.fg("accent", `SUBAGENTS · ${children.length} generations`),
-          ...taskTree(children)
-            .slice(start, start + slots)
+          ...roster()
+            .tree.slice(start, start + slots)
             .flatMap(({ child: item, indent, last, continuation }) => {
               const prefix = `${identity(item) === selected ? ">" : " "} ${indent}${last ? "└" : "├"} `;
               return [
@@ -529,6 +565,7 @@ export function createHub(
         if (!following) expansionAnchor = nativeThread.anchorAt(offset);
         toolsExpanded = !toolsExpanded;
         nativeThread.setExpanded(toolsExpanded);
+        if (transcript) transcript.lines = undefined;
         refresh();
         return;
       }
@@ -540,7 +577,7 @@ export function createHub(
         keybindings.matches(data, "tui.select.up") ||
         keybindings.matches(data, "tui.select.down")
       ) {
-        const children = roster();
+        const children = roster().children;
         const index = children.findIndex((child) => identity(child) === selected);
         const next =
           children[
@@ -630,6 +667,7 @@ export function createHub(
     invalidate() {
       input.invalidate();
       nativeThread.invalidate();
+      if (transcript) transcript.lines = undefined;
     },
     dispose() {
       disposed = true;
@@ -638,6 +676,8 @@ export function createHub(
       streaming.clear();
       liveTools.clear();
       nativeThread.clear();
+      transcript = undefined;
+      rosterCache = undefined;
     },
   };
 }

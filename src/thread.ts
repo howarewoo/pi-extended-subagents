@@ -58,12 +58,12 @@ export type LiveTool = {
   args: unknown;
   content?: readonly { type: string; text?: string; mimeType?: string }[];
 };
-const textContent = (content: readonly { type: string; text?: string; mimeType?: string }[]) =>
+const displayContent = (content: readonly { type: string; text?: string; mimeType?: string }[]) =>
   content.flatMap((block) =>
     block.type === "text"
-      ? [{ type: "text", text: safe(block.text ?? "") }]
+      ? [{ type: "text", text: block.text ?? "" }]
       : block.type === "image"
-        ? [{ type: "text", text: `[image ${safe(block.mimeType ?? "unknown")}; payload omitted]` }]
+        ? [{ type: "text", text: `[image ${block.mimeType ?? "unknown"}; payload omitted]` }]
         : [],
   );
 
@@ -85,15 +85,20 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
   );
   for (const [name, renderersForTool] of Object.entries(toolRenderers ?? {}))
     renderers.set(name, renderersForTool);
-  const cache = new Map<string, { signature: string; component: Component }>();
+  type Entry = { signature: string; component: Component; width?: number; lines?: string[] };
+  const cache = new Map<string, Entry>();
   let generation: string | undefined;
   let expanded = false;
   let spans: { key: string; start: number; length: number }[] = [];
   return {
     setExpanded(value: boolean) {
+      if (expanded === value) return;
       expanded = value;
-      for (const { component } of cache.values())
-        if (component instanceof ToolExecutionComponent) component.setExpanded(expanded);
+      for (const entry of cache.values())
+        if (entry.component instanceof ToolExecutionComponent) {
+          entry.component.setExpanded(expanded);
+          entry.lines = undefined;
+        }
     },
     anchorAt(offset: number): ThreadAnchor | undefined {
       const span = spans.find(({ start, length }) => offset >= start && offset < start + length);
@@ -120,7 +125,7 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
         generation = ref;
       }
       const used = new Set<string>();
-      const components: { key: string; component: Component }[] = [];
+      const components: { key: string; entry: Entry }[] = [];
       const append = (
         key: string,
         value: unknown,
@@ -133,13 +138,14 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
           if (entry && update) {
             update(entry.component);
             entry.signature = signature;
+            entry.lines = undefined;
           } else {
             entry = { signature, component: build() };
             cache.set(key, entry);
           }
         }
         used.add(key);
-        components.push({ key, component: entry.component });
+        components.push({ key, entry });
       };
       const all = partial ? [...messages, partial] : messages;
       const results = new Map(
@@ -153,13 +159,6 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
         toolIds.add(id);
         const result = results.get(id);
         const active = live?.toolCallId === id ? live : undefined;
-        const content = result
-          ? textContent(result.content)
-          : active?.content
-            ? textContent(active.content)
-            : failure
-              ? [{ type: "text", text: safe(failure) }]
-              : undefined;
         // Only the documented edit diff is renderer input. Never pass arbitrary tool details.
         const details = result?.details;
         const diff =
@@ -169,50 +168,55 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
           "diff" in details &&
           typeof details.diff === "string"
             ? {
-                diff: safe(details.diff),
+                diff: details.diff,
                 ...("firstChangedLine" in details && typeof details.firstChangedLine === "number"
                   ? { firstChangedLine: details.firstChangedLine }
                   : {}),
               }
             : undefined;
-        const toolArgs = safeValue(active?.args ?? args);
-        const output = content
-          ? { content, details: diff, isError: result?.isError ?? !!failure }
-          : undefined;
-        append("tool:" + id, [name, toolArgs, output, !!active], () => {
-          const component = new ToolExecutionComponent(
-            safe(name),
-            safe(id),
-            toolArgs,
-            { showImages: false },
-            renderers.get(name),
-            tui,
-            cwd,
-          );
-          component.setExpanded(expanded);
-          // Native edit's completed-args preview reads cwd files. Recorded result.diff is sufficient.
-          if (name !== "edit") component.setArgsComplete();
-          // Do not mark execution started: this observer must not invent elapsed clocks/timers.
-          if (output) component.updateResult(output, !!active && !result);
-          return component;
-        });
+        const rawContent: LiveTool["content"] = result?.content ?? active?.content;
+        // Payloads and opaque details never become cache keys or native renderer inputs.
+        const content = rawContent && displayContent(rawContent);
+        append(
+          "tool:" + id,
+          [name, active?.args ?? args, content, diff, result?.isError, failure, !!active],
+          () => {
+            const toolArgs = safeValue(active?.args ?? args);
+            const outputContent = content
+              ? content.map((block) => ({ ...block, text: safe(block.text) }))
+              : failure
+                ? [{ type: "text", text: safe(failure) }]
+                : undefined;
+            const output = outputContent
+              ? {
+                  content: outputContent,
+                  details: diff ? { ...diff, diff: safe(diff.diff) } : undefined,
+                  isError: result?.isError ?? !!failure,
+                }
+              : undefined;
+            const component = new ToolExecutionComponent(
+              safe(name),
+              safe(id),
+              toolArgs,
+              { showImages: false },
+              renderers.get(name),
+              tui,
+              cwd,
+            );
+            component.setExpanded(expanded);
+            // Native edit's completed-args preview reads cwd files. Recorded result.diff is sufficient.
+            if (name !== "edit") component.setArgsComplete();
+            // Do not mark execution started: this observer must not invent elapsed clocks/timers.
+            if (output) component.updateResult(output, !!active && !result);
+            return component;
+          },
+        );
       };
       all.forEach((message, index) => {
         if (message.role === "system") return;
         if (message.role === "assistant") {
-          const content: typeof message.content = message.content.map((block) =>
-            block.type === "text"
-              ? { type: "text", text: safe(block.text) }
-              : block.type === "thinking"
-                ? { type: "thinking", thinking: safe(block.thinking) }
-                : {
-                    type: "toolCall",
-                    id: safe(block.id),
-                    name: safe(block.name),
-                    arguments: safeValue(block.arguments) as typeof block.arguments,
-                  },
-          );
-          const projected = {
+          // Key only the public renderer inputs, not provider metadata or thinking signatures.
+          const raw = {
             role: message.role,
             api: message.api,
             provider: message.provider,
@@ -220,20 +224,48 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
             timestamp: message.timestamp,
             usage: message.usage,
             stopReason: message.stopReason,
-            content,
-            errorMessage: message.errorMessage ? safe(message.errorMessage) : undefined,
+            content: message.content.map((block) =>
+              block.type === "text"
+                ? { type: "text" as const, text: block.text }
+                : block.type === "thinking"
+                  ? { type: "thinking" as const, thinking: block.thinking }
+                  : {
+                      type: "toolCall" as const,
+                      id: block.id,
+                      name: block.name,
+                      arguments: block.arguments,
+                    },
+            ),
+            errorMessage: message.errorMessage,
           };
+          const project = () => ({
+            ...raw,
+            content: raw.content.map((block) =>
+              block.type === "text"
+                ? { ...block, text: safe(block.text) }
+                : block.type === "thinking"
+                  ? { ...block, thinking: safe(block.thinking) }
+                  : {
+                      ...block,
+                      id: safe(block.id),
+                      name: safe(block.name),
+                      arguments: safeValue(block.arguments) as typeof block.arguments,
+                    },
+            ),
+            errorMessage: raw.errorMessage ? safe(raw.errorMessage) : undefined,
+          });
           const streaming = message === partial;
           append(
             "assistant:" + index,
-            [projected, streaming],
+            [raw, streaming],
             () => {
+              const projected = project();
               const component = new AssistantMessageComponent(projected, false, getMarkdownTheme());
               component.updateContent(projected, streaming);
               return component;
             },
             (component) =>
-              (component as AssistantMessageComponent).updateContent(projected, streaming),
+              (component as AssistantMessageComponent).updateContent(project(), streaming),
           );
           for (const block of message.content)
             if (block.type === "toolCall")
@@ -259,32 +291,45 @@ export function createNativeThread({ tui, cwd, toolRenderers }: ThreadDependenci
         } else if (message.role === "toolResult") {
           if (!toolIds.has(message.toolCallId)) tool(message.toolName, message.toolCallId, {});
         } else if ("content" in message) {
-          const text =
+          const content =
             typeof message.content === "string"
-              ? safe(message.content)
+              ? message.content
               : Array.isArray(message.content)
-                ? textContent(message.content)
+                ? displayContent(message.content)
                     .map((block) => block.text)
                     .join("\n")
                 : "";
-          append("user:" + index, text, () => new UserMessageComponent(text, getMarkdownTheme()));
+          append(
+            "user:" + index,
+            content,
+            () => new UserMessageComponent(safe(content), getMarkdownTheme()),
+          );
         }
       });
       if (live && !toolIds.has(live.toolCallId)) tool(live.toolName, live.toolCallId, live.args);
       for (const key of cache.keys()) if (!used.has(key)) cache.delete(key);
       spans = [];
       const lines: string[] = [];
-      for (const { key, component } of components) {
-        const rendered = component
-          .render(Math.max(12, width))
-          .flatMap((line) => wrapTextWithAnsi(nativeText(line), Math.max(1, width)));
+      for (const { key, entry } of components) {
+        // Extension renderers may update their own components asynchronously via requestRender.
+        const customTool = key.startsWith("tool:") && toolRenderers;
+        if (!entry.lines || entry.width !== width || customTool) {
+          entry.lines = entry.component
+            .render(Math.max(12, width))
+            .flatMap((line) => wrapTextWithAnsi(nativeText(line), Math.max(1, width)));
+          entry.width = width;
+        }
+        const rendered = entry.lines;
         spans.push({ key, start: lines.length, length: rendered.length });
         lines.push(...rendered);
       }
       return lines;
     },
     invalidate() {
-      for (const entry of cache.values()) entry.component.invalidate();
+      for (const entry of cache.values()) {
+        entry.component.invalidate();
+        entry.lines = undefined;
+      }
     },
     clear() {
       cache.clear();

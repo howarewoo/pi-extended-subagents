@@ -1,9 +1,10 @@
 import { stripVTControlCharacters as stripAnsi } from "node:util";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { createChildWidget, createHub, taskCard, transcriptLines, safe } from "../src/hub.ts";
 import { DelegationCoordinator, type ChildRef, type ChildSnapshot } from "../src/coordinator.ts";
 import {
+  Text,
   ProcessTerminal,
   TuiMainScreen,
   backgroundAnsi,
@@ -18,6 +19,7 @@ import {
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import {
   initTheme,
+  AssistantMessageComponent,
   ToolExecutionComponent,
   type ThemeStyle,
 } from "@earendil-works/pi-coding-agent";
@@ -597,9 +599,20 @@ test("cards and transcript project real messages and sanitize controls/bidi with
   assert.doesNotMatch(text, /NOT FOR DISPLAY|\x1b|\u202e/);
 });
 
+// Mutable registry fixtures must publish the same detached change notifications as the coordinator.
+function registryChanges(t: TestContext, coordinator: DelegationCoordinator) {
+  let listener!: Parameters<DelegationCoordinator["subscribe"]>[0];
+  t.mock.method(coordinator, "subscribe", (callback: typeof listener) => {
+    listener = callback;
+    return () => {};
+  });
+  return (child: ChildSnapshot) => listener({ type: "changed", child: structuredClone(child) });
+}
+
 for (const action of ["steer", "stop", "message"] as const) {
   test(`Hub ${action} pins the original target across filter changes and refuses stale generations`, async (t) => {
     const coordinator = new DelegationCoordinator("unused", "root");
+    const changed = registryChanges(t, coordinator);
     let children = [snapshot("A", { generation: 7 }), snapshot("B", { generation: 9 })];
     const dispatches: ChildRef[] = [];
     const lookups: ChildRef[] = [];
@@ -652,6 +665,7 @@ for (const action of ["steer", "stop", "message"] as const) {
       hub.handleInput!("\r");
       begin();
       children[0] = { ...children[0], status: "settled", disposed: true };
+      changed(children[0]);
       assert.match(render(), /> [├└] ● inspect B/, "ordinary roster fallback still works");
       assert.match(render(), /Target: A #7/, "confirmation/input still identifies original target");
       await submit();
@@ -661,9 +675,11 @@ for (const action of ["steer", "stop", "message"] as const) {
       assert.doesNotMatch(render(), /Target:/, "submit clears pinned target");
 
       children = [snapshot("A", { generation: 7 }), snapshot("B", { generation: 9 })];
+      changed(children[0]);
       hub.handleInput!("\x1b[A");
       begin();
       children[0] = { ...children[0], generation: 8 };
+      changed(children[0]);
       await submit();
       assert.deepEqual(
         lookups.at(-1),
@@ -674,8 +690,10 @@ for (const action of ["steer", "stop", "message"] as const) {
       assert.match(render(), /Unknown or stale delegation identity/);
 
       children[0] = { ...children[0], generation: 7 };
+      changed(children[0]);
       begin();
       children[0] = { ...children[0], status: "draining" };
+      changed(children[0]);
       await submit();
       assert.deepEqual(
         dispatches,
@@ -694,6 +712,7 @@ for (const action of ["steer", "stop", "message"] as const) {
         "already draining targets cannot open controls",
       );
       children[0] = { ...children[0], status: "running" };
+      changed(children[0]);
       hub.handleInput!("/");
       hub.handleInput!("\x15");
       hub.handleInput!("running");
@@ -960,6 +979,7 @@ test("Hub full thread preserves role/thinking/tool/error text, isolates ANSI and
 
 test("Hub empty, filtered, queued/setup and terminal threads explain unavailable transcript without allocating work", (t) => {
   const coordinator = new DelegationCoordinator("unused", "root");
+  const changed = registryChanges(t, coordinator);
   let children: ChildSnapshot[] = [];
   t.mock.method(coordinator, "list", () => children);
   t.mock.method(coordinator, "messages", () => []);
@@ -989,6 +1009,7 @@ test("Hub empty, filtered, queued/setup and terminal threads explain unavailable
           disposed: ["settled", "failed", "cancelled"].includes(status),
         }),
       ];
+      changed(children[0]);
       assert.match(output(), new RegExp(status));
       assert.match(
         output(),
@@ -1060,6 +1081,7 @@ test("Hub prefilled filter editing starts at the native Input end after an empty
 for (const action of ["stop", "steer", "message"] as const) {
   test(`Hub ${action} keeps the full original target visible at short height and blocks hidden controls until resize`, async (t) => {
     const coordinator = new DelegationCoordinator("unused", "root");
+    const changed = registryChanges(t, coordinator);
     const a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
       b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     let children = [
@@ -1119,6 +1141,7 @@ for (const action of ["stop", "steer", "message"] as const) {
       hub.handleInput!("\r");
       begin();
       children[0] = { ...children[0], progress: "no hit" };
+      changed(children[0]);
       await submit();
       assert.deepEqual(
         calls,
@@ -1135,10 +1158,12 @@ for (const action of ["stop", "steer", "message"] as const) {
       assert.deepEqual(calls, [{ id: a, generation: 7 }]);
 
       children[0] = { ...children[0], progress: "match" };
+      changed(children[0]);
       render();
       hub.handleInput!("\x1b[A");
       begin();
       children[0] = { ...children[0], progress: "no hit" };
+      changed(children[0]);
       render();
       rows = 4;
       width = 20;
@@ -1321,7 +1346,9 @@ test("Hub native thread opens at live tail, detaches for laptop/page reading, fo
     assert.doesNotMatch(output(), /NAV_LINE_99/);
     hub.handleInput!("k");
     const before = lines();
-    messages = [...messages, fauxAssistantMessage("NEWEST_MESSAGE")];
+    const newest = fauxAssistantMessage("NEWEST_MESSAGE");
+    messages = [...messages, newest];
+    listener({ type: "sdk", child, event: { type: "message_end", message: newest } });
     assert.deepEqual(lines(), before, "appending messages must not move a detached reader");
     hub.handleInput!("j");
     assert.notDeepEqual(lines(), before, "laptop line scrolling moves content, not agents");
@@ -2098,6 +2125,127 @@ test("Hub toggles preserve surviving message/tool reading anchors, safe bounds o
       const lines = hub.render(width);
       assert.ok(lines.length <= rows && lines.every((line) => visibleWidth(line) === width));
     }
+  } finally {
+    hub.dispose();
+  }
+});
+
+test("Hub repeated renders and reading moves do no unchanged transcript or roster work; events, width and theme invalidate", (t) => {
+  const coordinator = new DelegationCoordinator("unused", "root");
+  const changed = registryChanges(t, coordinator);
+  const child = snapshot("cached-reader");
+  let normalized = 0;
+  Object.defineProperty(child, "progress", {
+    get() {
+      normalized++;
+      return "SEARCHABLE_PROGRESS";
+    },
+  });
+  const sessions = t.mock.method(coordinator, "sessions", () => [child]);
+  t.mock.method(coordinator, "list", () => [child]);
+  let messages = Array.from({ length: 100 }, (_, i) => fauxAssistantMessage(`CACHE_ROW_${i}`));
+  const reads = t.mock.method(coordinator, "messages", () => structuredClone(messages));
+  const layout = t.mock.method(AssistantMessageComponent.prototype, "render");
+  const serialized = t.mock.method(JSON, "stringify");
+  const hub = createHub(
+    coordinator,
+    theme,
+    effectiveKeys,
+    () => {},
+    () => {},
+    dependencies,
+  );
+  const output = (width = 90) => stripAnsi(hub.render(width).join("\n"));
+  try {
+    const first = output();
+    assert.match(first, /CACHE_ROW_99/);
+    assert.equal(
+      normalized,
+      0,
+      "empty query does not normalize hidden progress/result/history fields",
+    );
+    assert.equal(sessions.mock.callCount(), 1, "one roster read/tree for selection and both panes");
+    const nativeWork = layout.mock.callCount(),
+      keyWork = serialized.mock.callCount();
+    assert.equal(nativeWork, 100);
+    assert.deepEqual(output(), first);
+    hub.handleInput!("k");
+    assert.match(output(), /READING/);
+    assert.equal(sessions.mock.callCount(), 1);
+    assert.equal(reads.mock.callCount(), 1);
+    assert.equal(layout.mock.callCount(), nativeWork);
+    assert.equal(
+      serialized.mock.callCount(),
+      keyWork,
+      "unchanged history is not even re-keyed in the Hub",
+    );
+    output(50);
+    assert.equal(layout.mock.callCount(), nativeWork + 100, "resize relayouts native rows");
+    assert.equal(reads.mock.callCount(), 1, "resize does not re-clone finalized messages");
+    hub.invalidate();
+    output(50);
+    assert.equal(
+      layout.mock.callCount(),
+      nativeWork + 200,
+      "theme invalidation drops rendered rows",
+    );
+    messages = [...messages, fauxAssistantMessage("NEW_FINALIZED_ROW")];
+    changed(child);
+    hub.handleInput!("\x1b[F");
+    assert.match(output(50), /NEW_FINALIZED_ROW/);
+    assert.equal(sessions.mock.callCount(), 2);
+    assert.equal(reads.mock.callCount(), 2);
+    hub.handleInput!("/");
+    hub.handleInput!("SEARCHABLE_PROGRESS");
+    hub.handleInput!("\r");
+    assert.match(output(50), /NEW_FINALIZED_ROW/);
+    assert.ok(normalized > 0, "nonempty search still indexes full progress fields");
+  } finally {
+    hub.dispose();
+  }
+});
+
+test("Hub does not hide a custom tool renderer's asynchronous redraw behind finalized transcript caching", async (t) => {
+  const coordinator = new DelegationCoordinator("unused", "root");
+  t.mock.method(coordinator, "list", () => [snapshot("custom-reader")]);
+  t.mock.method(coordinator, "messages", () => [
+    {
+      role: "toolResult",
+      timestamp: 1,
+      toolName: "custom",
+      toolCallId: "call",
+      isError: false,
+      content: [{ type: "text", text: "recorded" }],
+    },
+  ]);
+  let value = "BEFORE_ASYNC",
+    invalidate!: () => void;
+  const hub = createHub(
+    coordinator,
+    theme,
+    effectiveKeys,
+    () => {},
+    () => {},
+    {
+      ...dependencies,
+      toolRenderers: {
+        custom: {
+          renderResult: (_result, _options, _theme, context) => {
+            invalidate = context.invalidate;
+            return new Text(value, 0, 0);
+          },
+        },
+      },
+    },
+  );
+  try {
+    assert.match(stripAnsi(hub.render(90).join("\n")), /BEFORE_ASYNC/);
+    await Promise.resolve();
+    value = "AFTER_ASYNC";
+    invalidate();
+    const output = stripAnsi(hub.render(90).join("\n"));
+    assert.match(output, /AFTER_ASYNC/);
+    assert.doesNotMatch(output, /BEFORE_ASYNC/);
   } finally {
     hub.dispose();
   }

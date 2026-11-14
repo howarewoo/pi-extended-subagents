@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Reuse unchanged Hub roster, detached selected transcripts, native message projections and
+  rendered rows instead of repeatedly cloning, sanitizing and wrapping full history. Preserve
+  native output, full transcript access, live/final transitions, reading anchors and tool
+  expansion; resize/theme changes and custom renderer redraws remain observable.
+
 ## [0.4.0]
 
 Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.3.3. Tested host

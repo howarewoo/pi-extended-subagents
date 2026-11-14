@@ -10,6 +10,7 @@ import {
   initTheme,
 } from "@earendil-works/pi-coding-agent";
 import {
+  Text,
   ProcessTerminal,
   TuiMainScreen,
   visibleWidth,
@@ -303,5 +304,149 @@ test("native expansion survives cache reuse, live reconstruction, final/error/ab
   result.isError = false;
   assert.deepEqual(messages, original);
   assert.deepEqual(thread.render("empty/1", [], undefined, undefined, 12), []);
+  thread.clear();
+});
+
+test("thread caches unchanged detached projections and rows, but observes finalized edits, resize, and streaming finalization", (t) => {
+  initTheme("dark", false);
+  const tui = new TuiMainScreen(new ProcessTerminal());
+  t.mock.method(tui, "requestRender", () => {});
+  const thread = createNativeThread({ tui, cwd: process.cwd() });
+  const rendered = t.mock.method(AssistantMessageComponent.prototype, "render");
+  const updated = t.mock.method(AssistantMessageComponent.prototype, "updateContent");
+  const messages = Array.from({ length: 100 }, (_, i) => fauxAssistantMessage(`HISTORY_${i}`));
+  const output = thread.render("cache/1", messages, undefined, undefined, 55);
+  const renders = rendered.mock.callCount(),
+    updates = updated.mock.callCount();
+  assert.deepEqual(
+    thread.render("cache/1", structuredClone(messages), undefined, undefined, 55),
+    output,
+  );
+  assert.equal(
+    rendered.mock.callCount(),
+    renders,
+    "no native layout or output sanitization for unchanged history",
+  );
+  assert.equal(updated.mock.callCount(), updates, "no repeated native projection updates");
+  const narrow = thread.render("cache/1", messages, undefined, undefined, 24);
+  assert.equal(rendered.mock.callCount(), renders + 100, "width invalidates rows only");
+  assert.equal(updated.mock.callCount(), updates);
+  assert.ok(narrow.every((line) => visibleWidth(line) <= 24));
+  const changed = structuredClone(messages);
+  changed[50].content = [{ type: "text", text: "CHANGED_FINAL\x1b]52;c;PRIVATE\x07" }];
+  const edited = thread.render("cache/1", changed, undefined, undefined, 24);
+  assert.equal(
+    rendered.mock.callCount(),
+    renders + 101,
+    "only changed finalized message relayouts",
+  );
+  assert.equal(updated.mock.callCount(), updates + 1);
+  assert.match(strip(edited.join("\n")), /CHANGED_FINAL/);
+  assert.doesNotMatch(edited.join("\n"), /PRIVATE|HISTORY_50/);
+  const partial = fauxAssistantMessage("LIVE_FIRST");
+  thread.render("cache/1", changed, partial, undefined, 24);
+  partial.content = [{ type: "text", text: "LIVE_SECOND" }];
+  assert.match(
+    strip(thread.render("cache/1", changed, partial, undefined, 24).join("\n")),
+    /LIVE_SECOND/,
+  );
+  const beforeFinal = updated.mock.callCount();
+  const final = thread.render(
+    "cache/1",
+    [...changed, structuredClone(partial)],
+    undefined,
+    undefined,
+    24,
+  );
+  assert.equal(updated.mock.callCount(), beforeFinal + 1);
+  assert.equal(
+    updated.mock.calls.at(-1)?.arguments[1],
+    false,
+    "finalized partial leaves native streaming mode",
+  );
+  const reference = createNativeThread({ tui, cwd: process.cwd() });
+  assert.deepEqual(
+    final,
+    reference.render("cache/1", [...changed, partial], undefined, undefined, 24),
+  );
+  thread.clear();
+  reference.clear();
+});
+
+test("cache signatures omit opaque assistant metadata, thinking signatures, tool details and user/tool image payloads", (t) => {
+  initTheme("dark", false);
+  const tui = new TuiMainScreen(new ProcessTerminal());
+  t.mock.method(tui, "requestRender", () => {});
+  const thread = createNativeThread({ tui, cwd: process.cwd() });
+  const assistant = fauxAssistantMessage([{ type: "thinking", thinking: "Visible thinking" }]);
+  const unreadable = {
+    get() {
+      throw new Error("opaque field must not be read or serialized");
+    },
+  };
+  Object.defineProperty(assistant, "providerMetadata", { ...unreadable, enumerable: true });
+  Object.defineProperty(assistant.content[0], "thinkingSignature", {
+    ...unreadable,
+    enumerable: true,
+  });
+  const image = { type: "image" as const, mimeType: "image/png", data: "" };
+  Object.defineProperty(image, "data", { ...unreadable, enumerable: true });
+  const result = {
+    role: "toolResult" as const,
+    toolCallId: "image",
+    toolName: "read",
+    timestamp: 1,
+    isError: false,
+    content: [image],
+    details: {},
+  };
+  Object.defineProperty(result.details, "private", { ...unreadable, enumerable: true });
+  const messages = [assistant, { role: "user" as const, timestamp: 2, content: [image] }, result];
+  const output = thread.render("safe/1", messages, undefined, undefined, 55);
+  assert.deepEqual(thread.render("safe/1", messages, undefined, undefined, 55), output);
+  assert.match(strip(output.join("\n")), /Visible thinking/);
+  assert.match(strip(output.join("\n")), /payload omitted/);
+  thread.clear();
+});
+
+test("custom tool renderer asynchronous invalidation is not hidden by cached thread rows", async (t) => {
+  initTheme("dark", false);
+  const tui = new TuiMainScreen(new ProcessTerminal());
+  const redraw = t.mock.method(tui, "requestRender", () => {});
+  let content = "BEFORE_ASYNC",
+    invalidate!: () => void;
+  const thread = createNativeThread({
+    tui,
+    cwd: process.cwd(),
+    toolRenderers: {
+      custom: {
+        renderResult: (_result, _options, _theme, context) => {
+          invalidate = context.invalidate;
+          return new Text(content, 0, 0);
+        },
+      },
+    },
+  });
+  const messages = [
+    {
+      role: "toolResult" as const,
+      toolCallId: "call",
+      toolName: "custom",
+      timestamp: 1,
+      isError: false,
+      content: [{ type: "text" as const, text: "result" }],
+    },
+  ];
+  assert.match(
+    strip(thread.render("custom/1", messages, undefined, undefined, 55).join("\n")),
+    /BEFORE_ASYNC/,
+  );
+  await Promise.resolve();
+  content = "AFTER_ASYNC";
+  invalidate();
+  assert.ok(redraw.mock.callCount() > 0);
+  const output = strip(thread.render("custom/1", messages, undefined, undefined, 55).join("\n"));
+  assert.match(output, /AFTER_ASYNC/);
+  assert.doesNotMatch(output, /BEFORE_ASYNC/);
   thread.clear();
 });
