@@ -1,7 +1,7 @@
 import { requireSupportedHost } from "./supported-host.ts";
 import { leafDenial, toolProvenance, type CapabilityDenial } from "./capabilities.ts";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import fs from "node:fs/promises";
 import {
   SessionManager,
   type AgentSession,
@@ -693,42 +693,58 @@ export class DelegationCoordinator {
       );
     if ((entry.state.window ?? 1) >= MAX_GENERATIONS)
       throw new Error("Resume window limit (64) reached");
-    if (
-      completed &&
-      (!entry.sessionManager ||
-        !entry.finalizedMessages?.length ||
-        JSON.stringify(entry.sessionManager.buildSessionContext().messages) !==
-          JSON.stringify(entry.finalizedMessages))
-    )
-      throw new Error("Resume unavailable: canonical conversation state was not retained");
-    if (completed) {
-      // SessionManager.open() can silently initialize missing/empty files. Never use that
-      // fallback here: the retained tree AND its original persisted transcript must agree.
-      try {
-        const persisted = readFileSync(entry.state.transcript!, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line));
-        const manager = entry.sessionManager!;
-        if (
-          JSON.stringify(persisted) !==
-          JSON.stringify([manager.getHeader(), ...manager.getEntries()])
-        )
-          throw new Error("transcript differs from retained canonical entries");
-      } catch (error) {
-        throw new Error(
-          `Resume unavailable: original transcript cannot be restored: ${String(error)}`,
-        );
-      }
-    } else if (entry.prompted && !entry.session) {
-      throw new Error("Resume unavailable: paused SDK conversation was not retained");
-    }
-    if (!text.trim()) throw new Error("Nonempty continuation text is required");
+    const assertResumable = () => {
+      if (
+        this.entries.get(ref.id) !== entry ||
+        entry.state.generation !== ref.generation ||
+        entry.cancelled ||
+        this.closing ||
+        this.presence.get(ref.id) === "stopped" ||
+        (completed ? entry.state.status !== "settled" : entry.state.status !== "paused")
+      )
+        throw new Error("Resume cancelled by stop, shutdown or identity replacement");
+      this.renewalParent(ref);
+    };
+    // Reserve before disk/policy/auth waits; every failure releases the reservation.
     entry.resuming = true;
     try {
+      if (
+        completed &&
+        (!entry.sessionManager ||
+          !entry.finalizedMessages?.length ||
+          JSON.stringify(entry.sessionManager.buildSessionContext().messages) !==
+            JSON.stringify(entry.finalizedMessages))
+      )
+        throw new Error("Resume unavailable: canonical conversation state was not retained");
+      if (completed) {
+        // SessionManager.open() can silently initialize missing/empty files. Never use that
+        // fallback here: the retained tree AND its original persisted transcript must agree.
+        try {
+          const transcript = await fs.readFile(entry.state.transcript!, "utf8");
+          assertResumable();
+          const persisted = transcript
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+          const manager = entry.sessionManager!;
+          if (
+            JSON.stringify(persisted) !==
+            JSON.stringify([manager.getHeader(), ...manager.getEntries()])
+          )
+            throw new Error("transcript differs from retained canonical entries");
+        } catch (error) {
+          throw new Error(
+            `Resume unavailable: original transcript cannot be restored: ${String(error)}`,
+          );
+        }
+      } else if (entry.prompted && !entry.session) {
+        throw new Error("Resume unavailable: paused SDK conversation was not retained");
+      }
+      if (!text.trim()) throw new Error("Nonempty continuation text is required");
       const parent = this.renewalParent(ref);
       const input = entry.input;
       const policy = await resolveScheduling(input.context.cwd, input.context.isProjectTrusted());
+      assertResumable();
       const limits = { ...entry.state.limits };
       for (const key of Object.keys(limits) as (keyof ExecutionLimits)[])
         limits[key] = Math.min(
@@ -750,6 +766,7 @@ export class DelegationCoordinator {
           undefined,
           current.input.availableSkills?.() ?? current.input.skills,
         );
+        assertResumable();
         if (
           (current.input.profile.models !== undefined && profile.models === undefined) ||
           !allowsModel(profile, selected) ||
@@ -775,10 +792,12 @@ export class DelegationCoordinator {
       const auth = await input.context.modelRegistry.getApiKeyAndHeaders(
         validateModelSelection(input.context, selected),
       );
+      assertResumable();
       if (!auth.ok) throw new Error(auth.error);
       if (entry.state.prewalk?.status === "armed") {
         const target = validateModelSelection(input.context, entry.state.prewalk.target);
         const targetAuth = await input.context.modelRegistry.getApiKeyAndHeaders(target);
+        assertResumable();
         if (!targetAuth.ok) throw new Error(targetAuth.error);
       }
       input.assertTools(input.profile.tools);
@@ -814,7 +833,6 @@ export class DelegationCoordinator {
         selected,
         entry.state.prewalk?.status === "armed" ? undefined : selected,
       );
-      this.renewalParent(ref);
       const available = this.active().length < policy.concurrency;
       if (parent && (this.queue.size || !available))
         throw new Error("Nested capacity unavailable; no permit lending");
@@ -825,13 +843,7 @@ export class DelegationCoordinator {
       } finally {
         this.policy = previousPolicy;
       }
-      if (
-        entry.cancelled ||
-        this.closing ||
-        this.presence.get(ref.id) === "stopped" ||
-        (completed ? entry.state.status !== "settled" : entry.state.status !== "paused")
-      )
-        throw new Error("Resume cancelled by stop or shutdown");
+      assertResumable();
       if (completed) {
         const { window, status, result, outcome, artifacts, error, endedAt } = entry.state;
         entry.state = {
