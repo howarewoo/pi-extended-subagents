@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.3.3]
+
+Requires Node 22.19+ and stable Pi 1.5.2 or newer, unchanged from 0.3.2. Tested host
+remains Pi 1.5.2; newer stable hosts are allowed, not guaranteed compatible. No
+configuration migration is required. Default task budgets increase as described below;
+permissions, scheduling capacity and lifecycle behavior are unchanged. Let active tasks
+finish before updating, then restart Pi; reload and shutdown abort and drain active
+children rather than migrating them.
+
 - Raise default per-task budgets from 100 direct model requests and 100 tool calls to 200 requests and 500 tool calls. Explicit operator budgets and narrower project/task limits remain effective; the thirty-minute deadline, 1,000/1,000 operator ceilings, and cumulative resume counters are unchanged. Higher defaults permit more work and potentially higher cost before cancellation.
 
 - Show compact task cards for delegation completion, resume and status notices in Pi's TUI, with assignment headline, profile, generation and status. Error and pause reasons stay visible; expand output using Pi's existing control for task details and transcript references. Model-facing previews and completion wake-ups are unchanged. Older messages and non-task output retain Pi's readable fallback; no migration is required.
