@@ -373,6 +373,46 @@ test("thread caches unchanged detached projections and rows, but observes finali
   reference.clear();
 });
 
+test("builtin rows stay cached with unrelated registrations and alongside custom tool rows", (t) => {
+  initTheme("dark", false);
+  const tui = new TuiMainScreen(new ProcessTerminal());
+  t.mock.method(tui, "requestRender", () => {});
+  const thread = createNativeThread({
+    tui,
+    cwd: process.cwd(),
+    toolRenderers: { delegate_task: {} },
+  });
+  const rendered = t.mock.method(ToolExecutionComponent.prototype, "render");
+  const messages = [
+    {
+      role: "toolResult" as const,
+      toolCallId: "read-call",
+      toolName: "read",
+      timestamp: 1,
+      isError: false,
+      content: [{ type: "text" as const, text: "builtin output" }],
+    },
+  ];
+  const output = thread.render("tools/1", messages, undefined, undefined, 55);
+  assert.equal(rendered.mock.callCount(), 1);
+  assert.equal(thread.hasCustomRenderers(), false);
+  assert.deepEqual(thread.render("tools/1", messages, undefined, undefined, 55), output);
+  assert.equal(rendered.mock.callCount(), 1, "unrelated registration does not bypass builtin rows");
+
+  messages.push({ ...messages[0], toolCallId: "delegate-call", toolName: "delegate_task" });
+  thread.render("tools/1", messages, undefined, undefined, 55);
+  assert.equal(thread.hasCustomRenderers(), true);
+  assert.equal(rendered.mock.callCount(), 2);
+  thread.render("tools/1", messages, undefined, undefined, 55);
+  assert.equal(rendered.mock.callCount(), 3, "only the custom row renders again");
+
+  messages.pop();
+  thread.render("tools/1", messages, undefined, undefined, 55);
+  assert.equal(thread.hasCustomRenderers(), false, "removed custom rows no longer bypass caching");
+  assert.equal(rendered.mock.callCount(), 3);
+  thread.clear();
+});
+
 test("cache signatures omit opaque assistant metadata, thinking signatures, tool details and user/tool image payloads", (t) => {
   initTheme("dark", false);
   const tui = new TuiMainScreen(new ProcessTerminal());

@@ -6,6 +6,8 @@
   rendered rows instead of repeatedly cloning, sanitizing and wrapping full history. Preserve
   native output, full transcript access, live/final transitions, reading anchors and tool
   expansion; resize/theme changes and custom renderer redraws remain observable.
+- Limit custom-renderer cache bypasses to tools present in the selected transcript, so the
+  Hub's `delegate_task` registration does not disable assistant or builtin-tool row reuse.
 
 ## [0.4.0]
 

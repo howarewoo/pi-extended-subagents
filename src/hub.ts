@@ -371,7 +371,7 @@ export function createHub(
                 transcript.width !== threadWidth ||
                 partial ||
                 live ||
-                dependencies.toolRenderers
+                nativeThread.hasCustomRenderers()
               ) {
                 transcript.lines = nativeThread.render(ref, messages, partial, live, threadWidth);
                 transcript.width = threadWidth;
