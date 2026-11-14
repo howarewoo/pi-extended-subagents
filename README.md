@@ -202,8 +202,9 @@ No configuration is needed for the bundled roles. To change prompts or narrow to
 
 All bundled profiles may delegate to `scout` and `review` by default, within a total depth of two (root 0, child 1, grandchild 2). Other nested targets and child messaging need explicit operator grants. Set `spawn: []` to revoke nesting. General inherits available parent skills; other roles need explicit skill grants. Trusted project configuration in `.pi/delegation.json` can narrow grants, never expand them. Children do not load ambient extension/MCP runtimes or context files; general can forward only the reviewed leaf tools described above.
 
-Default task limits are **30 minutes**, **100 model requests** and **100 tool calls**:
+Default task limits are **30 minutes**, **200 direct model requests** and **500 tool calls**:
 
+- Higher budgets permit more work and potentially higher cost before cancellation. Explicit operator budgets still apply; trusted project and per-task limits can only narrow their applicable budgets.
 - A deadline pauses the active subtree after tool/provider drain, releasing capacity and writer leases but retaining sessions and conversations.
 - Use `subagent` resume or root-only `delegate_coordinate` `{action:"resume",target:{id,generation},assignment:"Continue…"}` to continue the same identity and conversation. Only the deadline resets; request/tool/spawn counters remain cumulative (at most 64 windows per generation). Completed windows retain earlier result/artifact evidence in `completedWindows`; a resumed completed structured assignment requires a new `submit_result`.
 - Resume the parent first, then explicitly selected children. Descendants never resume automatically.

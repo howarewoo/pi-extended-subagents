@@ -116,7 +116,7 @@ stateDiagram-v2
 
 This diagram summarizes meaningful paths; cancellation during setup can finalize without reaching `running`. Consumers must use the window completion promise, `paused` state or `disposed` flag for actual drain, rather than treating a terminal status alone as resource release.
 
-Scheduling defaults are 16 concurrent tasks, a 32-item queue, and 16 tasks per batch. Each task defaults to a thirty-minute deadline, 100 direct model requests, and 100 tool calls. Operator configuration can change defaults within hard ceilings; trusted project configuration and individual requests can only narrow their applicable limits. See [scheduling.ts](src/scheduling.ts) for the full policy, including nesting bounds.
+Scheduling defaults are 16 concurrent tasks, a 32-item queue, and 16 tasks per batch. Each task defaults to a thirty-minute deadline, 200 direct model requests, and 500 tool calls. Operator configuration can change defaults within hard ceilings; trusted project configuration and individual requests can only narrow their applicable limits. See [scheduling.ts](src/scheduling.ts) for the full policy, including nesting bounds.
 
 Important scheduling consequences:
 

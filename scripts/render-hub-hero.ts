@@ -84,7 +84,7 @@ coordinator.messages = () => [
           "4 audit leads + 12 nested scouts/reviewers; depth 2.",
           "Each lead delegates 3 checks in the foreground.",
           "Read-only tools; no child messaging grants required.",
-          "Per task: 30 minutes, 100 requests, 100 tool calls.",
+          "Per task: 30 minutes, 200 requests, 500 tool calls.",
           "No live provider requests or load-test results.",
         ].join("\n"),
       },

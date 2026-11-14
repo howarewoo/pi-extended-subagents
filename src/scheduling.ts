@@ -21,8 +21,8 @@ export const DEFAULT_POLICY: Readonly<SchedulingPolicy> = {
   depth: 2,
   spawns: 8,
   deadlineMs: 1800000,
-  requests: 100,
-  tools: 100,
+  requests: 200,
+  tools: 500,
 };
 const ceilings: SchedulingPolicy = {
   concurrency: 16,
